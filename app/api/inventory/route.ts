@@ -18,12 +18,13 @@ export async function GET() {
       });
 
     return NextResponse.json(items);
-} catch (error: any) {
-  console.error("INVENTORY API ERROR:", error);
-  return NextResponse.json(
-    {
-      error: error?.message || String(error) || "Failed to load inventory data",
-    },
-    { status: 500 }
-  );
+  } catch (error: any) {
+    console.error("INVENTORY API ERROR:", error);
+    return NextResponse.json(
+      {
+        error: error?.message || String(error) || "Failed to load inventory data",
+      },
+      { status: 500 }
+    );
+  }
 }
