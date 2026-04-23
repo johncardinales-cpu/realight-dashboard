@@ -11,15 +11,16 @@ const auth = new google.auth.GoogleAuth({
   ],
 });
 
-export async function getSheetsClient() {
-  const client = await auth.getClient();
-  return google.sheets({ version: "v4", auth: client });
-}
-
 export const SHEET_ID = process.env.GOOGLE_SHEET_ID as string;
 
 export async function getSheetValues(range: string) {
-  const sheets = await getSheetsClient();
+  const client = await auth.getClient();
+
+  const sheets = google.sheets({
+    version: "v4",
+    auth: client as any,
+  });
+
   const res = await sheets.spreadsheets.values.get({
     spreadsheetId: SHEET_ID,
     range,
