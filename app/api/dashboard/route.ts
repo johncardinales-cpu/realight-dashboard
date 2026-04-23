@@ -78,12 +78,13 @@ export async function GET() {
       totalExpenses,
       netGain,
     });
- } catch (error: any) {
-  console.error("DASHBOARD API ERROR:", error);
-  return NextResponse.json(
-    {
-      error: error?.message || String(error) || "Failed to load dashboard data",
-    },
-    { status: 500 }
-  );
+  } catch (error: any) {
+    console.error("DASHBOARD API ERROR:", error);
+    return NextResponse.json(
+      {
+        error: error?.message || String(error) || "Failed to load dashboard data",
+      },
+      { status: 500 }
+    );
+  }
 }
