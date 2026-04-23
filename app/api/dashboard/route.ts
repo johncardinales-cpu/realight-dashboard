@@ -6,32 +6,47 @@ function toNumber(value: string | undefined) {
   return Number(String(value).replace(/[^0-9.-]/g, "")) || 0;
 }
 
+function findHeaderRow(rows: string[][], required: string[]) {
+  return rows.findIndex((row) =>
+    required.every((term) =>
+      row.some((cell) => String(cell).toLowerCase().includes(term))
+    )
+  );
+}
+
 export async function GET() {
   try {
     const inventoryRows = await getSheetValues("Inventory_Report!A1:Z200");
     const salesRows = await getSheetValues("Sales!A1:Z500");
     const expenseRows = await getSheetValues("Expenses!A1:Z500");
 
-    const inventoryHeader = inventoryRows[0] || [];
-    const inventoryData = inventoryRows.slice(1);
+    const inventoryHeaderRowIndex = findHeaderRow(inventoryRows, [
+      "description",
+      "specification",
+      "incoming",
+      "received",
+    ]);
 
-    const salesHeader = salesRows[0] || [];
-    const salesData = salesRows.slice(1);
+    if (inventoryHeaderRowIndex === -1) {
+      throw new Error("Could not find inventory header row");
+    }
 
-    const expenseHeader = expenseRows[0] || [];
-    const expenseData = expenseRows.slice(1);
+    const inventoryHeader = inventoryRows[inventoryHeaderRowIndex];
+    const inventoryData = inventoryRows
+      .slice(inventoryHeaderRowIndex + 1)
+      .filter((row) => row.some((cell) => String(cell).trim() !== ""));
 
-    const onHandIndex = inventoryHeader.findIndex((h) =>
-      String(h).toLowerCase().includes("on hand")
-    );
-    const sellableIndex = inventoryHeader.findIndex((h) =>
-      String(h).toLowerCase().includes("sellable")
-    );
     const incomingIndex = inventoryHeader.findIndex((h) =>
       String(h).toLowerCase().includes("incoming")
     );
     const receivedIndex = inventoryHeader.findIndex((h) =>
       String(h).toLowerCase().includes("received")
+    );
+    const onHandIndex = inventoryHeader.findIndex((h) =>
+      String(h).toLowerCase().includes("on hand")
+    );
+    const sellableIndex = inventoryHeader.findIndex((h) =>
+      String(h).toLowerCase().includes("sellable")
     );
 
     const totalIncoming = inventoryData.reduce(
@@ -51,21 +66,47 @@ export async function GET() {
       0
     );
 
-    const salesTotalIndex = salesHeader.findIndex((h) =>
-      String(h).toLowerCase().includes("total sales")
-    );
-    const totalSales = salesData.reduce(
-      (sum, row) => sum + toNumber(row[salesTotalIndex]),
-      0
-    );
+    const salesHeaderRowIndex = findHeaderRow(salesRows, ["sales"]);
+    const expenseHeaderRowIndex = findHeaderRow(expenseRows, ["expense"]);
 
-    const totalExpenseIndex = expenseHeader.findIndex((h) =>
-      String(h).toLowerCase().includes("total expenses")
-    );
-    const totalExpenses = expenseData.reduce(
-      (sum, row) => sum + toNumber(row[totalExpenseIndex]),
-      0
-    );
+    let totalSales = 0;
+    let totalExpenses = 0;
+
+    if (salesHeaderRowIndex !== -1) {
+      const salesHeader = salesRows[salesHeaderRowIndex];
+      const salesData = salesRows
+        .slice(salesHeaderRowIndex + 1)
+        .filter((row) => row.some((cell) => String(cell).trim() !== ""));
+
+      const salesTotalIndex = salesHeader.findIndex((h) =>
+        String(h).toLowerCase().includes("sales")
+      );
+
+      if (salesTotalIndex !== -1) {
+        totalSales = salesData.reduce(
+          (sum, row) => sum + toNumber(row[salesTotalIndex]),
+          0
+        );
+      }
+    }
+
+    if (expenseHeaderRowIndex !== -1) {
+      const expenseHeader = expenseRows[expenseHeaderRowIndex];
+      const expenseData = expenseRows
+        .slice(expenseHeaderRowIndex + 1)
+        .filter((row) => row.some((cell) => String(cell).trim() !== ""));
+
+      const expenseTotalIndex = expenseHeader.findIndex((h) =>
+        String(h).toLowerCase().includes("expense")
+      );
+
+      if (expenseTotalIndex !== -1) {
+        totalExpenses = expenseData.reduce(
+          (sum, row) => sum + toNumber(row[expenseTotalIndex]),
+          0
+        );
+      }
+    }
 
     const netGain = totalSales - totalExpenses;
 
