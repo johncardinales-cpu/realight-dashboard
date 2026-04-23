@@ -50,136 +50,104 @@ export default function HomePage() {
   ];
 
   return (
-    <main className="min-h-screen bg-slate-50 text-slate-900">
-      <div className="grid min-h-screen grid-cols-[260px_1fr]">
-        <aside className="border-r border-slate-800 bg-slate-950 text-white">
-          <div className="border-b border-white/10 p-6">
-            <h1 className="text-2xl font-semibold">Realight</h1>
-            <p className="text-sm text-slate-400">Corporation Report</p>
+    <section className="space-y-6">
+      <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
+        <div className="flex items-center justify-between gap-4">
+          <div>
+            <h1 className="text-3xl font-semibold">Dashboard Overview</h1>
+            <p className="mt-1 text-sm text-slate-500">
+              Inventory, deliveries, sales, expenses, and reporting overview.
+            </p>
           </div>
-
-          <nav className="space-y-1 p-4 text-sm">
-            {[
-              "Dashboard",
-              "Inventory",
-              "Incoming Deliveries",
-              "Sales",
-              "Expenses",
-              "Reports",
-              "Users",
-              "Settings",
-            ].map((item, i) => (
-              <div
-                key={item}
-                className={`rounded-2xl px-4 py-3 ${
-                  i === 0 ? "bg-emerald-600 text-white" : "text-slate-300 hover:bg-white/5"
-                }`}
-              >
-                {item}
-              </div>
-            ))}
-          </nav>
-        </aside>
-
-        <section className="p-6">
-          <div className="mb-6 flex items-center justify-between rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
-            <div>
-              <h2 className="text-3xl font-semibold">Dashboard Overview</h2>
-              <p className="mt-1 text-sm text-slate-500">
-                Inventory, deliveries, sales, expenses, and reporting overview.
-              </p>
-            </div>
-
-            <div className="flex gap-3">
-              <button className="rounded-2xl border border-slate-200 px-4 py-2 text-sm">
-                Export Report
-              </button>
-              <button className="rounded-2xl bg-emerald-600 px-4 py-2 text-sm font-medium text-white">
-                Add Delivery
-              </button>
-            </div>
+          <div className="flex gap-3">
+            <button className="rounded-2xl border border-slate-200 px-4 py-2 text-sm">
+              Export Report
+            </button>
+            <button className="rounded-2xl bg-emerald-600 px-4 py-2 text-sm font-medium text-white">
+              Add Delivery
+            </button>
           </div>
-
-          <div className="mb-6 grid grid-cols-4 gap-4">
-            {kpis.map((item) => (
-              <div key={item.title} className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
-                <p className="text-sm text-slate-500">{item.title}</p>
-                <p className="mt-2 text-3xl font-semibold">{item.value}</p>
-                <p className="mt-2 text-xs text-slate-400">{item.note}</p>
-              </div>
-            ))}
-          </div>
-
-          <div className="grid grid-cols-[1.4fr_1fr] gap-6">
-            <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
-              <h3 className="mb-4 text-xl font-semibold">Inventory Snapshot</h3>
-              <div className="overflow-hidden rounded-2xl border border-slate-200">
-                <table className="w-full text-sm">
-                  <thead className="bg-slate-100 text-slate-600">
-                    <tr>
-                      {[
-                        "Description",
-                        "Specification",
-                        "Incoming",
-                        "Received",
-                        "On Hand",
-                        "Min Buffer",
-                        "Sellable",
-                        "Latest Arrival",
-                      ].map((head) => (
-                        <th key={head} className="px-4 py-3 text-left font-medium">
-                          {head}
-                        </th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {inventory.map((row) => (
-                      <tr key={row.specification} className="border-t border-slate-100">
-                        <td className="px-4 py-3 font-medium">{row.description}</td>
-                        <td className="px-4 py-3 text-slate-600">{row.specification}</td>
-                        <td className="px-4 py-3">{row.incoming}</td>
-                        <td className="px-4 py-3">{row.received}</td>
-                        <td className="px-4 py-3">{row.onHand}</td>
-                        <td className="px-4 py-3">{row.buffer}</td>
-                        <td className="px-4 py-3 font-medium text-emerald-600">{row.sellable}</td>
-                        <td className="px-4 py-3">{row.latestArrival}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-
-            <div className="space-y-6">
-              <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
-                <h3 className="mb-4 text-xl font-semibold">Incoming Deliveries</h3>
-                <div className="space-y-3">
-                  {deliveries.map((item) => (
-                    <div key={item.batch} className="rounded-2xl border border-slate-200 p-4">
-                      <p className="font-medium">{item.batch}</p>
-                      <p className="text-sm text-slate-500">
-                        {item.supplier} · ETA {item.eta}
-                      </p>
-                      <p className="mt-2 text-sm text-emerald-600">{item.status}</p>
-                    </div>
-                  ))}
-                </div>
-              </div>
-
-              <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
-                <h3 className="mb-4 text-xl font-semibold">Reports</h3>
-                <div className="space-y-3 text-sm text-slate-600">
-                  <div className="rounded-2xl bg-slate-50 p-4">Daily Report</div>
-                  <div className="rounded-2xl bg-slate-50 p-4">Weekly Report</div>
-                  <div className="rounded-2xl bg-slate-50 p-4">Monthly Report</div>
-                  <div className="rounded-2xl bg-slate-50 p-4">Monthly Records</div>
-                </div>
-              </div>
-            </div>
-          </div>
-        </section>
+        </div>
       </div>
-    </main>
+
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
+        {kpis.map((item) => (
+          <div key={item.title} className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
+            <p className="text-sm text-slate-500">{item.title}</p>
+            <p className="mt-2 text-3xl font-semibold">{item.value}</p>
+            <p className="mt-2 text-xs text-slate-400">{item.note}</p>
+          </div>
+        ))}
+      </div>
+
+      <div className="grid grid-cols-1 gap-6 xl:grid-cols-[1.4fr_1fr]">
+        <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
+          <h2 className="mb-4 text-xl font-semibold">Inventory Snapshot</h2>
+          <div className="overflow-hidden rounded-2xl border border-slate-200">
+            <table className="w-full text-sm">
+              <thead className="bg-slate-100 text-slate-600">
+                <tr>
+                  {[
+                    "Description",
+                    "Specification",
+                    "Incoming",
+                    "Received",
+                    "On Hand",
+                    "Min Buffer",
+                    "Sellable",
+                    "Latest Arrival",
+                  ].map((head) => (
+                    <th key={head} className="px-4 py-3 text-left font-medium">
+                      {head}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {inventory.map((row) => (
+                  <tr key={row.specification} className="border-t border-slate-100">
+                    <td className="px-4 py-3 font-medium">{row.description}</td>
+                    <td className="px-4 py-3 text-slate-600">{row.specification}</td>
+                    <td className="px-4 py-3">{row.incoming}</td>
+                    <td className="px-4 py-3">{row.received}</td>
+                    <td className="px-4 py-3">{row.onHand}</td>
+                    <td className="px-4 py-3">{row.buffer}</td>
+                    <td className="px-4 py-3 font-medium text-emerald-600">{row.sellable}</td>
+                    <td className="px-4 py-3">{row.latestArrival}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <div className="space-y-6">
+          <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
+            <h2 className="mb-4 text-xl font-semibold">Incoming Deliveries</h2>
+            <div className="space-y-3">
+              {deliveries.map((item) => (
+                <div key={item.batch} className="rounded-2xl border border-slate-200 p-4">
+                  <p className="font-medium">{item.batch}</p>
+                  <p className="text-sm text-slate-500">
+                    {item.supplier} · ETA {item.eta}
+                  </p>
+                  <p className="mt-2 text-sm text-emerald-600">{item.status}</p>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
+            <h2 className="mb-4 text-xl font-semibold">Reports</h2>
+            <div className="space-y-3 text-sm text-slate-600">
+              <div className="rounded-2xl bg-slate-50 p-4">Daily Report</div>
+              <div className="rounded-2xl bg-slate-50 p-4">Weekly Report</div>
+              <div className="rounded-2xl bg-slate-50 p-4">Monthly Report</div>
+              <div className="rounded-2xl bg-slate-50 p-4">Monthly Records</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
   );
 }
