@@ -6,118 +6,68 @@ function toNumber(value: string | undefined) {
   return Number(String(value).replace(/[^0-9.-]/g, "")) || 0;
 }
 
-function findHeaderRow(rows: string[][], required: string[]) {
-  return rows.findIndex((row) =>
-    required.every((term) =>
-      row.some((cell) => String(cell).toLowerCase().includes(term))
-    )
-  );
+function isZeroDate(value: string) {
+  return value === "1899-12-30" || value === "12/30/1899";
 }
 
 export async function GET() {
   try {
-    const inventoryRows = await getSheetValues("Inventory_Report!A1:Z200");
-    const salesRows = await getSheetValues("Sales!A1:Z500");
-    const expenseRows = await getSheetValues("Expenses!A1:Z500");
+    const rows = await getSheetValues("Inventory_Report!A1:Z200");
 
-    const inventoryHeaderRowIndex = findHeaderRow(inventoryRows, [
-      "description",
-      "specification",
-      "incoming",
-      "received",
-    ]);
+    const headerRowIndex = rows.findIndex((row) =>
+      row.some((cell) => String(cell).toLowerCase().includes("description")) &&
+      row.some((cell) => String(cell).toLowerCase().includes("specification")) &&
+      row.some((cell) => String(cell).toLowerCase().includes("incoming")) &&
+      row.some((cell) => String(cell).toLowerCase().includes("actual on hand"))
+    );
 
-    if (inventoryHeaderRowIndex === -1) {
+    if (headerRowIndex === -1) {
       throw new Error("Could not find inventory header row");
     }
 
-    const inventoryHeader = inventoryRows[inventoryHeaderRowIndex];
-    const inventoryData = inventoryRows
-      .slice(inventoryHeaderRowIndex + 1)
-      .filter((row) => row.some((cell) => String(cell).trim() !== ""));
+    const header = rows[headerRowIndex].map((h) => String(h).trim());
+    const dataRows = rows.slice(headerRowIndex + 1);
 
-    const incomingIndex = inventoryHeader.findIndex((h) =>
-      String(h).toLowerCase().includes("incoming")
-    );
-    const receivedIndex = inventoryHeader.findIndex((h) =>
-      String(h).toLowerCase().includes("received")
-    );
-    const onHandIndex = inventoryHeader.findIndex((h) =>
-      String(h).toLowerCase().includes("on hand")
-    );
-    const sellableIndex = inventoryHeader.findIndex((h) =>
-      String(h).toLowerCase().includes("sellable")
-    );
+    const incomingIndex = header.findIndex((h) => h.toLowerCase().includes("incoming"));
+    const receivedIndex = header.findIndex((h) => h.toLowerCase().includes("received"));
+    const onHandIndex = header.findIndex((h) => h.toLowerCase().includes("actual on hand"));
+    const sellableIndex = header.findIndex((h) => h.toLowerCase().includes("sellable"));
 
-    const totalIncoming = inventoryData.reduce(
-      (sum, row) => sum + toNumber(row[incomingIndex]),
-      0
-    );
-    const totalReceived = inventoryData.reduce(
-      (sum, row) => sum + toNumber(row[receivedIndex]),
-      0
-    );
-    const totalOnHand = inventoryData.reduce(
-      (sum, row) => sum + toNumber(row[onHandIndex]),
-      0
-    );
-    const totalSellable = inventoryData.reduce(
-      (sum, row) => sum + toNumber(row[sellableIndex]),
-      0
-    );
+    let totalIncoming = 0;
+    let totalReceived = 0;
+    let totalOnHand = 0;
+    let totalSellable = 0;
 
-    const salesHeaderRowIndex = findHeaderRow(salesRows, ["sales"]);
-    const expenseHeaderRowIndex = findHeaderRow(expenseRows, ["expense"]);
+    for (const row of dataRows) {
+      const description = String(row[0] || "").trim();
+      const specification = String(row[1] || "").trim();
 
-    let totalSales = 0;
-    let totalExpenses = 0;
+      if (!description && !specification) continue;
 
-    if (salesHeaderRowIndex !== -1) {
-      const salesHeader = salesRows[salesHeaderRowIndex];
-      const salesData = salesRows
-        .slice(salesHeaderRowIndex + 1)
-        .filter((row) => row.some((cell) => String(cell).trim() !== ""));
+      const lowerDescription = description.toLowerCase();
 
-      const salesTotalIndex = salesHeader.findIndex((h) =>
-        String(h).toLowerCase().includes("sales")
-      );
-
-      if (salesTotalIndex !== -1) {
-        totalSales = salesData.reduce(
-          (sum, row) => sum + toNumber(row[salesTotalIndex]),
-          0
-        );
+      if (
+        lowerDescription.includes("stock movement") ||
+        lowerDescription.includes("upload date") ||
+        /^\d{4}-\d{2}-\d{2}$/.test(description)
+      ) {
+        break;
       }
+
+      totalIncoming += toNumber(String(row[incomingIndex] || ""));
+      totalReceived += toNumber(String(row[receivedIndex] || ""));
+      totalOnHand += toNumber(String(row[onHandIndex] || ""));
+      totalSellable += toNumber(String(row[sellableIndex] || ""));
     }
-
-    if (expenseHeaderRowIndex !== -1) {
-      const expenseHeader = expenseRows[expenseHeaderRowIndex];
-      const expenseData = expenseRows
-        .slice(expenseHeaderRowIndex + 1)
-        .filter((row) => row.some((cell) => String(cell).trim() !== ""));
-
-      const expenseTotalIndex = expenseHeader.findIndex((h) =>
-        String(h).toLowerCase().includes("expense")
-      );
-
-      if (expenseTotalIndex !== -1) {
-        totalExpenses = expenseData.reduce(
-          (sum, row) => sum + toNumber(row[expenseTotalIndex]),
-          0
-        );
-      }
-    }
-
-    const netGain = totalSales - totalExpenses;
 
     return NextResponse.json({
       incomingUnits: totalIncoming,
       warehouseReceived: totalReceived,
       actualOnHand: totalOnHand,
       sellableUnits: totalSellable,
-      totalSales,
-      totalExpenses,
-      netGain,
+      totalSales: 0,
+      totalExpenses: 0,
+      netGain: 0,
     });
   } catch (error: any) {
     console.error("DASHBOARD API ERROR:", error);
