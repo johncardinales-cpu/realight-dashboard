@@ -79,10 +79,9 @@ export async function GET() {
       netGain,
     });
   } catch (error) {
-    console.error(error);
-    return NextResponse.json(
-      { error: "Failed to load dashboard data" },
-      { status: 500 }
-    );
-  }
+  console.error(error);
+  return NextResponse.json(
+    { error: "Failed to load dashboard data" },
+    { status: 500 }
+  );
 }
