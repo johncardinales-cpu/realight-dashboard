@@ -78,10 +78,12 @@ export async function GET() {
       totalExpenses,
       netGain,
     });
-  } catch (error) {
-  console.error(error);
+ } catch (error: any) {
+  console.error("DASHBOARD API ERROR:", error);
   return NextResponse.json(
-    { error: "Failed to load dashboard data" },
+    {
+      error: error?.message || String(error) || "Failed to load dashboard data",
+    },
     { status: 500 }
   );
 }
