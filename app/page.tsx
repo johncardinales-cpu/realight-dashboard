@@ -1,65 +1,185 @@
-import Image from "next/image";
+export default function HomePage() {
+  const kpis = [
+    { title: "Incoming Units", value: "1,240", note: "Purchased, not yet received" },
+    { title: "Warehouse Received", value: "980", note: "Already received" },
+    { title: "Actual On Hand", value: "910", note: "Received less sold" },
+    { title: "Sellable Units", value: "860", note: "After minimum buffer" },
+    { title: "Today Sales", value: "₱42,500", note: "Today only" },
+    { title: "This Month Sales", value: "₱1.28M", note: "Current month" },
+    { title: "Total Expenses", value: "₱745,000", note: "Freight, taxes, labor, etc." },
+    { title: "Net Gain", value: "₱535,000", note: "Sales minus expenses" },
+  ];
 
-export default function Home() {
+  const inventory = [
+    {
+      description: "Solar Panel 610W",
+      specification: "BSM610M10-72HNH",
+      incoming: 180,
+      received: 120,
+      onHand: 300,
+      buffer: 20,
+      sellable: 280,
+      latestArrival: "2026-04-17",
+    },
+    {
+      description: "11KW Hybrid Inverter",
+      specification: "BSM-11000LV-48",
+      incoming: 5,
+      received: 15,
+      onHand: 20,
+      buffer: 2,
+      sellable: 18,
+      latestArrival: "2026-04-17",
+    },
+    {
+      description: "16KWh HV Lithium Battery",
+      specification: "BSM48314H",
+      incoming: 8,
+      received: 10,
+      onHand: 18,
+      buffer: 3,
+      sellable: 15,
+      latestArrival: "2026-04-17",
+    },
+  ];
+
+  const deliveries = [
+    { batch: "DEL-20260416-01", supplier: "BLUESUN", eta: "2026-04-17", status: "Pending arrival" },
+    { batch: "DEL-20260420-02", supplier: "BLUESUN", eta: "2026-04-22", status: "Uploaded" },
+    { batch: "DEL-20260424-03", supplier: "BLUESUN", eta: "2026-04-28", status: "In transit" },
+  ];
+
   return (
-    <div className="flex flex-col flex-1 items-center justify-center bg-zinc-50 font-sans dark:bg-black">
-      <main className="flex flex-1 w-full max-w-3xl flex-col items-center justify-between py-32 px-16 bg-white dark:bg-black sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={100}
-          height={20}
-          priority
-        />
-        <div className="flex flex-col items-center gap-6 text-center sm:items-start sm:text-left">
-          <h1 className="max-w-xs text-3xl font-semibold leading-10 tracking-tight text-black dark:text-zinc-50">
-            To get started, edit the page.tsx file.
-          </h1>
-          <p className="max-w-md text-lg leading-8 text-zinc-600 dark:text-zinc-400">
-            Looking for a starting point or more instructions? Head over to{" "}
-            <a
-              href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Templates
-            </a>{" "}
-            or the{" "}
-            <a
-              href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Learning
-            </a>{" "}
-            center.
-          </p>
-        </div>
-        <div className="flex flex-col gap-4 text-base font-medium sm:flex-row">
-          <a
-            className="flex h-12 w-full items-center justify-center gap-2 rounded-full bg-foreground px-5 text-background transition-colors hover:bg-[#383838] dark:hover:bg-[#ccc] md:w-[158px]"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={16}
-              height={16}
-            />
-            Deploy Now
-          </a>
-          <a
-            className="flex h-12 w-full items-center justify-center rounded-full border border-solid border-black/[.08] px-5 transition-colors hover:border-transparent hover:bg-black/[.04] dark:border-white/[.145] dark:hover:bg-[#1a1a1a] md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Documentation
-          </a>
-        </div>
-      </main>
-    </div>
+    <main className="min-h-screen bg-slate-50 text-slate-900">
+      <div className="grid min-h-screen grid-cols-[260px_1fr]">
+        <aside className="border-r border-slate-800 bg-slate-950 text-white">
+          <div className="border-b border-white/10 p-6">
+            <h1 className="text-2xl font-semibold">Realight</h1>
+            <p className="text-sm text-slate-400">Corporation Report</p>
+          </div>
+
+          <nav className="space-y-1 p-4 text-sm">
+            {[
+              "Dashboard",
+              "Inventory",
+              "Incoming Deliveries",
+              "Sales",
+              "Expenses",
+              "Reports",
+              "Users",
+              "Settings",
+            ].map((item, i) => (
+              <div
+                key={item}
+                className={`rounded-2xl px-4 py-3 ${
+                  i === 0 ? "bg-emerald-600 text-white" : "text-slate-300 hover:bg-white/5"
+                }`}
+              >
+                {item}
+              </div>
+            ))}
+          </nav>
+        </aside>
+
+        <section className="p-6">
+          <div className="mb-6 flex items-center justify-between rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
+            <div>
+              <h2 className="text-3xl font-semibold">Dashboard Overview</h2>
+              <p className="mt-1 text-sm text-slate-500">
+                Inventory, deliveries, sales, expenses, and reporting overview.
+              </p>
+            </div>
+
+            <div className="flex gap-3">
+              <button className="rounded-2xl border border-slate-200 px-4 py-2 text-sm">
+                Export Report
+              </button>
+              <button className="rounded-2xl bg-emerald-600 px-4 py-2 text-sm font-medium text-white">
+                Add Delivery
+              </button>
+            </div>
+          </div>
+
+          <div className="mb-6 grid grid-cols-4 gap-4">
+            {kpis.map((item) => (
+              <div key={item.title} className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
+                <p className="text-sm text-slate-500">{item.title}</p>
+                <p className="mt-2 text-3xl font-semibold">{item.value}</p>
+                <p className="mt-2 text-xs text-slate-400">{item.note}</p>
+              </div>
+            ))}
+          </div>
+
+          <div className="grid grid-cols-[1.4fr_1fr] gap-6">
+            <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
+              <h3 className="mb-4 text-xl font-semibold">Inventory Snapshot</h3>
+              <div className="overflow-hidden rounded-2xl border border-slate-200">
+                <table className="w-full text-sm">
+                  <thead className="bg-slate-100 text-slate-600">
+                    <tr>
+                      {[
+                        "Description",
+                        "Specification",
+                        "Incoming",
+                        "Received",
+                        "On Hand",
+                        "Min Buffer",
+                        "Sellable",
+                        "Latest Arrival",
+                      ].map((head) => (
+                        <th key={head} className="px-4 py-3 text-left font-medium">
+                          {head}
+                        </th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {inventory.map((row) => (
+                      <tr key={row.specification} className="border-t border-slate-100">
+                        <td className="px-4 py-3 font-medium">{row.description}</td>
+                        <td className="px-4 py-3 text-slate-600">{row.specification}</td>
+                        <td className="px-4 py-3">{row.incoming}</td>
+                        <td className="px-4 py-3">{row.received}</td>
+                        <td className="px-4 py-3">{row.onHand}</td>
+                        <td className="px-4 py-3">{row.buffer}</td>
+                        <td className="px-4 py-3 font-medium text-emerald-600">{row.sellable}</td>
+                        <td className="px-4 py-3">{row.latestArrival}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            <div className="space-y-6">
+              <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
+                <h3 className="mb-4 text-xl font-semibold">Incoming Deliveries</h3>
+                <div className="space-y-3">
+                  {deliveries.map((item) => (
+                    <div key={item.batch} className="rounded-2xl border border-slate-200 p-4">
+                      <p className="font-medium">{item.batch}</p>
+                      <p className="text-sm text-slate-500">
+                        {item.supplier} · ETA {item.eta}
+                      </p>
+                      <p className="mt-2 text-sm text-emerald-600">{item.status}</p>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
+                <h3 className="mb-4 text-xl font-semibold">Reports</h3>
+                <div className="space-y-3 text-sm text-slate-600">
+                  <div className="rounded-2xl bg-slate-50 p-4">Daily Report</div>
+                  <div className="rounded-2xl bg-slate-50 p-4">Weekly Report</div>
+                  <div className="rounded-2xl bg-slate-50 p-4">Monthly Report</div>
+                  <div className="rounded-2xl bg-slate-50 p-4">Monthly Records</div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+      </div>
+    </main>
   );
 }
