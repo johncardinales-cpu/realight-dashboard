@@ -1,8 +1,18 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 type InventoryRow = Record<string, string | number>;
+
+function parseDateValue(value: string) {
+  if (!value) return 0;
+  const time = new Date(value).getTime();
+  return Number.isNaN(time) ? 0 : time;
+}
+
+function qty(row: InventoryRow, key: string) {
+  return Number(row[key] || 0) || 0;
+}
 
 export default function InventoryPage() {
   const [rows, setRows] = useState<InventoryRow[]>([]);
@@ -68,26 +78,37 @@ export default function InventoryPage() {
     }
   }
 
-  const headers = [
-    "Description",
-    "Specification",
-    "Incoming Qty",
-    "Received Qty",
-    "Sold Qty",
-    "Actual On Hand",
-    "Minimum Buffer",
-    "Sellable Qty",
-    "Latest Received",
-    "Latest Incoming",
-  ];
+  const sortedRows = useMemo(() => {
+    return [...rows].sort((a, b) => {
+      const aHasIncoming = qty(a, "Incoming Qty") > 0;
+      const bHasIncoming = qty(b, "Incoming Qty") > 0;
+
+      const aPrimary = aHasIncoming
+        ? parseDateValue(String(a["Latest Incoming"] || ""))
+        : parseDateValue(String(a["Latest Received"] || ""));
+      const bPrimary = bHasIncoming
+        ? parseDateValue(String(b["Latest Incoming"] || ""))
+        : parseDateValue(String(b["Latest Received"] || ""));
+
+      if (aPrimary !== bPrimary) return aPrimary - bPrimary;
+
+      const aName = `${String(a["Description"] || "")} ${String(a["Specification"] || "")}`.toLowerCase();
+      const bName = `${String(b["Description"] || "")} ${String(b["Specification"] || "")}`.toLowerCase();
+      return aName.localeCompare(bName);
+    });
+  }, [rows]);
 
   return (
     <section className="space-y-6">
       <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
         <h1 className="text-3xl font-semibold text-slate-900">Inventory</h1>
         <p className="mt-1 text-sm text-slate-600">
-          Live inventory report from Google Sheets. Dates can be adjusted manually here when needed.
+          Live inventory report from Google Sheets. Dates are arranged by expected arrival for incoming stock and by available/received date for stock already in hand.
         </p>
+        <div className="mt-3 grid gap-2 text-sm text-slate-700 md:grid-cols-2">
+          <p><span className="font-medium">Expected Arrival</span> is for Incoming or In Transit stock.</p>
+          <p><span className="font-medium">Available / Received Date</span> is for stock already received or available.</p>
+        </div>
         {message ? <p className="mt-3 text-sm text-slate-700">{message}</p> : null}
       </div>
 
@@ -97,17 +118,30 @@ export default function InventoryPage() {
           <table className="w-full text-sm">
             <thead className="bg-slate-100 text-slate-700">
               <tr>
-                {headers.map((head) => (
-                  <th key={head} className="px-4 py-3 text-left font-medium whitespace-nowrap">{head}</th>
-                ))}
+                <th className="px-4 py-3 text-left font-medium whitespace-nowrap">Description</th>
+                <th className="px-4 py-3 text-left font-medium whitespace-nowrap">Specification</th>
+                <th className="px-4 py-3 text-left font-medium whitespace-nowrap">Incoming Qty</th>
+                <th className="px-4 py-3 text-left font-medium whitespace-nowrap">Received Qty</th>
+                <th className="px-4 py-3 text-left font-medium whitespace-nowrap">Sold Qty</th>
+                <th className="px-4 py-3 text-left font-medium whitespace-nowrap">Actual On Hand</th>
+                <th className="px-4 py-3 text-left font-medium whitespace-nowrap">Minimum Buffer</th>
+                <th className="px-4 py-3 text-left font-medium whitespace-nowrap">Sellable Qty</th>
+                <th className="px-4 py-3 text-left font-medium whitespace-nowrap">Available / Received Date</th>
+                <th className="px-4 py-3 text-left font-medium whitespace-nowrap">Expected Arrival</th>
                 <th className="px-4 py-3 text-left font-medium whitespace-nowrap">Actions</th>
               </tr>
             </thead>
             <tbody>
-              {rows.map((row, index) => {
+              {sortedRows.map((row, index) => {
                 const saveKey = `${row["Description"]}|||${row["Specification"]}`;
+                const hasReceivedStock =
+                  qty(row, "Received Qty") > 0 ||
+                  qty(row, "Actual On Hand") > 0 ||
+                  qty(row, "Sellable Qty") > 0;
+                const hasIncomingStock = qty(row, "Incoming Qty") > 0;
+
                 return (
-                  <tr key={saveKey} className="border-t border-slate-100">
+                  <tr key={saveKey} className="border-t border-slate-100 align-top">
                     <td className="px-4 py-3 text-slate-700">{String(row["Description"] || "")}</td>
                     <td className="px-4 py-3 text-slate-700">{String(row["Specification"] || "")}</td>
                     <td className="px-4 py-3 text-slate-700">{String(row["Incoming Qty"] || "")}</td>
@@ -122,6 +156,7 @@ export default function InventoryPage() {
                         value={String(row["Latest Received"] || "")}
                         onChange={(e) => setField(index, "Latest Received", e.target.value)}
                         className="rounded-lg border border-slate-300 px-2 py-1"
+                        disabled={!hasReceivedStock}
                       />
                     </td>
                     <td className="px-4 py-3 text-slate-700">
@@ -130,6 +165,7 @@ export default function InventoryPage() {
                         value={String(row["Latest Incoming"] || "")}
                         onChange={(e) => setField(index, "Latest Incoming", e.target.value)}
                         className="rounded-lg border border-slate-300 px-2 py-1"
+                        disabled={!hasIncomingStock}
                       />
                     </td>
                     <td className="px-4 py-3 text-slate-700">
@@ -145,9 +181,9 @@ export default function InventoryPage() {
                   </tr>
                 );
               })}
-              {!rows.length && (
+              {!sortedRows.length && (
                 <tr>
-                  <td colSpan={headers.length + 1} className="px-4 py-8 text-center text-slate-500">
+                  <td colSpan={11} className="px-4 py-8 text-center text-slate-500">
                     No inventory rows found.
                   </td>
                 </tr>
