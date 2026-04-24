@@ -56,13 +56,13 @@ export default function IncomingDeliveriesPage() {
   }, [rows, statusFilter]);
 
   async function updateStatus(row: MovementRow, nextStatus: string) {
-    const createdAt = String(row["Created At"] || "").trim();
-    if (!createdAt) {
-      setMessage("This row has no Created At value, so it cannot be updated safely.");
+    const rowNumber = String(row["_rowNumber"] || "").trim();
+    if (!rowNumber) {
+      setMessage("This row has no row number, so it cannot be updated safely.");
       return;
     }
 
-    setLoadingId(createdAt);
+    setLoadingId(rowNumber);
     setMessage("");
 
     try {
@@ -72,7 +72,7 @@ export default function IncomingDeliveriesPage() {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          createdAt,
+          rowNumber,
           status: nextStatus,
         }),
       });
@@ -155,11 +155,11 @@ export default function IncomingDeliveriesPage() {
             </thead>
             <tbody>
               {filteredRows.map((row, idx) => {
-                const createdAt = String(row["Created At"] || "").trim();
+                const rowNumber = String(row["_rowNumber"] || "").trim();
                 const currentStatus = String(row["Status"] || "").trim();
 
                 return (
-                  <tr key={createdAt || idx} className="border-t border-slate-100 align-top">
+                  <tr key={rowNumber || idx} className="border-t border-slate-100 align-top">
                     {headers.map((head) => (
                       <td key={head} className="px-4 py-3 text-slate-700">
                         {row[head]}
@@ -171,11 +171,11 @@ export default function IncomingDeliveriesPage() {
                           <button
                             key={option}
                             type="button"
-                            disabled={loadingId === createdAt || currentStatus === option}
+                            disabled={loadingId === rowNumber || currentStatus === option}
                             onClick={() => updateStatus(row, option)}
                             className="rounded-xl border border-slate-300 px-3 py-1 text-xs font-medium text-slate-700 disabled:opacity-50"
                           >
-                            {loadingId === createdAt ? "Updating..." : option}
+                            {loadingId === rowNumber ? "Updating..." : option}
                           </button>
                         ))}
                       </div>

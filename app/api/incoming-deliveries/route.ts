@@ -42,11 +42,12 @@ export async function GET() {
       row.some((cell) => String(cell || "").trim() !== "")
     );
 
-    const items = data.map((row) => {
+    const items = data.map((row, index) => {
       const obj: Record<string, string> = {};
       COLUMNS.forEach((col, i) => {
         obj[col] = String(row[i] || "").trim();
       });
+      obj["_rowNumber"] = String(index + 2);
       return obj;
     });
 
