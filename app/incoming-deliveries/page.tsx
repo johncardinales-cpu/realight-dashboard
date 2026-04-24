@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import Link from "next/link";
 
 type MovementRow = Record<string, string>;
 
@@ -53,6 +54,12 @@ export default function IncomingDeliveriesPage() {
           </div>
 
           <div className="flex items-center gap-3">
+            <Link
+              href="/add-delivery"
+              className="rounded-xl bg-emerald-600 px-4 py-2 text-sm font-medium text-white"
+            >
+              Add Delivery
+            </Link>
             <label className="text-sm font-medium text-slate-700">
               Status Filter
             </label>
