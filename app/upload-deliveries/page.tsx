@@ -63,6 +63,21 @@ function mapObjectRow(row: Record<string, unknown>): ParsedRow {
   };
 }
 
+function isMeaningfulRow(row: ParsedRow) {
+  return Boolean(
+    row.uploadDate ||
+      row.arrivalDate ||
+      row.supplier ||
+      row.batchReference ||
+      row.description ||
+      row.specification ||
+      row.qtyAdded ||
+      row.unitPriceUsd ||
+      row.invoiceValid ||
+      row.notes
+  );
+}
+
 function parseCsv(text: string): ParsedRow[] {
   const lines = text
     .split(/\r?\n/)
@@ -73,14 +88,17 @@ function parseCsv(text: string): ParsedRow[] {
 
   const headers = lines[0].split(",").map((v) => v.trim());
 
-  return lines.slice(1).map((line) => {
-    const cells = line.split(",").map((v) => v.trim());
-    const obj: Record<string, unknown> = {};
-    headers.forEach((header, i) => {
-      obj[header] = cells[i] ?? "";
-    });
-    return mapObjectRow(obj);
-  });
+  return lines
+    .slice(1)
+    .map((line) => {
+      const cells = line.split(",").map((v) => v.trim());
+      const obj: Record<string, unknown> = {};
+      headers.forEach((header, i) => {
+        obj[header] = cells[i] ?? "";
+      });
+      return mapObjectRow(obj);
+    })
+    .filter(isMeaningfulRow);
 }
 
 async function parseFile(file: File): Promise<ParsedRow[]> {
@@ -100,7 +118,7 @@ async function parseFile(file: File): Promise<ParsedRow[]> {
       defval: "",
       raw: false,
     });
-    return jsonRows.map(mapObjectRow);
+    return jsonRows.map(mapObjectRow).filter(isMeaningfulRow);
   }
 
   throw new Error("Unsupported file type. Please upload CSV or Excel.");
