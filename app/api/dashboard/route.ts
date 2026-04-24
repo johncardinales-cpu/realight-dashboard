@@ -1,70 +1,61 @@
 import { NextResponse } from "next/server";
-import { getSheetValues } from "@/lib/sheets";
+import { google } from "googleapis";
+
+const auth = new google.auth.GoogleAuth({
+  credentials: {
+    client_email: process.env.GOOGLE_CLIENT_EMAIL,
+    private_key: process.env.GOOGLE_PRIVATE_KEY?.replace(/\\n/g, "\n"),
+  },
+  scopes: ["https://www.googleapis.com/auth/spreadsheets.readonly"],
+});
+
+const SHEET_ID = process.env.GOOGLE_SHEET_ID as string;
+const SHEET_NAME = "App_Deliveries";
 
 function toNumber(value: string | undefined) {
   if (!value) return 0;
   return Number(String(value).replace(/[^0-9.-]/g, "")) || 0;
 }
 
-function isZeroDate(value: string) {
-  return value === "1899-12-30" || value === "12/30/1899";
-}
-
 export async function GET() {
   try {
-    const rows = await getSheetValues("Inventory_Report!A1:Z200");
+    const client = await auth.getClient();
+    const sheets = google.sheets({ version: "v4", auth: client as any });
 
-    const headerRowIndex = rows.findIndex((row) =>
-      row.some((cell) => String(cell).toLowerCase().includes("description")) &&
-      row.some((cell) => String(cell).toLowerCase().includes("specification")) &&
-      row.some((cell) => String(cell).toLowerCase().includes("incoming")) &&
-      row.some((cell) => String(cell).toLowerCase().includes("actual on hand"))
+    const response = await sheets.spreadsheets.values.get({
+      spreadsheetId: SHEET_ID,
+      range: `${SHEET_NAME}!A:L`,
+    });
+
+    const rows = response.data.values || [];
+    const data = rows.slice(1).filter((row) =>
+      row.some((cell) => String(cell || "").trim() !== "")
     );
 
-    if (headerRowIndex === -1) {
-      throw new Error("Could not find inventory header row");
-    }
+    let incomingUnits = 0;
+    let warehouseReceived = 0;
+    let actualOnHand = 0;
+    let sellableUnits = 0;
 
-    const header = rows[headerRowIndex].map((h) => String(h).trim());
-    const dataRows = rows.slice(headerRowIndex + 1);
+    for (const row of data) {
+      const qty = toNumber(String(row[6] || ""));
+      const status = String(row[9] || "").trim().toLowerCase();
 
-    const incomingIndex = header.findIndex((h) => h.toLowerCase().includes("incoming"));
-    const receivedIndex = header.findIndex((h) => h.toLowerCase().includes("received"));
-    const onHandIndex = header.findIndex((h) => h.toLowerCase().includes("actual on hand"));
-    const sellableIndex = header.findIndex((h) => h.toLowerCase().includes("sellable"));
-
-    let totalIncoming = 0;
-    let totalReceived = 0;
-    let totalOnHand = 0;
-    let totalSellable = 0;
-
-    for (const row of dataRows) {
-      const description = String(row[0] || "").trim();
-      const specification = String(row[1] || "").trim();
-
-      if (!description && !specification) continue;
-
-      const lowerDescription = description.toLowerCase();
-
-      if (
-        lowerDescription.includes("stock movement") ||
-        lowerDescription.includes("upload date") ||
-        /^\d{4}-\d{2}-\d{2}$/.test(description)
-      ) {
-        break;
+      if (status === "incoming") {
+        incomingUnits += qty;
+      } else if (status === "received") {
+        warehouseReceived += qty;
+      } else if (status === "available") {
+        actualOnHand += qty;
+        sellableUnits += qty;
       }
-
-      totalIncoming += toNumber(String(row[incomingIndex] || ""));
-      totalReceived += toNumber(String(row[receivedIndex] || ""));
-      totalOnHand += toNumber(String(row[onHandIndex] || ""));
-      totalSellable += toNumber(String(row[sellableIndex] || ""));
     }
 
     return NextResponse.json({
-      incomingUnits: totalIncoming,
-      warehouseReceived: totalReceived,
-      actualOnHand: totalOnHand,
-      sellableUnits: totalSellable,
+      incomingUnits,
+      warehouseReceived,
+      actualOnHand,
+      sellableUnits,
       totalSales: 0,
       totalExpenses: 0,
       netGain: 0,

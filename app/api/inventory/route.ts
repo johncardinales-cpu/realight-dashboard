@@ -1,60 +1,101 @@
 import { NextResponse } from "next/server";
-import { getSheetValues } from "@/lib/sheets";
+import { google } from "googleapis";
 
-function isZeroDate(value: string) {
-  return value === "1899-12-30" || value === "12/30/1899";
+const auth = new google.auth.GoogleAuth({
+  credentials: {
+    client_email: process.env.GOOGLE_CLIENT_EMAIL,
+    private_key: process.env.GOOGLE_PRIVATE_KEY?.replace(/\\n/g, "\n"),
+  },
+  scopes: ["https://www.googleapis.com/auth/spreadsheets.readonly"],
+});
+
+const SHEET_ID = process.env.GOOGLE_SHEET_ID as string;
+const SHEET_NAME = "App_Deliveries";
+
+function toNumber(value: string | undefined) {
+  if (!value) return 0;
+  return Number(String(value).replace(/[^0-9.-]/g, "")) || 0;
 }
+
+type InventoryItem = {
+  Description: string;
+  Specification: string;
+  "Incoming Qty": number;
+  "Received Qty": number;
+  "Sold Qty": number;
+  "Actual On Hand": number;
+  "Minimum Buffer": number;
+  "Sellable Qty": number;
+  "Latest Received": string;
+  "Latest Incoming": string;
+};
 
 export async function GET() {
   try {
-    const rows = await getSheetValues("Inventory_Report!A1:Z200");
+    const client = await auth.getClient();
+    const sheets = google.sheets({ version: "v4", auth: client as any });
 
-    const headerRowIndex = rows.findIndex((row) =>
-      row.some((cell) => String(cell).toLowerCase().includes("description")) &&
-      row.some((cell) => String(cell).toLowerCase().includes("specification"))
+    const response = await sheets.spreadsheets.values.get({
+      spreadsheetId: SHEET_ID,
+      range: `${SHEET_NAME}!A:L`,
+    });
+
+    const rows = response.data.values || [];
+    const data = rows.slice(1).filter((row) =>
+      row.some((cell) => String(cell || "").trim() !== "")
     );
 
-    if (headerRowIndex === -1) {
-      throw new Error("Could not find inventory table header row");
-    }
+    const grouped = new Map<string, InventoryItem>();
 
-    const header = rows[headerRowIndex].map((h) => String(h).trim());
-
-    const dataRows = rows.slice(headerRowIndex + 1);
-
-    const items: Record<string, string>[] = [];
-
-    for (const row of dataRows) {
-      const description = String(row[0] || "").trim();
-      const specification = String(row[1] || "").trim();
+    for (const row of data) {
+      const uploadDate = String(row[0] || "").trim();
+      const arrivalDate = String(row[1] || "").trim();
+      const description = String(row[4] || "").trim();
+      const specification = String(row[5] || "").trim();
+      const qty = toNumber(String(row[6] || ""));
+      const status = String(row[9] || "").trim().toLowerCase();
 
       if (!description && !specification) continue;
 
-      const lowerDescription = description.toLowerCase();
+      const key = `${description}|||${specification}`;
 
-      // Stop when the inventory product block ends and report/meta rows begin
-      if (
-        lowerDescription.includes("stock movement") ||
-        lowerDescription.includes("upload date") ||
-        /^\d{4}-\d{2}-\d{2}$/.test(description)
-      ) {
-        break;
+      if (!grouped.has(key)) {
+        grouped.set(key, {
+          Description: description,
+          Specification: specification,
+          "Incoming Qty": 0,
+          "Received Qty": 0,
+          "Sold Qty": 0,
+          "Actual On Hand": 0,
+          "Minimum Buffer": 0,
+          "Sellable Qty": 0,
+          "Latest Received": "",
+          "Latest Incoming": "",
+        });
       }
 
-      const obj: Record<string, string> = {};
+      const item = grouped.get(key)!;
 
-      header.forEach((col, i) => {
-        let value = String(row[i] || "").trim();
+      if (status === "incoming") {
+        item["Incoming Qty"] += qty;
+        if (arrivalDate) item["Latest Incoming"] = arrivalDate;
+      } else if (status === "received") {
+        item["Received Qty"] += qty;
+        if (arrivalDate) item["Latest Received"] = arrivalDate;
+      } else if (status === "available") {
+        item["Actual On Hand"] += qty;
+        item["Sellable Qty"] += qty;
+        if (arrivalDate) item["Latest Received"] = arrivalDate;
+      } else if (status === "in transit") {
+        if (arrivalDate) item["Latest Incoming"] = arrivalDate;
+      }
 
-        if (isZeroDate(value)) value = "";
-
-        obj[col] = value;
-      });
-
-      items.push(obj);
+      if (!item["Latest Incoming"] && uploadDate) {
+        item["Latest Incoming"] = uploadDate;
+      }
     }
 
-    return NextResponse.json(items);
+    return NextResponse.json(Array.from(grouped.values()));
   } catch (error: any) {
     console.error("INVENTORY API ERROR:", error);
     return NextResponse.json(
