@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import Link from "next/link";
 
 const initialState = {
   uploadDate: "",
@@ -57,10 +58,20 @@ export default function AddDeliveryPage() {
   return (
     <section className="space-y-6">
       <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
-        <h1 className="text-3xl font-semibold text-slate-900">Add Delivery</h1>
-        <p className="mt-1 text-sm text-slate-600">
-          Save new incoming stock into the App_Deliveries sheet.
-        </p>
+        <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+          <div>
+            <h1 className="text-3xl font-semibold text-slate-900">Add Delivery</h1>
+            <p className="mt-1 text-sm text-slate-600">
+              Save new incoming stock into the App_Deliveries sheet.
+            </p>
+          </div>
+          <Link
+            href="/upload-deliveries"
+            className="rounded-xl border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700"
+          >
+            Upload CSV
+          </Link>
+        </div>
       </div>
 
       <form onSubmit={onSubmit} className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
