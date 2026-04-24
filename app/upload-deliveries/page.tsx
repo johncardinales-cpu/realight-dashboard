@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import * as XLSX from "xlsx";
 
 type ParsedRow = {
   uploadDate: string;
@@ -37,10 +38,14 @@ function normalizeHeader(value: string) {
   return value.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
 }
 
-function mapRow(headers: string[], cells: string[]): ParsedRow {
+function mapObjectRow(row: Record<string, unknown>): ParsedRow {
+  const keys = Object.keys(row);
+
   const get = (label: string) => {
-    const index = headers.findIndex((h) => normalizeHeader(h) === normalizeHeader(label));
-    return index >= 0 ? String(cells[index] ?? "").trim() : "";
+    const match = keys.find(
+      (key) => normalizeHeader(key) === normalizeHeader(label)
+    );
+    return match ? String(row[match] ?? "").trim() : "";
   };
 
   return {
@@ -70,8 +75,35 @@ function parseCsv(text: string): ParsedRow[] {
 
   return lines.slice(1).map((line) => {
     const cells = line.split(",").map((v) => v.trim());
-    return mapRow(headers, cells);
+    const obj: Record<string, unknown> = {};
+    headers.forEach((header, i) => {
+      obj[header] = cells[i] ?? "";
+    });
+    return mapObjectRow(obj);
   });
+}
+
+async function parseFile(file: File): Promise<ParsedRow[]> {
+  const lower = file.name.toLowerCase();
+
+  if (lower.endsWith(".csv")) {
+    const text = await file.text();
+    return parseCsv(text);
+  }
+
+  if (lower.endsWith(".xlsx") || lower.endsWith(".xls")) {
+    const buffer = await file.arrayBuffer();
+    const workbook = XLSX.read(buffer, { type: "array" });
+    const firstSheetName = workbook.SheetNames[0];
+    const worksheet = workbook.Sheets[firstSheetName];
+    const jsonRows = XLSX.utils.sheet_to_json<Record<string, unknown>>(worksheet, {
+      defval: "",
+      raw: false,
+    });
+    return jsonRows.map(mapObjectRow);
+  }
+
+  throw new Error("Unsupported file type. Please upload CSV or Excel.");
 }
 
 export default function UploadDeliveriesPage() {
@@ -88,11 +120,15 @@ export default function UploadDeliveriesPage() {
 
     if (!file) return;
 
-    setFileName(file.name);
-
-    const text = await file.text();
-    const parsed = parseCsv(text);
-    setRows(parsed);
+    try {
+      setFileName(file.name);
+      const parsed = await parseFile(file);
+      setRows(parsed);
+    } catch (error: any) {
+      setRows([]);
+      setFileName("");
+      setMessage(error?.message || "Failed to read file.");
+    }
   }
 
   async function onImport() {
@@ -129,13 +165,13 @@ export default function UploadDeliveriesPage() {
       <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
         <h1 className="text-3xl font-semibold text-slate-900">Upload Deliveries</h1>
         <p className="mt-1 text-sm text-slate-600">
-          Upload a CSV template and import many delivery rows into App_Deliveries.
+          Upload a CSV or Excel template and import many delivery rows into App_Deliveries.
         </p>
       </div>
 
       <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm space-y-5">
         <div className="space-y-2">
-          <h2 className="text-xl font-semibold text-slate-900">Required CSV headers</h2>
+          <h2 className="text-xl font-semibold text-slate-900">Required headers</h2>
           <p className="text-sm text-slate-600">{expectedHeaders.join(" | ")}</p>
         </div>
 
@@ -149,7 +185,7 @@ export default function UploadDeliveriesPage() {
         <div className="flex flex-col gap-3 md:flex-row md:items-center">
           <input
             type="file"
-            accept=".csv,text/csv"
+            accept=".csv,.xlsx,.xls,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel"
             onChange={onFileChange}
             className="block w-full text-sm text-slate-700"
           />
