@@ -6,6 +6,20 @@ import Link from "next/link";
 type MovementRow = Record<string, string>;
 
 const statusOptions = ["Incoming", "In Transit", "Received", "Available"];
+const headers = [
+  "Upload Date",
+  "Arrival Date",
+  "Supplier",
+  "Batch / Reference",
+  "Description",
+  "Specification",
+  "Qty Added",
+  "Unit Price (USD)",
+  "Invoice Valid",
+  "Status",
+  "Notes",
+  "Created At",
+];
 
 export default function IncomingDeliveriesPage() {
   const [rows, setRows] = useState<MovementRow[]>([]);
@@ -23,35 +37,26 @@ export default function IncomingDeliveriesPage() {
     loadRows().catch(console.error);
   }, []);
 
-  const headers = rows.length ? Object.keys(rows[0]) : [];
-
-  const statusKey =
-    headers.find((h) => h.toLowerCase().includes("status")) || "";
-
-  const createdAtKey =
-    headers.find((h) => h.toLowerCase().includes("created at")) || "Created At";
-
   const filters = useMemo(() => {
-    if (!statusKey) return ["All"];
     const values = Array.from(
       new Set(
         rows
-          .map((row) => String(row[statusKey] || "").trim())
+          .map((row) => String(row["Status"] || "").trim())
           .filter(Boolean)
       )
     );
     return ["All", ...values];
-  }, [rows, statusKey]);
+  }, [rows]);
 
   const filteredRows = useMemo(() => {
-    if (!statusKey || statusFilter === "All") return rows;
+    if (statusFilter === "All") return rows;
     return rows.filter(
-      (row) => String(row[statusKey] || "").trim() === statusFilter
+      (row) => String(row["Status"] || "").trim() === statusFilter
     );
-  }, [rows, statusFilter, statusKey]);
+  }, [rows, statusFilter]);
 
   async function updateStatus(row: MovementRow, nextStatus: string) {
-    const createdAt = String(row[createdAtKey] || "").trim();
+    const createdAt = String(row["Created At"] || "").trim();
     if (!createdAt) {
       setMessage("This row has no Created At value, so it cannot be updated safely.");
       return;
@@ -141,27 +146,27 @@ export default function IncomingDeliveriesPage() {
             <thead className="bg-slate-100 text-slate-700">
               <tr>
                 {headers.map((head) => (
-                  <th key={head} className="px-4 py-3 text-left font-medium">
+                  <th key={head} className="px-4 py-3 text-left font-medium whitespace-nowrap">
                     {head}
                   </th>
                 ))}
-                <th className="px-4 py-3 text-left font-medium">Actions</th>
+                <th className="px-4 py-3 text-left font-medium whitespace-nowrap">Actions</th>
               </tr>
             </thead>
             <tbody>
               {filteredRows.map((row, idx) => {
-                const createdAt = String(row[createdAtKey] || "").trim();
-                const currentStatus = String(row[statusKey] || "").trim();
+                const createdAt = String(row["Created At"] || "").trim();
+                const currentStatus = String(row["Status"] || "").trim();
 
                 return (
-                  <tr key={createdAt || idx} className="border-t border-slate-100">
+                  <tr key={createdAt || idx} className="border-t border-slate-100 align-top">
                     {headers.map((head) => (
                       <td key={head} className="px-4 py-3 text-slate-700">
                         {row[head]}
                       </td>
                     ))}
                     <td className="px-4 py-3 text-slate-700">
-                      <div className="flex flex-wrap gap-2">
+                      <div className="flex flex-wrap gap-2 min-w-[260px]">
                         {statusOptions.map((option) => (
                           <button
                             key={option}
@@ -170,9 +175,7 @@ export default function IncomingDeliveriesPage() {
                             onClick={() => updateStatus(row, option)}
                             className="rounded-xl border border-slate-300 px-3 py-1 text-xs font-medium text-slate-700 disabled:opacity-50"
                           >
-                            {loadingId === createdAt && currentStatus !== option
-                              ? "Updating..."
-                              : option}
+                            {loadingId === createdAt ? "Updating..." : option}
                           </button>
                         ))}
                       </div>
@@ -183,7 +186,7 @@ export default function IncomingDeliveriesPage() {
               {!filteredRows.length && (
                 <tr>
                   <td
-                    colSpan={Math.max(headers.length + 1, 1)}
+                    colSpan={headers.length + 1}
                     className="px-4 py-8 text-center text-slate-500"
                   >
                     No delivery records found.

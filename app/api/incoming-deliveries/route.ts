@@ -12,6 +12,21 @@ const auth = new google.auth.GoogleAuth({
 const SHEET_ID = process.env.GOOGLE_SHEET_ID as string;
 const SHEET_NAME = "App_Deliveries";
 
+const COLUMNS = [
+  "Upload Date",
+  "Arrival Date",
+  "Supplier",
+  "Batch / Reference",
+  "Description",
+  "Specification",
+  "Qty Added",
+  "Unit Price (USD)",
+  "Invoice Valid",
+  "Status",
+  "Notes",
+  "Created At",
+];
+
 export async function GET() {
   try {
     const client = await auth.getClient();
@@ -23,18 +38,13 @@ export async function GET() {
     });
 
     const rows = response.data.values || [];
-    if (!rows.length) {
-      return NextResponse.json([]);
-    }
-
-    const header = rows[0].map((h) => String(h).trim());
     const data = rows.slice(1).filter((row) =>
       row.some((cell) => String(cell || "").trim() !== "")
     );
 
     const items = data.map((row) => {
       const obj: Record<string, string> = {};
-      header.forEach((col, i) => {
+      COLUMNS.forEach((col, i) => {
         obj[col] = String(row[i] || "").trim();
       });
       return obj;
