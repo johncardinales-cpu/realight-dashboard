@@ -97,8 +97,8 @@ export default function HomePage() {
   ];
 
   return (
-    <section className="w-full space-y-6">
-      <div className="rounded-[2rem] border border-slate-200/80 bg-white p-6 shadow-[0_20px_60px_rgba(15,23,42,0.06)] sm:p-8">
+    <section className="w-full space-y-5">
+      <div className="rounded-[1.75rem] border border-slate-200/80 bg-white p-6 shadow-[0_18px_50px_rgba(15,23,42,0.06)]">
         <div className="flex flex-col gap-5 lg:flex-row lg:items-center lg:justify-between">
           <div>
             <h1 className="text-3xl font-semibold tracking-tight text-slate-950">Dashboard Overview</h1>
@@ -123,7 +123,7 @@ export default function HomePage() {
 
       <div className="grid grid-cols-1 gap-5 md:grid-cols-2 xl:grid-cols-4">
         {kpis.slice(0, 4).map((item) => (
-          <div key={item.title} className="rounded-[1.75rem] border border-slate-200/80 bg-white p-6 shadow-[0_18px_45px_rgba(15,23,42,0.05)]">
+          <div key={item.title} className="rounded-[1.5rem] border border-slate-200/80 bg-white p-5 shadow-[0_16px_40px_rgba(15,23,42,0.05)]">
             <div className="flex items-center gap-4">
               <MetricIcon path={item.icon} tone={item.tone} />
               <div>
@@ -137,7 +137,7 @@ export default function HomePage() {
 
       <div className="grid grid-cols-1 gap-5 lg:grid-cols-3">
         {kpis.slice(4).map((item) => (
-          <div key={item.title} className="rounded-[1.75rem] border border-slate-200/80 bg-white p-6 shadow-[0_18px_45px_rgba(15,23,42,0.05)]">
+          <div key={item.title} className="rounded-[1.5rem] border border-slate-200/80 bg-white p-5 shadow-[0_16px_40px_rgba(15,23,42,0.05)]">
             <div className="flex items-center gap-4">
               <MetricIcon path={item.icon} tone={item.tone} />
               <div>
@@ -149,8 +149,8 @@ export default function HomePage() {
         ))}
       </div>
 
-      <div className="grid grid-cols-1 items-start gap-6 xl:grid-cols-[minmax(0,1.7fr)_380px]">
-        <div className="rounded-[2rem] border border-slate-200/80 bg-white p-6 shadow-[0_20px_60px_rgba(15,23,42,0.06)]">
+      <div className="grid grid-cols-1 items-start gap-6 xl:grid-cols-[minmax(0,1fr)_380px]">
+        <div className="rounded-[1.75rem] border border-slate-200/80 bg-white p-6 shadow-[0_18px_50px_rgba(15,23,42,0.06)]">
           <div className="mb-6 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
             <div className="flex items-start gap-3">
               <span className="flex h-9 w-9 items-center justify-center rounded-full bg-emerald-50 text-emerald-600">
@@ -204,7 +204,7 @@ export default function HomePage() {
           </div>
         </div>
 
-        <div className="rounded-[2rem] border border-slate-200/80 bg-white p-6 shadow-[0_20px_60px_rgba(15,23,42,0.06)]">
+        <div className="rounded-[1.75rem] border border-slate-200/80 bg-white p-6 shadow-[0_18px_50px_rgba(15,23,42,0.06)]">
           <div className="mb-5 flex items-center justify-between">
             <div className="flex items-center gap-3">
               <span className="flex h-9 w-9 items-center justify-center rounded-full bg-emerald-50 text-emerald-600">
