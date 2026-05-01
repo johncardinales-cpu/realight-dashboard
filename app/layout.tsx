@@ -15,13 +15,13 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en">
-      <body className="min-h-screen bg-slate-50 text-slate-900">
-        <div className="grid min-h-screen lg:grid-cols-[260px_minmax(0,1fr)]">
+      <body className="min-h-screen overflow-x-hidden bg-slate-50 text-slate-900">
+        <div className="grid min-h-screen grid-cols-1 lg:grid-cols-[240px_minmax(0,1fr)]">
           <Sidebar />
 
           <div className="flex min-h-screen min-w-0 flex-col bg-slate-50">
             <Topbar />
-            <main className="flex-1 bg-slate-50 p-5 sm:p-6 lg:p-8">
+            <main className="min-w-0 flex-1 bg-slate-50 px-4 py-5 sm:px-5 lg:px-6 lg:py-6">
               {children}
             </main>
           </div>
