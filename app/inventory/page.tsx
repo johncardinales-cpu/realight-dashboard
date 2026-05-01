@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 
 type InventoryRow = Record<string, string | number>;
 type InventoryStatus = "In Stock" | "Low Stock" | "Incoming" | "Out of Stock";
+type ProductKind = "battery" | "inverter" | "rack" | "cable" | "clamp" | "panel" | "default";
 
 function parseDateValue(value: string) {
   if (!value) return 0;
@@ -41,6 +42,19 @@ function getStatus(row: InventoryRow): InventoryStatus {
   if (minimumBuffer > 0 && sellable <= minimumBuffer) return "Low Stock";
   if (sellable > 0 && sellable <= 2) return "Low Stock";
   return "In Stock";
+}
+
+function getProductKind(row: InventoryRow): ProductKind {
+  const text = `${String(row["Description"] || "")} ${String(row["Specification"] || "")}`.toLowerCase();
+
+  if (text.includes("panel") || text.includes("mono") || text.includes("550w")) return "panel";
+  if (text.includes("cable") || text.includes("dc ")) return "cable";
+  if (text.includes("clamp")) return "clamp";
+  if (text.includes("rack")) return "rack";
+  if (text.includes("inverter")) return "inverter";
+  if (text.includes("battery") || text.includes("lithium") || text.includes("kwh")) return "battery";
+
+  return "default";
 }
 
 function getErrorMessage(error: unknown) {
@@ -160,20 +174,99 @@ function StatusBadge({ status }: { status: InventoryStatus }) {
   );
 }
 
-function ProductThumb({ index }: { index: number }) {
-  const accents = [
-    "from-slate-950 to-slate-700",
-    "from-zinc-200 to-white",
-    "from-slate-800 to-slate-500",
-    "from-stone-200 to-white",
-    "from-red-600 to-orange-500",
-    "from-slate-200 to-slate-100",
-    "from-slate-900 to-slate-500",
-  ];
+function ProductArtwork({ kind }: { kind: ProductKind }) {
+  if (kind === "panel") {
+    return (
+      <svg viewBox="0 0 48 48" className="h-11 w-11">
+        <rect x="9" y="8" width="30" height="34" rx="3" fill="#0f2a4f" />
+        <path d="M15 8v34M24 8v34M33 8v34M9 17h30M9 26h30M9 35h30" stroke="#e0f2fe" strokeWidth="1.4" />
+        <path d="M14 5h20" stroke="#f59e0b" strokeWidth="2" strokeLinecap="round" />
+      </svg>
+    );
+  }
+
+  if (kind === "cable") {
+    return (
+      <svg viewBox="0 0 48 48" className="h-11 w-11">
+        <ellipse cx="24" cy="16" rx="15" ry="7" fill="#ef4444" />
+        <path d="M9 16v16c0 4 7 7 15 7s15-3 15-7V16" fill="#dc2626" />
+        <ellipse cx="24" cy="32" rx="15" ry="7" fill="#f97316" />
+        <ellipse cx="24" cy="16" rx="8" ry="3.5" fill="#7f1d1d" />
+        <path d="M39 27c5 1 6 5 2 8" stroke="#111827" strokeWidth="2" fill="none" strokeLinecap="round" />
+      </svg>
+    );
+  }
+
+  if (kind === "clamp") {
+    return (
+      <svg viewBox="0 0 48 48" className="h-11 w-11">
+        <path d="M14 15h20l5 8-5 10H14L9 23l5-8Z" fill="#d1d5db" stroke="#64748b" strokeWidth="1.5" />
+        <path d="M18 19h12l3 5-3 5H18l-3-5 3-5Z" fill="#f8fafc" stroke="#94a3b8" strokeWidth="1.2" />
+        <path d="M10 36h28" stroke="#0f172a" strokeWidth="2" strokeLinecap="round" />
+      </svg>
+    );
+  }
+
+  if (kind === "rack") {
+    return (
+      <svg viewBox="0 0 48 48" className="h-11 w-11">
+        <rect x="13" y="6" width="22" height="36" rx="3" fill="#111827" />
+        <rect x="17" y="11" width="14" height="5" rx="1" fill="#374151" />
+        <rect x="17" y="19" width="14" height="5" rx="1" fill="#374151" />
+        <rect x="17" y="27" width="14" height="5" rx="1" fill="#374151" />
+        <path d="M35 10h4M35 34h4" stroke="#f59e0b" strokeWidth="2" strokeLinecap="round" />
+      </svg>
+    );
+  }
+
+  if (kind === "inverter") {
+    return (
+      <svg viewBox="0 0 48 48" className="h-11 w-11">
+        <rect x="14" y="5" width="20" height="38" rx="4" fill="#f8fafc" stroke="#94a3b8" strokeWidth="1.5" />
+        <rect x="18" y="10" width="12" height="9" rx="2" fill="#0f766e" />
+        <circle cx="20" cy="28" r="2" fill="#22c55e" />
+        <circle cx="28" cy="28" r="2" fill="#f59e0b" />
+        <path d="M18 35h12" stroke="#334155" strokeWidth="2" strokeLinecap="round" />
+      </svg>
+    );
+  }
+
+  if (kind === "battery") {
+    return (
+      <svg viewBox="0 0 48 48" className="h-11 w-11">
+        <rect x="12" y="7" width="24" height="34" rx="4" fill="#111827" />
+        <rect x="18" y="4" width="12" height="5" rx="1.5" fill="#334155" />
+        <rect x="16" y="13" width="16" height="7" rx="2" fill="#1f2937" />
+        <path d="M18 29h12M18 34h12" stroke="#22c55e" strokeWidth="2" strokeLinecap="round" />
+        <path d="M32 12v7" stroke="#f59e0b" strokeWidth="2" strokeLinecap="round" />
+      </svg>
+    );
+  }
 
   return (
-    <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-slate-200 bg-white">
-      <div className={cn("h-7 w-7 rounded-md bg-gradient-to-br", accents[index % accents.length])} />
+    <svg viewBox="0 0 48 48" className="h-11 w-11">
+      <rect x="11" y="11" width="26" height="26" rx="5" fill="#e2e8f0" stroke="#94a3b8" strokeWidth="1.5" />
+      <path d="m17 18 7-4 7 4-7 4-7-4ZM17 24l7 4 7-4M17 30l7 4 7-4" stroke="#0f766e" strokeWidth="1.8" fill="none" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+function ProductThumb({ row, index }: { row: InventoryRow; index: number }) {
+  const kind = getProductKind(row);
+  const backgrounds: Record<ProductKind, string> = {
+    battery: "from-slate-100 to-slate-50",
+    inverter: "from-sky-50 to-white",
+    rack: "from-slate-100 to-white",
+    cable: "from-orange-50 to-white",
+    clamp: "from-zinc-100 to-white",
+    panel: "from-blue-50 to-white",
+    default: "from-emerald-50 to-white",
+  };
+
+  return (
+    <div className={cn("flex h-14 w-14 shrink-0 items-center justify-center overflow-hidden rounded-2xl border border-slate-200 bg-gradient-to-br shadow-sm", backgrounds[kind])}>
+      <ProductArtwork kind={kind} />
+      <span className="sr-only">Product image {index + 1}</span>
     </div>
   );
 }
@@ -395,7 +488,7 @@ export default function InventoryPage() {
                     <tr key={keyValue} className="border-b border-slate-100 last:border-b-0">
                       <td className="px-5 py-4">
                         <div className="flex items-center gap-4">
-                          <ProductThumb index={index} />
+                          <ProductThumb row={row} index={index} />
                           <span className="max-w-[260px] font-semibold text-slate-900">{String(row["Description"] || "")}</span>
                         </div>
                       </td>
