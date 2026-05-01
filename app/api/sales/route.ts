@@ -54,6 +54,10 @@ function getErrorMessage(error: unknown, fallback: string) {
   return error instanceof Error ? error.message : fallback;
 }
 
+function getSheetsClient() {
+  return google.sheets({ version: "v4", auth });
+}
+
 async function ensureSheetExists(sheets: sheets_v4.Sheets, title: string, headers: string[]) {
   const meta = await sheets.spreadsheets.get({ spreadsheetId: SHEET_ID });
   const found = (meta.data.sheets || []).find((sheet) => sheet.properties?.title === title);
@@ -89,8 +93,7 @@ async function getPricingMap(sheets: sheets_v4.Sheets) {
 
 export async function GET() {
   try {
-    const client = await auth.getClient();
-    const sheets = google.sheets({ version: "v4", auth: client });
+    const sheets = getSheetsClient();
     await ensureSheetExists(sheets, SALES_SHEET, SALES_HEADERS);
 
     const response = await sheets.spreadsheets.values.get({
@@ -146,8 +149,7 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "Sale Date, Customer, Description, Specification, and Qty are required" }, { status: 400 });
     }
 
-    const client = await auth.getClient();
-    const sheets = google.sheets({ version: "v4", auth: client });
+    const sheets = getSheetsClient();
     await ensureSheetExists(sheets, SALES_SHEET, SALES_HEADERS);
 
     const pricingMap = await getPricingMap(sheets);
