@@ -10,7 +10,8 @@ const auth = new google.auth.GoogleAuth({
 });
 
 const SHEET_ID = process.env.GOOGLE_SHEET_ID as string;
-const SHEET_NAME = "App_Deliveries";
+const DELIVERIES_SHEET = "App_Deliveries";
+const SUPPLIER_COSTS_SHEET = "Supplier_Invoice_Costs";
 
 function toNumber(value: string | undefined) {
   if (!value) return 0;
@@ -22,12 +23,18 @@ export async function GET() {
     const client = await auth.getClient();
     const sheets = google.sheets({ version: "v4", auth: client as any });
 
-    const response = await sheets.spreadsheets.values.get({
-      spreadsheetId: SHEET_ID,
-      range: `${SHEET_NAME}!A:L`,
-    });
+    const [deliveriesRes, supplierRes] = await Promise.all([
+      sheets.spreadsheets.values.get({
+        spreadsheetId: SHEET_ID,
+        range: `${DELIVERIES_SHEET}!A:L`,
+      }),
+      sheets.spreadsheets.values.get({
+        spreadsheetId: SHEET_ID,
+        range: `${SUPPLIER_COSTS_SHEET}!A:L`,
+      }).catch(() => ({ data: { values: [] } })),
+    ]);
 
-    const rows = response.data.values || [];
+    const rows = deliveriesRes.data.values || [];
     const data = rows.slice(1).filter((row) =>
       row.some((cell) => String(cell || "").trim() !== "")
     );
@@ -51,14 +58,19 @@ export async function GET() {
       }
     }
 
+    const supplierRows = (supplierRes.data.values || []).slice(1);
+    const totalExpenses = supplierRows.reduce((sum, row) => {
+      return sum + toNumber(String(row[10] || ""));
+    }, 0);
+
     return NextResponse.json({
       incomingUnits,
       warehouseReceived,
       actualOnHand,
       sellableUnits,
       totalSales: 0,
-      totalExpenses: 0,
-      netGain: 0,
+      totalExpenses,
+      netGain: 0 - totalExpenses,
     });
   } catch (error: any) {
     console.error("DASHBOARD API ERROR:", error);
