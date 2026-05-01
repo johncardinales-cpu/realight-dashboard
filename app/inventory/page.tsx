@@ -43,6 +43,10 @@ function getStatus(row: InventoryRow): InventoryStatus {
   return "In Stock";
 }
 
+function getErrorMessage(error: unknown) {
+  return error instanceof Error ? error.message : "Failed to update dates.";
+}
+
 function cn(...classes: string[]) {
   return classes.filter(Boolean).join(" ");
 }
@@ -183,8 +187,8 @@ export default function InventoryPage() {
 
   async function loadRows() {
     const res = await fetch("/api/inventory", { cache: "no-store" });
-    const data = await res.json();
-    setRows(Array.isArray(data) ? data : []);
+    const data: unknown = await res.json();
+    setRows(Array.isArray(data) ? (data as InventoryRow[]) : []);
   }
 
   useEffect(() => {
@@ -228,13 +232,19 @@ export default function InventoryPage() {
         }),
       });
 
-      const data = await res.json();
-      if (!res.ok) throw new Error(data?.error || "Failed to update dates");
+      const data: unknown = await res.json();
+      if (!res.ok) {
+        const errorMessage =
+          typeof data === "object" && data !== null && "error" in data
+            ? String((data as { error?: unknown }).error)
+            : "Failed to update dates";
+        throw new Error(errorMessage);
+      }
 
       setMessage(`Updated dates for ${description}.`);
       await loadRows();
-    } catch (error: any) {
-      setMessage(error?.message || "Failed to update dates.");
+    } catch (error: unknown) {
+      setMessage(getErrorMessage(error));
     } finally {
       setSavingKey("");
     }
@@ -468,8 +478,8 @@ export default function InventoryPage() {
                         {status === "Incoming"
                           ? `${String(row["Incoming Qty"] || 0)} incoming · ${formatDisplayDate(String(row["Latest Incoming"] || ""))}`
                           : status === "Out of Stock"
-                          ? "Out of stock"
-                          : `Only ${String(row["Sellable Qty"] || 0)} sellable left`}
+                            ? "Out of stock"
+                            : `Only ${String(row["Sellable Qty"] || 0)} sellable left`}
                       </p>
                       <button className="mt-2 text-sm font-semibold text-blue-600">View item</button>
                     </div>
