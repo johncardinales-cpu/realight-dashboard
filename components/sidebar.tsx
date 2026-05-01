@@ -14,14 +14,44 @@ const navItems = [
   { label: "Settings", href: "/settings", icon: "M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6ZM19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06A1.65 1.65 0 0 0 15 19.4a1.65 1.65 0 0 0-1 .6 1.65 1.65 0 0 0-.4 1.08V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 8 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.6 15a1.65 1.65 0 0 0-.6-1 1.65 1.65 0 0 0-1.08-.4H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 8a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.6c.38 0 .73-.13 1-.35.27-.22.42-.56.4-.91V3a2 2 0 1 1 4 0v.09c-.02.35.13.69.4.91.27.22.62.35 1 .35a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9c0 .38.13.73.35 1 .22.27.56.42.91.4H21a2 2 0 1 1 0 4h-.09c-.35-.02-.69.13-.91.4-.22.27-.35.62-.35 1Z" },
 ];
 
+function ReallightsLogo() {
+  return (
+    <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl bg-gradient-to-br from-amber-50 via-white to-emerald-50 ring-1 ring-slate-200 shadow-sm">
+      <svg viewBox="0 0 64 64" aria-hidden="true" className="h-11 w-11">
+        <defs>
+          <linearGradient id="solarGold" x1="10" x2="54" y1="8" y2="56" gradientUnits="userSpaceOnUse">
+            <stop stopColor="#fbbf24" />
+            <stop offset="0.55" stopColor="#f59e0b" />
+            <stop offset="1" stopColor="#d97706" />
+          </linearGradient>
+          <linearGradient id="panelNavy" x1="18" x2="48" y1="36" y2="58" gradientUnits="userSpaceOnUse">
+            <stop stopColor="#0f2a4f" />
+            <stop offset="1" stopColor="#061733" />
+          </linearGradient>
+        </defs>
+        <path d="M32 6v10M32 48v8M10 32h10M44 32h10M16.4 16.4l7 7M40.6 40.6l7 7M47.6 16.4l-7 7M23.4 40.6l-7 7" stroke="url(#solarGold)" strokeWidth="2.6" strokeLinecap="round" />
+        <path d="M17 34a15 15 0 1 1 30 0" fill="none" stroke="url(#solarGold)" strokeWidth="5" strokeLinecap="round" />
+        <path d="M32 20l2.6 8.2L43 31l-8.4 2.8L32 42l-2.6-8.2L21 31l8.4-2.8L32 20Z" fill="url(#solarGold)" />
+        <path d="M19 49h26l-6-13H25l-6 13Z" fill="url(#panelNavy)" />
+        <path d="M25 36 22 49M32 36v13M39 36l3 13M20.5 44h23" stroke="white" strokeOpacity="0.9" strokeWidth="2" strokeLinecap="round" />
+      </svg>
+    </div>
+  );
+}
+
 export default function Sidebar() {
   const pathname = usePathname();
 
   return (
-    <aside className="hidden border-r border-slate-200/80 bg-white/90 px-4 py-8 shadow-[10px_0_40px_rgba(15,23,42,0.03)] backdrop-blur lg:block">
-      <div className="mb-10 px-2">
-        <h1 className="text-3xl font-bold tracking-tight text-slate-950">Realight</h1>
-        <p className="mt-1 text-sm font-medium text-slate-500">Corporation Report</p>
+    <aside className="hidden border-r border-slate-200/80 bg-white/95 px-4 py-6 shadow-[10px_0_40px_rgba(15,23,42,0.03)] backdrop-blur lg:block">
+      <div className="mb-8 px-1">
+        <div className="flex items-center gap-3">
+          <ReallightsLogo />
+          <div className="min-w-0">
+            <h1 className="truncate text-2xl font-bold tracking-tight text-slate-950">Reallights</h1>
+            <p className="truncate text-sm font-semibold tracking-[0.18em] text-amber-600">SOLAR</p>
+          </div>
+        </div>
       </div>
 
       <nav className="space-y-2 text-sm font-medium">
