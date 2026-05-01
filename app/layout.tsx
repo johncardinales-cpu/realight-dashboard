@@ -2,6 +2,7 @@ import "./globals.css";
 import type { Metadata } from "next";
 import Sidebar from "@/components/sidebar";
 import Topbar from "@/components/topbar";
+import AIChatBox from "@/components/ai-chatbox";
 
 export const metadata: Metadata = {
   title: "Realight Dashboard",
@@ -26,6 +27,7 @@ export default function RootLayout({
             </main>
           </div>
         </div>
+        <AIChatBox />
       </body>
     </html>
   );
