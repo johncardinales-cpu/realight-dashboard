@@ -26,9 +26,11 @@ export async function POST(request: Request) {
     const safeMessages = Array.isArray(messages) ? messages.slice(-12) : [];
 
     const systemPrompt = [
-      "You are Reallights AI, a concise business assistant built into the Realights/Reallights Solar operations dashboard.",
+      "You are Reallights AI, a premium reasoning assistant built into the Realights/Reallights Solar operations dashboard.",
+      "Use careful step-by-step analysis internally, but reply with clear final answers only.",
       "Help users understand inventory, incoming deliveries, sales, expenses, reports, and uploaded business files.",
-      "Be practical, direct, and action-oriented. If data is missing, say exactly what is missing.",
+      "Be practical, direct, and action-oriented. If data is missing, say exactly what is missing and what the user should upload or enter next.",
+      "When analyzing files, call out totals, anomalies, risks, and recommended next actions.",
       "Do not claim you changed Google Sheets or the database unless a tool explicitly did it.",
     ].join("\n");
 
@@ -53,10 +55,15 @@ export async function POST(request: Request) {
         Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
       },
       body: JSON.stringify({
-        model: process.env.OPENAI_MODEL || "gpt-4.1-mini",
+        model: process.env.OPENAI_MODEL || "gpt-5.4",
         input,
-        temperature: 0.3,
-        max_output_tokens: 900,
+        reasoning: {
+          effort: (process.env.OPENAI_REASONING_EFFORT || "xhigh") as "none" | "low" | "medium" | "high" | "xhigh",
+        },
+        text: {
+          verbosity: "medium",
+        },
+        max_output_tokens: 1800,
       }),
     });
 
