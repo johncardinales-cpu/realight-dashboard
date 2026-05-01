@@ -16,11 +16,14 @@ export default function RootLayout({
   return (
     <html lang="en">
       <body className="min-h-screen bg-slate-50 text-slate-900">
-        <div className="grid min-h-screen grid-cols-[260px_1fr]">
+        <div className="grid min-h-screen lg:grid-cols-[260px_minmax(0,1fr)]">
           <Sidebar />
-          <div className="flex min-h-screen flex-col">
+
+          <div className="flex min-h-screen min-w-0 flex-col bg-slate-50">
             <Topbar />
-            <main className="flex-1 p-6">{children}</main>
+            <main className="flex-1 bg-slate-50 p-5 sm:p-6 lg:p-8">
+              {children}
+            </main>
           </div>
         </div>
       </body>
