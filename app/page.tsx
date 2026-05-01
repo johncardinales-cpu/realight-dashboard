@@ -80,10 +80,16 @@ export default function HomePage() {
     onHand,
   ];
   const maxTrend = Math.max(...trend, 20000);
+  const chartLeft = 58;
+  const chartRight = 1060;
+  const chartBottom = 310;
+  const chartTop = 40;
+  const chartWidth = chartRight - chartLeft;
+  const chartHeight = chartBottom - chartTop;
   const points = trend
     .map((value, index) => {
-      const x = 40 + index * 116;
-      const y = 240 - (value / maxTrend) * 190;
+      const x = chartLeft + index * (chartWidth / (trend.length - 1));
+      const y = chartBottom - (value / maxTrend) * chartHeight;
       return `${x},${y}`;
     })
     .join(" ");
@@ -106,11 +112,7 @@ export default function HomePage() {
           </div>
           <div className="flex flex-wrap gap-3">
             <button className="inline-flex items-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 shadow-sm transition hover:border-slate-300 hover:bg-slate-50">
-              <svg viewBox="0 0 24 24" aria-hidden="true" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M12 3v12" />
-                <path d="m7 10 5 5 5-5" />
-                <path d="M5 21h14" />
-              </svg>
+              <svg viewBox="0 0 24 24" aria-hidden="true" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M12 3v12" /><path d="m7 10 5 5 5-5" /><path d="M5 21h14" /></svg>
               Export Report
             </button>
             <button className="inline-flex items-center gap-2 rounded-2xl bg-emerald-600 px-5 py-2.5 text-sm font-semibold text-white shadow-sm shadow-emerald-600/20 transition hover:bg-emerald-700">
@@ -126,10 +128,7 @@ export default function HomePage() {
           <div key={item.title} className="rounded-[1.5rem] border border-slate-200/80 bg-white p-5 shadow-[0_16px_40px_rgba(15,23,42,0.05)]">
             <div className="flex items-center gap-4">
               <MetricIcon path={item.icon} tone={item.tone} />
-              <div>
-                <p className="text-sm font-medium text-slate-500">{item.title}</p>
-                <p className="mt-1 text-3xl font-semibold tracking-tight text-slate-950">{item.value}</p>
-              </div>
+              <div><p className="text-sm font-medium text-slate-500">{item.title}</p><p className="mt-1 text-3xl font-semibold tracking-tight text-slate-950">{item.value}</p></div>
             </div>
           </div>
         ))}
@@ -140,10 +139,7 @@ export default function HomePage() {
           <div key={item.title} className="rounded-[1.5rem] border border-slate-200/80 bg-white p-5 shadow-[0_16px_40px_rgba(15,23,42,0.05)]">
             <div className="flex items-center gap-4">
               <MetricIcon path={item.icon} tone={item.tone} />
-              <div>
-                <p className="text-sm font-medium text-slate-500">{item.title}</p>
-                <p className="mt-1 text-3xl font-semibold tracking-tight text-slate-950">{item.value}</p>
-              </div>
+              <div><p className="text-sm font-medium text-slate-500">{item.title}</p><p className="mt-1 text-3xl font-semibold tracking-tight text-slate-950">{item.value}</p></div>
             </div>
           </div>
         ))}
@@ -151,83 +147,51 @@ export default function HomePage() {
 
       <div className="grid grid-cols-1 items-start gap-6 xl:grid-cols-[minmax(0,1fr)_380px]">
         <div className="rounded-[1.75rem] border border-slate-200/80 bg-white p-6 shadow-[0_18px_50px_rgba(15,23,42,0.06)]">
-          <div className="mb-6 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+          <div className="mb-5 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
             <div className="flex items-start gap-3">
-              <span className="flex h-9 w-9 items-center justify-center rounded-full bg-emerald-50 text-emerald-600">
-                <svg viewBox="0 0 24 24" aria-hidden="true" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-                  <path d={iconPaths.gain} />
-                </svg>
-              </span>
-              <div>
-                <h2 className="text-xl font-semibold tracking-tight text-slate-950">Inventory Trend</h2>
-                <p className="mt-1 text-sm text-slate-500">Actual on hand over the last 6 months.</p>
-              </div>
+              <span className="flex h-9 w-9 items-center justify-center rounded-full bg-emerald-50 text-emerald-600"><svg viewBox="0 0 24 24" aria-hidden="true" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d={iconPaths.gain} /></svg></span>
+              <div><h2 className="text-xl font-semibold tracking-tight text-slate-950">Inventory Trend</h2><p className="mt-1 text-sm text-slate-500">Actual on hand over the last 6 months.</p></div>
             </div>
             <button className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-600 shadow-sm">Last 6 Months</button>
           </div>
 
-          <div className="overflow-hidden rounded-3xl bg-gradient-to-b from-slate-50 to-white p-3">
-            <svg viewBox="0 0 660 300" className="h-[300px] w-full" role="img" aria-label="Inventory trend chart">
+          <div className="overflow-hidden rounded-3xl bg-gradient-to-b from-slate-50 to-white px-3 pb-2 pt-4">
+            <svg viewBox="0 0 1120 380" className="h-[390px] w-full" role="img" aria-label="Inventory trend chart" preserveAspectRatio="none">
               {[0, 1, 2, 3].map((line) => (
-                <line key={line} x1="40" x2="620" y1={50 + line * 60} y2={50 + line * 60} stroke="#e2e8f0" strokeDasharray="4 6" />
+                <line key={line} x1={chartLeft} x2={chartRight} y1={chartTop + line * 72} y2={chartTop + line * 72} stroke="#e2e8f0" strokeDasharray="4 6" />
               ))}
-              <polyline points={`40,260 ${points} 620,260`} fill="#10b981" fillOpacity="0.08" stroke="none" />
-              <polyline points={points} fill="none" stroke="#059669" strokeWidth="4" strokeLinecap="round" strokeLinejoin="round" />
+              <polyline points={`${chartLeft},${chartBottom} ${points} ${chartRight},${chartBottom}`} fill="#10b981" fillOpacity="0.08" stroke="none" />
+              <polyline points={points} fill="none" stroke="#059669" strokeWidth="4" strokeLinecap="round" strokeLinejoin="round" vectorEffect="non-scaling-stroke" />
               {trend.map((value, index) => {
-                const x = 40 + index * 116;
-                const y = 240 - (value / maxTrend) * 190;
-                return <circle key={index} cx={x} cy={y} r="6" fill="#059669" stroke="white" strokeWidth="3" />;
+                const x = chartLeft + index * (chartWidth / (trend.length - 1));
+                const y = chartBottom - (value / maxTrend) * chartHeight;
+                return <circle key={index} cx={x} cy={y} r="6" fill="#059669" stroke="white" strokeWidth="3" vectorEffect="non-scaling-stroke" />;
               })}
               <g className="text-xs fill-slate-500">
-                <text x="20" y="54">20K</text>
-                <text x="20" y="114">15K</text>
-                <text x="20" y="174">10K</text>
-                <text x="26" y="234">5K</text>
-                <text x="32" y="264">0</text>
+                <text x="18" y="44">20K</text><text x="18" y="116">15K</text><text x="18" y="188">10K</text><text x="24" y="260">5K</text><text x="32" y="314">0</text>
                 {['Dec', 'Jan', 'Feb', 'Mar', 'Apr', 'May'].map((month, index) => (
-                  <text key={month} x={30 + index * 116} y="288">{month}</text>
+                  <text key={month} x={chartLeft - 8 + index * (chartWidth / (trend.length - 1))} y="350">{month}</text>
                 ))}
               </g>
-              <foreignObject x="470" y="135" width="145" height="88">
+              <foreignObject x="790" y="150" width="155" height="90">
                 <div className="rounded-2xl border border-slate-200 bg-white p-3 text-sm shadow-xl">
-                  <p className="font-medium text-slate-500">May 2025</p>
-                  <p className="mt-1 text-slate-500">Actual On Hand</p>
-                  <p className="mt-1 font-semibold text-slate-950">{data ? formatNumber(data.actualOnHand) : "..."}</p>
+                  <p className="font-medium text-slate-500">May 2025</p><p className="mt-1 text-slate-500">Actual On Hand</p><p className="mt-1 font-semibold text-slate-950">{data ? formatNumber(data.actualOnHand) : "..."}</p>
                 </div>
               </foreignObject>
             </svg>
           </div>
 
-          <div className="mt-4 flex items-center justify-center gap-2 text-sm font-medium text-slate-500">
-            <span className="h-2.5 w-2.5 rounded-full bg-emerald-600" />
-            Actual On Hand
-          </div>
+          <div className="mt-4 flex items-center justify-center gap-2 text-sm font-medium text-slate-500"><span className="h-2.5 w-2.5 rounded-full bg-emerald-600" />Actual On Hand</div>
         </div>
 
         <div className="rounded-[1.75rem] border border-slate-200/80 bg-white p-6 shadow-[0_18px_50px_rgba(15,23,42,0.06)]">
           <div className="mb-5 flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <span className="flex h-9 w-9 items-center justify-center rounded-full bg-emerald-50 text-emerald-600">
-                <svg viewBox="0 0 24 24" aria-hidden="true" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M12 8v5l3 2" />
-                  <path d="M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" />
-                </svg>
-              </span>
-              <h2 className="text-xl font-semibold tracking-tight text-slate-950">Recent Activity</h2>
-            </div>
+            <div className="flex items-center gap-3"><span className="flex h-9 w-9 items-center justify-center rounded-full bg-emerald-50 text-emerald-600"><svg viewBox="0 0 24 24" aria-hidden="true" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M12 8v5l3 2" /><path d="M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" /></svg></span><h2 className="text-xl font-semibold tracking-tight text-slate-950">Recent Activity</h2></div>
             <button className="text-sm font-semibold text-emerald-600 hover:text-emerald-700">View all</button>
           </div>
-
           <div className="divide-y divide-slate-100">
             {activity.map((item) => (
-              <div key={item.title} className="flex items-center gap-4 py-4 first:pt-0 last:pb-0">
-                <MetricIcon path={item.icon} tone={item.tone as "emerald" | "blue" | "amber" | "violet" | "rose"} />
-                <div className="min-w-0 flex-1">
-                  <p className="font-semibold text-slate-950">{item.title}</p>
-                  <p className="mt-1 truncate text-sm text-slate-500">{item.note}</p>
-                </div>
-                <p className="whitespace-nowrap text-sm font-medium text-slate-500">{item.time}</p>
-              </div>
+              <div key={item.title} className="flex items-center gap-4 py-4 first:pt-0 last:pb-0"><MetricIcon path={item.icon} tone={item.tone as "emerald" | "blue" | "amber" | "violet" | "rose"} /><div className="min-w-0 flex-1"><p className="font-semibold text-slate-950">{item.title}</p><p className="mt-1 truncate text-sm text-slate-500">{item.note}</p></div><p className="whitespace-nowrap text-sm font-medium text-slate-500">{item.time}</p></div>
             ))}
           </div>
         </div>
