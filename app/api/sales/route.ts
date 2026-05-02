@@ -28,28 +28,21 @@ const SALES_HEADERS = [
   "Payment Status",
   "Salesperson",
   "Notes",
+  "Group Ref",
 ];
 
 function toNumber(value: string | number | undefined) {
   return Number(String(value || "").replace(/[^0-9.-]/g, "")) || 0;
 }
 
-async function ensureSheetExists(
-  sheets: any,
-  title: string,
-  headers: string[]
-) {
+async function ensureSheetExists(sheets: any, title: string, headers: string[]) {
   const meta = await sheets.spreadsheets.get({ spreadsheetId: SHEET_ID });
-  const found = (meta.data.sheets || []).find(
-    (s: any) => s.properties?.title === title
-  );
+  const found = (meta.data.sheets || []).find((s: any) => s.properties?.title === title);
   if (found) return;
 
   await sheets.spreadsheets.batchUpdate({
     spreadsheetId: SHEET_ID,
-    requestBody: {
-      requests: [{ addSheet: { properties: { title } } }],
-    },
+    requestBody: { requests: [{ addSheet: { properties: { title } } }] },
   });
 
   const lastCol = String.fromCharCode(64 + headers.length);
@@ -89,15 +82,13 @@ export async function GET() {
 
     const response = await sheets.spreadsheets.values.get({
       spreadsheetId: SHEET_ID,
-      range: `${SALES_SHEET}!A:N`,
+      range: `${SALES_SHEET}!A:O`,
     });
 
     const rows = (response.data.values || []) as string[][];
-    const data = rows
-      .slice(1)
-      .filter((row: string[]) =>
-        row.some((cell) => String(cell || "").trim() !== "")
-      );
+    const data = rows.slice(1).filter((row) =>
+      row.some((cell) => String(cell || "").trim() !== "")
+    );
 
     const items = data.map((row: string[], index: number) => ({
       rowNumber: index + 2,
@@ -115,6 +106,7 @@ export async function GET() {
       paymentStatus: String(row[11] || "Pending"),
       salesperson: String(row[12] || ""),
       notes: String(row[13] || ""),
+      groupRef: String(row[14] || ""),
     }));
 
     return NextResponse.json(items);
@@ -133,20 +125,15 @@ export async function POST(req: Request) {
     const saleDate = String(body?.saleDate || "").trim();
     const salesRefNo = String(body?.salesRefNo || "").trim();
     const customerName = String(body?.customerName || "").trim();
-    const description = String(body?.description || "").trim();
-    const specification = String(body?.specification || "").trim();
-    const qty = toNumber(body?.qty);
-    const unitPricePhp = toNumber(body?.unitPricePhp);
     const paymentStatus = String(body?.paymentStatus || "Pending").trim();
     const salesperson = String(body?.salesperson || "").trim();
     const notes = String(body?.notes || "").trim();
+    const groupRef = String(body?.groupRef || salesRefNo || `${Date.now()}`).trim();
+    const items = Array.isArray(body?.items) ? body.items : [];
 
-    if (!saleDate || !customerName || !description || !specification || !qty) {
+    if (!saleDate || !customerName || !items.length) {
       return NextResponse.json(
-        {
-          error:
-            "Sale Date, Customer, Description, Specification, and Qty are required",
-        },
+        { error: "Sale Date, Customer Name, and at least one product are required" },
         { status: 400 }
       );
     }
@@ -156,38 +143,47 @@ export async function POST(req: Request) {
     await ensureSheetExists(sheets, SALES_SHEET, SALES_HEADERS);
 
     const pricingMap = await getPricingMap(sheets);
-    const key = `${description}|||${specification}`;
-    const costPricePhp = pricingMap.get(key) || 0;
-    const totalSalePhp = qty * unitPricePhp;
-    const totalCostPhp = qty * costPricePhp;
-    const grossProfitPhp = totalSalePhp - totalCostPhp;
+
+    const rowsToAppend = items.map((item: any) => {
+      const description = String(item?.description || "").trim();
+      const specification = String(item?.specification || "").trim();
+      const qty = toNumber(item?.qty);
+      const unitPricePhp = toNumber(item?.unitPricePhp);
+
+      const key = `${description}|||${specification}`;
+      const costPricePhp = pricingMap.get(key) || 0;
+      const totalSalePhp = qty * unitPricePhp;
+      const totalCostPhp = qty * costPricePhp;
+      const grossProfitPhp = totalSalePhp - totalCostPhp;
+
+      return [
+        saleDate,
+        salesRefNo,
+        customerName,
+        description,
+        specification,
+        qty,
+        unitPricePhp,
+        totalSalePhp,
+        costPricePhp,
+        totalCostPhp,
+        grossProfitPhp,
+        paymentStatus,
+        salesperson,
+        notes,
+        groupRef,
+      ];
+    });
 
     await sheets.spreadsheets.values.append({
       spreadsheetId: SHEET_ID,
-      range: `${SALES_SHEET}!A:N`,
+      range: `${SALES_SHEET}!A:O`,
       valueInputOption: "USER_ENTERED",
       insertDataOption: "INSERT_ROWS",
-      requestBody: {
-        values: [[
-          saleDate,
-          salesRefNo,
-          customerName,
-          description,
-          specification,
-          qty,
-          unitPricePhp,
-          totalSalePhp,
-          costPricePhp,
-          totalCostPhp,
-          grossProfitPhp,
-          paymentStatus,
-          salesperson,
-          notes,
-        ]],
-      },
+      requestBody: { values: rowsToAppend },
     });
 
-    return NextResponse.json({ ok: true });
+    return NextResponse.json({ ok: true, lines: rowsToAppend.length });
   } catch (error: any) {
     console.error("SALES POST ERROR:", error);
     return NextResponse.json(

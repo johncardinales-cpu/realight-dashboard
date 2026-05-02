@@ -2,7 +2,21 @@
 
 import { useEffect, useMemo, useState } from "react";
 
-type Sale = {
+type PriceRow = {
+  description: string;
+  specification: string;
+  costPricePhp: number;
+  sellingPricePhp: number;
+};
+
+type SaleLine = {
+  description: string;
+  specification: string;
+  qty: number;
+  unitPricePhp: number;
+};
+
+type SavedSale = {
   saleDate: string;
   salesRefNo: string;
   customerName: string;
@@ -16,43 +30,33 @@ type Sale = {
   grossProfitPhp: number;
   paymentStatus: string;
   salesperson: string;
-  notes: string;
+  groupRef: string;
 };
 
-type PriceRow = {
-  description: string;
-  specification: string;
-  category: string;
-  sellingPricePhp: number;
-  dealerPricePhp: number;
-  minimumPricePhp: number;
-};
-
-function money(value: number) {
-  return `₱${(Number(value) || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-}
-
-const emptyForm: Sale = {
-  saleDate: "",
-  salesRefNo: "",
-  customerName: "",
+const emptyLine: SaleLine = {
   description: "",
   specification: "",
   qty: 1,
   unitPricePhp: 0,
-  totalSalePhp: 0,
-  costPricePhp: 0,
-  totalCostPhp: 0,
-  grossProfitPhp: 0,
-  paymentStatus: "Pending",
-  salesperson: "",
-  notes: "",
 };
 
+function money(value: number) {
+  return `₱${(Number(value) || 0).toLocaleString(undefined, {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  })}`;
+}
+
 export default function SalesPage() {
-  const [rows, setRows] = useState<Sale[]>([]);
   const [pricing, setPricing] = useState<PriceRow[]>([]);
-  const [form, setForm] = useState<Sale>(emptyForm);
+  const [rows, setRows] = useState<SavedSale[]>([]);
+  const [saleDate, setSaleDate] = useState("");
+  const [salesRefNo, setSalesRefNo] = useState("");
+  const [customerName, setCustomerName] = useState("");
+  const [paymentStatus, setPaymentStatus] = useState("Pending");
+  const [salesperson, setSalesperson] = useState("");
+  const [notes, setNotes] = useState("");
+  const [items, setItems] = useState<SaleLine[]>([{ ...emptyLine }]);
   const [message, setMessage] = useState("");
   const [saving, setSaving] = useState(false);
 
@@ -71,37 +75,84 @@ export default function SalesPage() {
     loadAll().catch(console.error);
   }, []);
 
-  const matchingPricing = useMemo(() => {
-    return pricing.find(
-      (row) => row.description === form.description && row.specification === form.specification
+  function updateItem(index: number, patch: Partial<SaleLine>) {
+    setItems((prev) => prev.map((item, i) => i === index ? { ...item, ...patch } : item));
+  }
+
+  function addLine() {
+    setItems((prev) => [...prev, { ...emptyLine }]);
+  }
+
+  function removeLine(index: number) {
+    setItems((prev) => prev.length === 1 ? prev : prev.filter((_, i) => i !== index));
+  }
+
+  function autofillPrice(index: number, description: string, specification: string) {
+    const match = pricing.find(
+      (row) => row.description === description && row.specification === specification
     );
-  }, [pricing, form.description, form.specification]);
+    updateItem(index, {
+      description,
+      specification,
+      unitPricePhp: match?.sellingPricePhp || 0,
+    });
+  }
 
-  useEffect(() => {
-    if (matchingPricing && !form.unitPricePhp) {
-      setForm((prev) => ({
-        ...prev,
-        unitPricePhp: Number(matchingPricing.sellingPricePhp) || 0,
-      }));
-    }
-  }, [matchingPricing]);
-
-  const totalPreview = (Number(form.qty) || 0) * (Number(form.unitPricePhp) || 0);
+  const totals = useMemo(() => {
+    return items.reduce(
+      (acc, item) => {
+        const matched = pricing.find(
+          (row) =>
+            row.description === item.description &&
+            row.specification === item.specification
+        );
+        const qty = Number(item.qty) || 0;
+        const unit = Number(item.unitPricePhp) || 0;
+        const cost = Number(matched?.costPricePhp) || 0;
+        acc.sale += qty * unit;
+        acc.cost += qty * cost;
+        acc.profit += (qty * unit) - (qty * cost);
+        return acc;
+      },
+      { sale: 0, cost: 0, profit: 0 }
+    );
+  }, [items, pricing]);
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
     setSaving(true);
     setMessage("");
+
     try {
+      const cleanItems = items.filter(
+        (item) => item.description && item.specification && Number(item.qty) > 0
+      );
+
       const res = await fetch("/api/sales", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(form),
+        body: JSON.stringify({
+          saleDate,
+          salesRefNo,
+          customerName,
+          paymentStatus,
+          salesperson,
+          notes,
+          items: cleanItems,
+        }),
       });
+
       const data = await res.json();
       if (!res.ok) throw new Error(data?.error || "Failed to save sale");
-      setMessage("Sale saved successfully.");
-      setForm(emptyForm);
+
+      setMessage(`Sale saved successfully with ${data?.lines || 0} line(s).`);
+      setSaleDate("");
+      setSalesRefNo("");
+      setCustomerName("");
+      setPaymentStatus("Pending");
+      setSalesperson("");
+      setNotes("");
+      setItems([{ ...emptyLine }]);
       await loadAll();
     } catch (error: any) {
       setMessage(error?.message || "Failed to save sale.");
@@ -115,34 +166,77 @@ export default function SalesPage() {
       <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
         <h1 className="text-3xl font-semibold text-slate-900">Sales</h1>
         <p className="mt-1 text-sm text-slate-600">
-          Record sales in pesos. Pricing can still be manually adjusted per deal when needed.
+          You can add multiple products in one sale. Each line keeps its own quantity and unit price.
         </p>
         {message ? <p className="mt-3 text-sm text-slate-700">{message}</p> : null}
       </div>
 
-      <form onSubmit={onSubmit} className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
+      <form onSubmit={onSubmit} className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm space-y-4">
         <div className="grid gap-4 md:grid-cols-3">
-          <input className="rounded-xl border border-slate-300 px-3 py-2" type="date" value={form.saleDate} onChange={(e) => setForm({ ...form, saleDate: e.target.value })} />
-          <input className="rounded-xl border border-slate-300 px-3 py-2" placeholder="Sales Ref No." value={form.salesRefNo} onChange={(e) => setForm({ ...form, salesRefNo: e.target.value })} />
-          <input className="rounded-xl border border-slate-300 px-3 py-2" placeholder="Customer Name" value={form.customerName} onChange={(e) => setForm({ ...form, customerName: e.target.value })} />
-          <input className="rounded-xl border border-slate-300 px-3 py-2" placeholder="Description" value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} />
-          <input className="rounded-xl border border-slate-300 px-3 py-2" placeholder="Specification" value={form.specification} onChange={(e) => setForm({ ...form, specification: e.target.value })} />
-          <input className="rounded-xl border border-slate-300 px-3 py-2" type="number" placeholder="Qty" value={form.qty} onChange={(e) => setForm({ ...form, qty: Number(e.target.value) })} />
-          <input className="rounded-xl border border-slate-300 px-3 py-2" type="number" step="0.01" placeholder="Manual Unit Price (PHP)" value={form.unitPricePhp} onChange={(e) => setForm({ ...form, unitPricePhp: Number(e.target.value) })} />
-          <input className="rounded-xl border border-slate-300 px-3 py-2" placeholder="Payment Status" value={form.paymentStatus} onChange={(e) => setForm({ ...form, paymentStatus: e.target.value })} />
-          <input className="rounded-xl border border-slate-300 px-3 py-2" placeholder="Salesperson" value={form.salesperson} onChange={(e) => setForm({ ...form, salesperson: e.target.value })} />
-          <input className="rounded-xl border border-slate-300 px-3 py-2 md:col-span-3" placeholder="Notes" value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} />
+          <input className="rounded-xl border border-slate-300 px-3 py-2" type="date" value={saleDate} onChange={(e) => setSaleDate(e.target.value)} />
+          <input className="rounded-xl border border-slate-300 px-3 py-2" placeholder="Sales Ref No." value={salesRefNo} onChange={(e) => setSalesRefNo(e.target.value)} />
+          <input className="rounded-xl border border-slate-300 px-3 py-2" placeholder="Customer Name" value={customerName} onChange={(e) => setCustomerName(e.target.value)} />
+          <input className="rounded-xl border border-slate-300 px-3 py-2" placeholder="Payment Status" value={paymentStatus} onChange={(e) => setPaymentStatus(e.target.value)} />
+          <input className="rounded-xl border border-slate-300 px-3 py-2" placeholder="Salesperson" value={salesperson} onChange={(e) => setSalesperson(e.target.value)} />
+          <input className="rounded-xl border border-slate-300 px-3 py-2" placeholder="Notes" value={notes} onChange={(e) => setNotes(e.target.value)} />
         </div>
 
-        <div className="mt-4 grid gap-2 text-sm text-slate-700 md:grid-cols-2">
-          <p>Sale Total Preview: <span className="font-semibold">{money(totalPreview)}</span></p>
-          <p>Selected Pricing Row: <span className="font-semibold">{matchingPricing ? "Matched" : "Manual / No Match"}</span></p>
+        <div className="space-y-3">
+          {items.map((item, index) => (
+            <div key={index} className="grid gap-3 rounded-2xl border border-slate-200 p-4 md:grid-cols-5">
+              <input
+                className="rounded-xl border border-slate-300 px-3 py-2"
+                placeholder="Description"
+                value={item.description}
+                onChange={(e) => updateItem(index, { description: e.target.value })}
+              />
+              <input
+                className="rounded-xl border border-slate-300 px-3 py-2"
+                placeholder="Specification"
+                value={item.specification}
+                onChange={(e) => updateItem(index, { specification: e.target.value })}
+                onBlur={() => autofillPrice(index, item.description, item.specification)}
+              />
+              <input
+                className="rounded-xl border border-slate-300 px-3 py-2"
+                type="number"
+                placeholder="Qty"
+                value={item.qty}
+                onChange={(e) => updateItem(index, { qty: Number(e.target.value) })}
+              />
+              <input
+                className="rounded-xl border border-slate-300 px-3 py-2"
+                type="number"
+                step="0.01"
+                placeholder="Unit Price (PHP)"
+                value={item.unitPricePhp}
+                onChange={(e) => updateItem(index, { unitPricePhp: Number(e.target.value) })}
+              />
+              <div className="flex items-center gap-2">
+                <div className="text-sm text-slate-700">
+                  Line Total: <span className="font-semibold">{money((Number(item.qty) || 0) * (Number(item.unitPricePhp) || 0))}</span>
+                </div>
+                <button type="button" onClick={() => removeLine(index)} className="rounded-lg border border-slate-300 px-3 py-1 text-xs font-medium text-slate-700">
+                  Remove
+                </button>
+              </div>
+            </div>
+          ))}
         </div>
 
-        <div className="mt-4">
+        <div className="flex gap-3">
+          <button type="button" onClick={addLine} className="rounded-xl border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700">
+            Add Product Line
+          </button>
           <button type="submit" disabled={saving} className="rounded-xl bg-emerald-600 px-4 py-2 text-sm font-medium text-white disabled:opacity-60">
             {saving ? "Saving..." : "Save Sale"}
           </button>
+        </div>
+
+        <div className="grid gap-2 text-sm text-slate-700 md:grid-cols-3">
+          <p>Total Sale: <span className="font-semibold">{money(totals.sale)}</span></p>
+          <p>Total Cost: <span className="font-semibold">{money(totals.cost)}</span></p>
+          <p>Gross Profit: <span className="font-semibold">{money(totals.profit)}</span></p>
         </div>
       </form>
 
@@ -152,15 +246,16 @@ export default function SalesPage() {
           <table className="w-full text-sm">
             <thead className="bg-slate-100 text-slate-700">
               <tr>
-                {["Date","Customer","Description","Specification","Qty","Unit Price","Total Sale","Cost Price","Total Cost","Gross Profit","Payment Status"].map((head) => (
+                {["Date","Sales Ref","Customer","Description","Specification","Qty","Unit Price","Total Sale","Cost Price","Total Cost","Gross Profit","Payment Status"].map((head) => (
                   <th key={head} className="px-4 py-3 text-left font-medium whitespace-nowrap">{head}</th>
                 ))}
               </tr>
             </thead>
             <tbody>
               {rows.map((row, index) => (
-                <tr key={`${row.salesRefNo}-${index}`} className="border-t border-slate-100">
+                <tr key={`${row.groupRef}-${index}`} className="border-t border-slate-100">
                   <td className="px-4 py-3 text-slate-700">{row.saleDate}</td>
+                  <td className="px-4 py-3 text-slate-700">{row.salesRefNo}</td>
                   <td className="px-4 py-3 text-slate-700">{row.customerName}</td>
                   <td className="px-4 py-3 text-slate-700">{row.description}</td>
                   <td className="px-4 py-3 text-slate-700">{row.specification}</td>
@@ -175,7 +270,7 @@ export default function SalesPage() {
               ))}
               {!rows.length && (
                 <tr>
-                  <td colSpan={11} className="px-4 py-8 text-center text-slate-500">No sales recorded yet.</td>
+                  <td colSpan={12} className="px-4 py-8 text-center text-slate-500">No sales recorded yet.</td>
                 </tr>
               )}
             </tbody>

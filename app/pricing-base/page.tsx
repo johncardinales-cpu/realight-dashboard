@@ -21,6 +21,7 @@ type Item = {
 };
 
 const emptyForm: Item = {
+  itemId: "",
   description: "",
   specification: "",
   category: "",
@@ -78,7 +79,7 @@ export default function PricingBasePage() {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data?.error || "Failed to save pricing");
-      setMessage("Pricing saved successfully.");
+      setMessage(form.rowNumber ? "Pricing updated successfully." : "Pricing saved successfully.");
       setForm(emptyForm);
       await loadRows();
     } catch (error: any) {
@@ -98,22 +99,23 @@ export default function PricingBasePage() {
       <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
         <h1 className="text-3xl font-semibold text-slate-900">Pricing Base</h1>
         <p className="mt-1 text-sm text-slate-600">
-          Selling prices are in pesos. Pricing can be manually edited or keyed in any time.
+          Description, specification, and all pricing fields can be edited manually any time.
         </p>
         {message ? <p className="mt-3 text-sm text-slate-700">{message}</p> : null}
       </div>
 
       <form onSubmit={onSubmit} className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
         <div className="grid gap-4 md:grid-cols-3">
+          <input className="rounded-xl border border-slate-300 px-3 py-2" placeholder="Item ID" value={form.itemId} onChange={(e) => setForm({ ...form, itemId: e.target.value })} />
           <input className="rounded-xl border border-slate-300 px-3 py-2" placeholder="Description" value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} />
           <input className="rounded-xl border border-slate-300 px-3 py-2" placeholder="Specification" value={form.specification} onChange={(e) => setForm({ ...form, specification: e.target.value })} />
           <input className="rounded-xl border border-slate-300 px-3 py-2" placeholder="Category" value={form.category} onChange={(e) => setForm({ ...form, category: e.target.value })} />
           <input className="rounded-xl border border-slate-300 px-3 py-2" placeholder="Unit" value={form.unit} onChange={(e) => setForm({ ...form, unit: e.target.value })} />
-          <input className="rounded-xl border border-slate-300 px-3 py-2" placeholder="Cost Price (USD)" type="number" step="0.01" value={form.costPriceUsd} onChange={(e) => setForm({ ...form, costPriceUsd: Number(e.target.value) })} />
-          <input className="rounded-xl border border-slate-300 px-3 py-2" placeholder="FX Rate" type="number" step="0.01" value={form.fxRate} onChange={(e) => setForm({ ...form, fxRate: Number(e.target.value) })} />
-          <input className="rounded-xl border border-slate-300 px-3 py-2" placeholder="Selling Price (PHP)" type="number" step="0.01" value={form.sellingPricePhp} onChange={(e) => setForm({ ...form, sellingPricePhp: Number(e.target.value) })} />
-          <input className="rounded-xl border border-slate-300 px-3 py-2" placeholder="Dealer Price (PHP)" type="number" step="0.01" value={form.dealerPricePhp} onChange={(e) => setForm({ ...form, dealerPricePhp: Number(e.target.value) })} />
-          <input className="rounded-xl border border-slate-300 px-3 py-2" placeholder="Minimum Price (PHP)" type="number" step="0.01" value={form.minimumPricePhp} onChange={(e) => setForm({ ...form, minimumPricePhp: Number(e.target.value) })} />
+          <input className="rounded-xl border border-slate-300 px-3 py-2" type="number" step="0.01" placeholder="Cost Price (USD)" value={form.costPriceUsd} onChange={(e) => setForm({ ...form, costPriceUsd: Number(e.target.value) })} />
+          <input className="rounded-xl border border-slate-300 px-3 py-2" type="number" step="0.01" placeholder="FX Rate" value={form.fxRate} onChange={(e) => setForm({ ...form, fxRate: Number(e.target.value) })} />
+          <input className="rounded-xl border border-slate-300 px-3 py-2" type="number" step="0.01" placeholder="Selling Price (PHP)" value={form.sellingPricePhp} onChange={(e) => setForm({ ...form, sellingPricePhp: Number(e.target.value) })} />
+          <input className="rounded-xl border border-slate-300 px-3 py-2" type="number" step="0.01" placeholder="Dealer Price (PHP)" value={form.dealerPricePhp} onChange={(e) => setForm({ ...form, dealerPricePhp: Number(e.target.value) })} />
+          <input className="rounded-xl border border-slate-300 px-3 py-2" type="number" step="0.01" placeholder="Minimum Price (PHP)" value={form.minimumPricePhp} onChange={(e) => setForm({ ...form, minimumPricePhp: Number(e.target.value) })} />
           <input className="rounded-xl border border-slate-300 px-3 py-2" placeholder="Status" value={form.status} onChange={(e) => setForm({ ...form, status: e.target.value })} />
           <input className="rounded-xl border border-slate-300 px-3 py-2 md:col-span-2" placeholder="Notes" value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} />
         </div>
@@ -139,14 +141,15 @@ export default function PricingBasePage() {
           <table className="w-full text-sm">
             <thead className="bg-slate-100 text-slate-700">
               <tr>
-                {["Description","Specification","Category","Cost (PHP)","Selling (PHP)","Dealer (PHP)","Minimum (PHP)","Margin","Status","Actions"].map((head) => (
+                {["Item ID","Description","Specification","Category","Cost (PHP)","Selling (PHP)","Dealer (PHP)","Minimum (PHP)","Margin","Status","Actions"].map((head) => (
                   <th key={head} className="px-4 py-3 text-left font-medium whitespace-nowrap">{head}</th>
                 ))}
               </tr>
             </thead>
             <tbody>
               {rows.map((row) => (
-                <tr key={`${row.description}-${row.specification}`} className="border-t border-slate-100">
+                <tr key={`${row.rowNumber}-${row.itemId}`} className="border-t border-slate-100">
+                  <td className="px-4 py-3 text-slate-700">{row.itemId}</td>
                   <td className="px-4 py-3 text-slate-700">{row.description}</td>
                   <td className="px-4 py-3 text-slate-700">{row.specification}</td>
                   <td className="px-4 py-3 text-slate-700">{row.category}</td>
@@ -165,7 +168,7 @@ export default function PricingBasePage() {
               ))}
               {!rows.length && (
                 <tr>
-                  <td colSpan={10} className="px-4 py-8 text-center text-slate-500">No pricing rows found.</td>
+                  <td colSpan={11} className="px-4 py-8 text-center text-slate-500">No pricing rows found.</td>
                 </tr>
               )}
             </tbody>
