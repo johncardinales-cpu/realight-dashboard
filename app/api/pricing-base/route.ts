@@ -12,71 +12,45 @@ const auth = new google.auth.GoogleAuth({
   scopes: ["https://www.googleapis.com/auth/spreadsheets"],
 });
 
-const HEADERS = [
-  "Item ID",
-  "Description",
-  "Specification",
-  "Category",
-  "Unit",
-  "Cost Price (USD)",
-  "FX Rate",
-  "Cost Price (PHP)",
-  "Selling Price (PHP)",
-  "Dealer Price (PHP)",
-  "Minimum Price (PHP)",
-  "Gross Margin %",
-  "Status",
-  "Notes",
-];
-
 function toNumber(value: string | number | undefined) {
   return Number(String(value || "").replace(/[^0-9.-]/g, "")) || 0;
 }
 
-const STARTER_ROWS = [
-  ["1","5.5KW Hybrid Inverter","BSM-5500BLV-48DA","Inverter","pc","247","56","13832","","","","","Active","Editable"],
-  ["2","11KW Hybrid Inverter","BSM-11000LV-48","Inverter","pc","376","56","21056","","","","","Active","Editable"],
-  ["3","20KW Hybrid Inverter","BSE20KH3","Inverter","pc","1401","56","78456","","","","","Active","Editable"],
-  ["4","30KW Hybrid Inverter HV","BSE30KH3","Inverter","pc","1712","56","95872","","","","","Active","Editable"],
-  ["5","150KW Hybrid Inverter HV","BHPS150-US","Inverter","pc","26970","56","1510320","","","","","Active","Editable"],
-];
+function isValidPricingRow(row: string[]) {
+  const itemId = String(row[0] || "").trim();
+  const description = String(row[1] || "").trim();
+  const specification = String(row[2] || "").trim();
+  const category = String(row[3] || "").trim();
+  const costPriceUsd = toNumber(row[5]);
+  const fxRate = toNumber(row[6]);
 
-async function ensureSheetExists(sheets: any) {
-  const meta = await sheets.spreadsheets.get({ spreadsheetId: SHEET_ID });
-  const found = (meta.data.sheets || []).find((s: any) => s.properties?.title === SHEET_NAME);
-  if (found) return;
-
-  await sheets.spreadsheets.batchUpdate({
-    spreadsheetId: SHEET_ID,
-    requestBody: { requests: [{ addSheet: { properties: { title: SHEET_NAME } } }] },
-  });
-
-  await sheets.spreadsheets.values.update({
-    spreadsheetId: SHEET_ID,
-    range: `${SHEET_NAME}!A1:N${STARTER_ROWS.length + 1}`,
-    valueInputOption: "USER_ENTERED",
-    requestBody: { values: [HEADERS, ...STARTER_ROWS] },
-  });
+  if (!itemId || itemId.toLowerCase() === "item id") return false;
+  if (!description || !specification) return false;
+  if (description === "Description") return false;
+  if (specification === "Specification") return false;
+  if (category === "Dealer Price (PHP)" || category === "Category") return false;
+  if (description.includes("Selling prices are in PHP")) return false;
+  if (specification === "Default Sale Price (PHP)") return false;
+  if (costPriceUsd === 0 && fxRate === 0) return false;
+  return true;
 }
 
 export async function GET() {
   try {
     const client = await auth.getClient();
     const sheets = google.sheets({ version: "v4", auth: client as any });
-    await ensureSheetExists(sheets);
-
     const response = await sheets.spreadsheets.values.get({
       spreadsheetId: SHEET_ID,
       range: `${SHEET_NAME}!A:N`,
     });
 
     const rows = (response.data.values || []) as string[][];
-    const data = rows.slice(1).filter((row) => row.some((cell) => String(cell || "").trim() !== ""));
+    const data = rows.slice(1).filter(isValidPricingRow);
 
     const items = data.map((row, index) => {
       const costPriceUsd = toNumber(row[5]);
       const fxRate = toNumber(row[6]) || 56;
-      const costPricePhp = toNumber(row[7]) || (costPriceUsd * fxRate);
+      const costPricePhp = toNumber(row[7]) || costPriceUsd * fxRate;
       const sellingPricePhp = toNumber(row[8]);
       const dealerPricePhp = toNumber(row[9]);
       const minimumPricePhp = toNumber(row[10]);
@@ -131,39 +105,22 @@ export async function POST(req: Request) {
     const notes = String(body?.notes || "").trim();
 
     if (!description || !specification) {
-      return NextResponse.json(
-        { error: "Description and Specification are required" },
-        { status: 400 }
-      );
+      return NextResponse.json({ error: "Description and Specification are required" }, { status: 400 });
     }
 
     const client = await auth.getClient();
     const sheets = google.sheets({ version: "v4", auth: client as any });
-    await ensureSheetExists(sheets);
 
     if (rowNumber) {
       await sheets.spreadsheets.values.update({
         spreadsheetId: SHEET_ID,
         range: `${SHEET_NAME}!A${rowNumber}:N${rowNumber}`,
         valueInputOption: "USER_ENTERED",
-        requestBody: {
-          values: [[
-            itemId || String(rowNumber - 1),
-            description,
-            specification,
-            category,
-            unit,
-            costPriceUsd,
-            fxRate,
-            costPricePhp,
-            sellingPricePhp,
-            dealerPricePhp,
-            minimumPricePhp,
-            grossMargin,
-            status,
-            notes,
-          ]],
-        },
+        requestBody: { values: [[
+          itemId || String(rowNumber - 1), description, specification, category, unit,
+          costPriceUsd, fxRate, costPricePhp, sellingPricePhp, dealerPricePhp,
+          minimumPricePhp, grossMargin, status, notes,
+        ]]},
       });
       return NextResponse.json({ ok: true, mode: "updated" });
     }
@@ -179,24 +136,11 @@ export async function POST(req: Request) {
       range: `${SHEET_NAME}!A:N`,
       valueInputOption: "USER_ENTERED",
       insertDataOption: "INSERT_ROWS",
-      requestBody: {
-        values: [[
-          itemId || nextId,
-          description,
-          specification,
-          category,
-          unit,
-          costPriceUsd,
-          fxRate,
-          costPricePhp,
-          sellingPricePhp,
-          dealerPricePhp,
-          minimumPricePhp,
-          grossMargin,
-          status,
-          notes,
-        ]],
-      },
+      requestBody: { values: [[
+        itemId || nextId, description, specification, category, unit,
+        costPriceUsd, fxRate, costPricePhp, sellingPricePhp, dealerPricePhp,
+        minimumPricePhp, grossMargin, status, notes,
+      ]]},
     });
 
     return NextResponse.json({ ok: true, mode: "created" });

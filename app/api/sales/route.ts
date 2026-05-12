@@ -14,25 +14,29 @@ const auth = new google.auth.GoogleAuth({
 });
 
 const SALES_HEADERS = [
-  "Sale Date",
-  "Sales Ref No.",
-  "Customer Name",
-  "Description",
-  "Specification",
-  "Qty",
-  "Manual Unit Price (PHP)",
-  "Total Sale (PHP)",
-  "Cost Price (PHP)",
-  "Total Cost (PHP)",
-  "Gross Profit (PHP)",
-  "Payment Status",
-  "Salesperson",
-  "Notes",
-  "Group Ref",
+  "Sale Date","Sales Ref No.","Customer Name","Description","Specification","Qty",
+  "Manual Unit Price (PHP)","Total Sale (PHP)","Cost Price (PHP)","Total Cost (PHP)",
+  "Gross Profit (PHP)","Payment Status","Salesperson","Notes","Group Ref",
 ];
 
 function toNumber(value: string | number | undefined) {
   return Number(String(value || "").replace(/[^0-9.-]/g, "")) || 0;
+}
+
+function isValidSalesRow(row: string[]) {
+  const saleDate = String(row[0] || "").trim();
+  const customerName = String(row[2] || "").trim();
+  const description = String(row[3] || "").trim();
+  const specification = String(row[4] || "").trim();
+  const qty = toNumber(row[5]);
+
+  if (!saleDate || saleDate.toLowerCase() === "date") return false;
+  if (!customerName || customerName.toLowerCase() === "customer") return false;
+  if (!description || description.toLowerCase() === "description") return false;
+  if (!specification || specification.toLowerCase() === "specification") return false;
+  if (description.includes("One sold item per row")) return false;
+  if (qty <= 0) return false;
+  return true;
 }
 
 async function ensureSheetExists(sheets: any, title: string, headers: string[]) {
@@ -66,9 +70,7 @@ async function getPricingMap(sheets: any) {
   rows.slice(1).forEach((row: string[]) => {
     const key = `${String(row[1] || "").trim()}|||${String(row[2] || "").trim()}`;
     const costPhp = toNumber(row[7]);
-    if (key !== "|||") {
-      map.set(key, costPhp);
-    }
+    if (key !== "|||") map.set(key, costPhp);
   });
 
   return map;
@@ -86,9 +88,7 @@ export async function GET() {
     });
 
     const rows = (response.data.values || []) as string[][];
-    const data = rows.slice(1).filter((row) =>
-      row.some((cell) => String(cell || "").trim() !== "")
-    );
+    const data = rows.slice(1).filter(isValidSalesRow);
 
     const items = data.map((row: string[], index: number) => ({
       rowNumber: index + 2,
@@ -144,36 +144,26 @@ export async function POST(req: Request) {
 
     const pricingMap = await getPricingMap(sheets);
 
-    const rowsToAppend = items.map((item: any) => {
-      const description = String(item?.description || "").trim();
-      const specification = String(item?.specification || "").trim();
-      const qty = toNumber(item?.qty);
-      const unitPricePhp = toNumber(item?.unitPricePhp);
+    const rowsToAppend = items
+      .filter((item: any) => String(item?.description || "").trim() && String(item?.specification || "").trim() && toNumber(item?.qty) > 0)
+      .map((item: any) => {
+        const description = String(item?.description || "").trim();
+        const specification = String(item?.specification || "").trim();
+        const qty = toNumber(item?.qty);
+        const unitPricePhp = toNumber(item?.unitPricePhp);
 
-      const key = `${description}|||${specification}`;
-      const costPricePhp = pricingMap.get(key) || 0;
-      const totalSalePhp = qty * unitPricePhp;
-      const totalCostPhp = qty * costPricePhp;
-      const grossProfitPhp = totalSalePhp - totalCostPhp;
+        const key = `${description}|||${specification}`;
+        const costPricePhp = pricingMap.get(key) || 0;
+        const totalSalePhp = qty * unitPricePhp;
+        const totalCostPhp = qty * costPricePhp;
+        const grossProfitPhp = totalSalePhp - totalCostPhp;
 
-      return [
-        saleDate,
-        salesRefNo,
-        customerName,
-        description,
-        specification,
-        qty,
-        unitPricePhp,
-        totalSalePhp,
-        costPricePhp,
-        totalCostPhp,
-        grossProfitPhp,
-        paymentStatus,
-        salesperson,
-        notes,
-        groupRef,
-      ];
-    });
+        return [
+          saleDate, salesRefNo, customerName, description, specification, qty,
+          unitPricePhp, totalSalePhp, costPricePhp, totalCostPhp, grossProfitPhp,
+          paymentStatus, salesperson, notes, groupRef,
+        ];
+      });
 
     await sheets.spreadsheets.values.append({
       spreadsheetId: SHEET_ID,
