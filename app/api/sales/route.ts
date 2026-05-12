@@ -17,10 +17,25 @@ const SALES_HEADERS = [
   "Sale Date","Sales Ref No.","Customer Name","Description","Specification","Qty",
   "Manual Unit Price (PHP)","Total Sale (PHP)","Cost Price (PHP)","Total Cost (PHP)",
   "Gross Profit (PHP)","Payment Status","Salesperson","Notes","Group Ref",
+  "Payment Method","Amount Paid (PHP)","Balance (PHP)","Transaction Ref",
+  "Cashier Name","Sale Status","Confirmed At",
 ];
 
 function toNumber(value: string | number | undefined) {
   return Number(String(value || "").replace(/[^0-9.-]/g, "")) || 0;
+}
+
+function columnLetter(index: number) {
+  let column = "";
+  let current = index;
+
+  while (current > 0) {
+    const remainder = (current - 1) % 26;
+    column = String.fromCharCode(65 + remainder) + column;
+    current = Math.floor((current - 1) / 26);
+  }
+
+  return column;
 }
 
 function isValidSalesRow(row: string[]) {
@@ -42,14 +57,15 @@ function isValidSalesRow(row: string[]) {
 async function ensureSheetExists(sheets: any, title: string, headers: string[]) {
   const meta = await sheets.spreadsheets.get({ spreadsheetId: SHEET_ID });
   const found = (meta.data.sheets || []).find((s: any) => s.properties?.title === title);
-  if (found) return;
 
-  await sheets.spreadsheets.batchUpdate({
-    spreadsheetId: SHEET_ID,
-    requestBody: { requests: [{ addSheet: { properties: { title } } }] },
-  });
+  if (!found) {
+    await sheets.spreadsheets.batchUpdate({
+      spreadsheetId: SHEET_ID,
+      requestBody: { requests: [{ addSheet: { properties: { title } } }] },
+    });
+  }
 
-  const lastCol = String.fromCharCode(64 + headers.length);
+  const lastCol = columnLetter(headers.length);
   await sheets.spreadsheets.values.update({
     spreadsheetId: SHEET_ID,
     range: `${title}!A1:${lastCol}1`,
@@ -84,7 +100,7 @@ export async function GET() {
 
     const response = await sheets.spreadsheets.values.get({
       spreadsheetId: SHEET_ID,
-      range: `${SALES_SHEET}!A:O`,
+      range: `${SALES_SHEET}!A:V`,
     });
 
     const rows = (response.data.values || []) as string[][];
@@ -107,6 +123,13 @@ export async function GET() {
       salesperson: String(row[12] || ""),
       notes: String(row[13] || ""),
       groupRef: String(row[14] || ""),
+      paymentMethod: String(row[15] || ""),
+      amountPaidPhp: toNumber(row[16]),
+      balancePhp: toNumber(row[17]),
+      transactionRef: String(row[18] || ""),
+      cashierName: String(row[19] || ""),
+      saleStatus: String(row[20] || "Draft"),
+      confirmedAt: String(row[21] || ""),
     }));
 
     return NextResponse.json(items);
@@ -129,6 +152,14 @@ export async function POST(req: Request) {
     const salesperson = String(body?.salesperson || "").trim();
     const notes = String(body?.notes || "").trim();
     const groupRef = String(body?.groupRef || salesRefNo || `${Date.now()}`).trim();
+    const paymentMethod = String(body?.paymentMethod || "").trim();
+    const amountPaidPhp = toNumber(body?.amountPaidPhp);
+    const transactionRef = String(body?.transactionRef || "").trim();
+    const cashierName = String(body?.cashierName || "").trim();
+    const saleStatus = String(body?.saleStatus || "Draft").trim();
+    const confirmedAt = saleStatus === "Confirmed"
+      ? String(body?.confirmedAt || new Date().toISOString()).trim()
+      : String(body?.confirmedAt || "").trim();
     const items = Array.isArray(body?.items) ? body.items : [];
 
     if (!saleDate || !customerName || !items.length) {
@@ -143,31 +174,46 @@ export async function POST(req: Request) {
     await ensureSheetExists(sheets, SALES_SHEET, SALES_HEADERS);
 
     const pricingMap = await getPricingMap(sheets);
+    const validItems = items.filter((item: any) =>
+      String(item?.description || "").trim() &&
+      String(item?.specification || "").trim() &&
+      toNumber(item?.qty) > 0
+    );
 
-    const rowsToAppend = items
-      .filter((item: any) => String(item?.description || "").trim() && String(item?.specification || "").trim() && toNumber(item?.qty) > 0)
-      .map((item: any) => {
-        const description = String(item?.description || "").trim();
-        const specification = String(item?.specification || "").trim();
-        const qty = toNumber(item?.qty);
-        const unitPricePhp = toNumber(item?.unitPricePhp);
+    const transactionTotal = validItems.reduce((sum: number, item: any) => {
+      const qty = toNumber(item?.qty);
+      const unitPricePhp = toNumber(item?.unitPricePhp);
+      return sum + (qty * unitPricePhp);
+    }, 0);
 
-        const key = `${description}|||${specification}`;
-        const costPricePhp = pricingMap.get(key) || 0;
-        const totalSalePhp = qty * unitPricePhp;
-        const totalCostPhp = qty * costPricePhp;
-        const grossProfitPhp = totalSalePhp - totalCostPhp;
+    const rowsToAppend = validItems.map((item: any) => {
+      const description = String(item?.description || "").trim();
+      const specification = String(item?.specification || "").trim();
+      const qty = toNumber(item?.qty);
+      const unitPricePhp = toNumber(item?.unitPricePhp);
 
-        return [
-          saleDate, salesRefNo, customerName, description, specification, qty,
-          unitPricePhp, totalSalePhp, costPricePhp, totalCostPhp, grossProfitPhp,
-          paymentStatus, salesperson, notes, groupRef,
-        ];
-      });
+      const key = `${description}|||${specification}`;
+      const costPricePhp = pricingMap.get(key) || 0;
+      const totalSalePhp = qty * unitPricePhp;
+      const totalCostPhp = qty * costPricePhp;
+      const grossProfitPhp = totalSalePhp - totalCostPhp;
+      const lineAmountPaidPhp = transactionTotal > 0
+        ? amountPaidPhp * (totalSalePhp / transactionTotal)
+        : 0;
+      const lineBalancePhp = totalSalePhp - lineAmountPaidPhp;
+
+      return [
+        saleDate, salesRefNo, customerName, description, specification, qty,
+        unitPricePhp, totalSalePhp, costPricePhp, totalCostPhp, grossProfitPhp,
+        paymentStatus, salesperson, notes, groupRef,
+        paymentMethod, lineAmountPaidPhp, lineBalancePhp, transactionRef,
+        cashierName, saleStatus, confirmedAt,
+      ];
+    });
 
     await sheets.spreadsheets.values.append({
       spreadsheetId: SHEET_ID,
-      range: `${SALES_SHEET}!A:O`,
+      range: `${SALES_SHEET}!A:V`,
       valueInputOption: "USER_ENTERED",
       insertDataOption: "INSERT_ROWS",
       requestBody: { values: rowsToAppend },
