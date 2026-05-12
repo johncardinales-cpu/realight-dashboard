@@ -30,7 +30,15 @@ type SavedSale = {
   grossProfitPhp: number;
   paymentStatus: string;
   salesperson: string;
+  notes: string;
   groupRef: string;
+  paymentMethod: string;
+  amountPaidPhp: number;
+  balancePhp: number;
+  transactionRef: string;
+  cashierName: string;
+  saleStatus: string;
+  confirmedAt: string;
 };
 
 const emptyLine: SaleLine = {
@@ -41,6 +49,8 @@ const emptyLine: SaleLine = {
 };
 
 const paymentStatusOptions = ["Pending", "Paid", "Partial"];
+const paymentMethodOptions = ["", "Cash", "Bank Transfer", "GCash", "Maya", "Check", "Credit", "Installment", "Mixed Payment"];
+const saleStatusOptions = ["Draft", "Confirmed", "Cancelled"];
 
 function money(value: number) {
   return `₱${(Number(value) || 0).toLocaleString(undefined, {
@@ -56,6 +66,11 @@ export default function SalesPage() {
   const [salesRefNo, setSalesRefNo] = useState("");
   const [customerName, setCustomerName] = useState("");
   const [paymentStatus, setPaymentStatus] = useState("Pending");
+  const [paymentMethod, setPaymentMethod] = useState("");
+  const [amountPaidPhp, setAmountPaidPhp] = useState(0);
+  const [transactionRef, setTransactionRef] = useState("");
+  const [cashierName, setCashierName] = useState("");
+  const [saleStatus, setSaleStatus] = useState("Draft");
   const [salesperson, setSalesperson] = useState("");
   const [notes, setNotes] = useState("");
   const [items, setItems] = useState<SaleLine[]>([{ ...emptyLine }]);
@@ -120,6 +135,23 @@ export default function SalesPage() {
     );
   }, [items, pricing]);
 
+  const balancePhp = Math.max(totals.sale - (Number(amountPaidPhp) || 0), 0);
+
+  function resetForm() {
+    setSaleDate("");
+    setSalesRefNo("");
+    setCustomerName("");
+    setPaymentStatus("Pending");
+    setPaymentMethod("");
+    setAmountPaidPhp(0);
+    setTransactionRef("");
+    setCashierName("");
+    setSaleStatus("Draft");
+    setSalesperson("");
+    setNotes("");
+    setItems([{ ...emptyLine }]);
+  }
+
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
     setSaving(true);
@@ -138,6 +170,11 @@ export default function SalesPage() {
           salesRefNo,
           customerName,
           paymentStatus,
+          paymentMethod,
+          amountPaidPhp,
+          transactionRef,
+          cashierName,
+          saleStatus,
           salesperson,
           notes,
           items: cleanItems,
@@ -148,13 +185,7 @@ export default function SalesPage() {
       if (!res.ok) throw new Error(data?.error || "Failed to save sale");
 
       setMessage(`Sale saved successfully with ${data?.lines || 0} line(s).`);
-      setSaleDate("");
-      setSalesRefNo("");
-      setCustomerName("");
-      setPaymentStatus("Pending");
-      setSalesperson("");
-      setNotes("");
-      setItems([{ ...emptyLine }]);
+      resetForm();
       await loadAll();
     } catch (error: any) {
       setMessage(error?.message || "Failed to save sale.");
@@ -173,7 +204,7 @@ export default function SalesPage() {
         {message ? <p className="mt-3 text-sm text-slate-700">{message}</p> : null}
       </div>
 
-      <form onSubmit={onSubmit} className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm space-y-4">
+      <form onSubmit={onSubmit} className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm space-y-5">
         <div className="grid gap-4 md:grid-cols-3">
           <input className="rounded-xl border border-slate-300 px-3 py-2" type="date" value={saleDate} onChange={(e) => setSaleDate(e.target.value)} />
           <input className="rounded-xl border border-slate-300 px-3 py-2" placeholder="Sales Ref No." value={salesRefNo} onChange={(e) => setSalesRefNo(e.target.value)} />
@@ -189,6 +220,44 @@ export default function SalesPage() {
           </select>
           <input className="rounded-xl border border-slate-300 px-3 py-2" placeholder="Salesperson" value={salesperson} onChange={(e) => setSalesperson(e.target.value)} />
           <input className="rounded-xl border border-slate-300 px-3 py-2" placeholder="Notes" value={notes} onChange={(e) => setNotes(e.target.value)} />
+        </div>
+
+        <div className="rounded-2xl border border-emerald-100 bg-emerald-50/40 p-4">
+          <h2 className="mb-3 text-sm font-semibold text-slate-800">Cashiering</h2>
+          <div className="grid gap-4 md:grid-cols-3">
+            <select
+              className="rounded-xl border border-slate-300 bg-white px-3 py-2"
+              value={paymentMethod}
+              onChange={(e) => setPaymentMethod(e.target.value)}
+            >
+              {paymentMethodOptions.map((method) => (
+                <option key={method || "blank"} value={method}>{method || "Payment Method"}</option>
+              ))}
+            </select>
+            <input
+              className="rounded-xl border border-slate-300 bg-white px-3 py-2"
+              type="number"
+              step="0.01"
+              placeholder="Amount Paid (PHP)"
+              value={amountPaidPhp}
+              onChange={(e) => setAmountPaidPhp(Number(e.target.value))}
+            />
+            <input className="rounded-xl border border-slate-300 bg-slate-50 px-3 py-2" value={`Balance: ${money(balancePhp)}`} readOnly />
+            <input className="rounded-xl border border-slate-300 bg-white px-3 py-2" placeholder="Transaction / Receipt Ref" value={transactionRef} onChange={(e) => setTransactionRef(e.target.value)} />
+            <input className="rounded-xl border border-slate-300 bg-white px-3 py-2" placeholder="Cashier Name" value={cashierName} onChange={(e) => setCashierName(e.target.value)} />
+            <select
+              className="rounded-xl border border-slate-300 bg-white px-3 py-2"
+              value={saleStatus}
+              onChange={(e) => setSaleStatus(e.target.value)}
+            >
+              {saleStatusOptions.map((status) => (
+                <option key={status} value={status}>{status}</option>
+              ))}
+            </select>
+          </div>
+          <p className="mt-2 text-xs text-slate-600">
+            Sale Status controls future inventory deduction. Inventory should deduct only when a sale is Confirmed.
+          </p>
         </div>
 
         <div className="space-y-3">
@@ -243,9 +312,10 @@ export default function SalesPage() {
           </button>
         </div>
 
-        <div className="grid gap-2 text-sm text-slate-700 md:grid-cols-3">
+        <div className="grid gap-2 text-sm text-slate-700 md:grid-cols-4">
           <p>Total Sale: <span className="font-semibold">{money(totals.sale)}</span></p>
-          <p>Total Cost: <span className="font-semibold">{money(totals.cost)}</span></p>
+          <p>Amount Paid: <span className="font-semibold">{money(amountPaidPhp)}</span></p>
+          <p>Balance: <span className="font-semibold">{money(balancePhp)}</span></p>
           <p>Gross Profit: <span className="font-semibold">{money(totals.profit)}</span></p>
         </div>
       </form>
@@ -256,7 +326,10 @@ export default function SalesPage() {
           <table className="w-full text-sm">
             <thead className="bg-slate-100 text-slate-700">
               <tr>
-                {["Date","Sales Ref","Customer","Description","Specification","Qty","Unit Price","Total Sale","Cost Price","Total Cost","Gross Profit","Payment Status"].map((head) => (
+                {[
+                  "Date","Sales Ref","Customer","Description","Specification","Qty","Unit Price","Total Sale",
+                  "Cost Price","Gross Profit","Payment Status","Method","Paid","Balance","Sale Status"
+                ].map((head) => (
                   <th key={head} className="px-4 py-3 text-left font-medium whitespace-nowrap">{head}</th>
                 ))}
               </tr>
@@ -273,14 +346,17 @@ export default function SalesPage() {
                   <td className="px-4 py-3 text-slate-700">{money(row.unitPricePhp)}</td>
                   <td className="px-4 py-3 text-slate-700">{money(row.totalSalePhp)}</td>
                   <td className="px-4 py-3 text-slate-700">{money(row.costPricePhp)}</td>
-                  <td className="px-4 py-3 text-slate-700">{money(row.totalCostPhp)}</td>
                   <td className="px-4 py-3 text-slate-700">{money(row.grossProfitPhp)}</td>
                   <td className="px-4 py-3 text-slate-700">{row.paymentStatus}</td>
+                  <td className="px-4 py-3 text-slate-700">{row.paymentMethod}</td>
+                  <td className="px-4 py-3 text-slate-700">{money(row.amountPaidPhp)}</td>
+                  <td className="px-4 py-3 text-slate-700">{money(row.balancePhp)}</td>
+                  <td className="px-4 py-3 text-slate-700">{row.saleStatus}</td>
                 </tr>
               ))}
               {!rows.length && (
                 <tr>
-                  <td colSpan={12} className="px-4 py-8 text-center text-slate-500">No sales recorded yet.</td>
+                  <td colSpan={15} className="px-4 py-8 text-center text-slate-500">No sales recorded yet.</td>
                 </tr>
               )}
             </tbody>
