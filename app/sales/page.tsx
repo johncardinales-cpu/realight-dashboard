@@ -40,6 +40,8 @@ const emptyLine: SaleLine = {
   unitPricePhp: 0,
 };
 
+const paymentStatusOptions = ["Pending", "Paid", "Partial"];
+
 function money(value: number) {
   return `₱${(Number(value) || 0).toLocaleString(undefined, {
     minimumFractionDigits: 2,
@@ -176,7 +178,15 @@ export default function SalesPage() {
           <input className="rounded-xl border border-slate-300 px-3 py-2" type="date" value={saleDate} onChange={(e) => setSaleDate(e.target.value)} />
           <input className="rounded-xl border border-slate-300 px-3 py-2" placeholder="Sales Ref No." value={salesRefNo} onChange={(e) => setSalesRefNo(e.target.value)} />
           <input className="rounded-xl border border-slate-300 px-3 py-2" placeholder="Customer Name" value={customerName} onChange={(e) => setCustomerName(e.target.value)} />
-          <input className="rounded-xl border border-slate-300 px-3 py-2" placeholder="Payment Status" value={paymentStatus} onChange={(e) => setPaymentStatus(e.target.value)} />
+          <select
+            className="rounded-xl border border-slate-300 px-3 py-2"
+            value={paymentStatus}
+            onChange={(e) => setPaymentStatus(e.target.value)}
+          >
+            {paymentStatusOptions.map((status) => (
+              <option key={status} value={status}>{status}</option>
+            ))}
+          </select>
           <input className="rounded-xl border border-slate-300 px-3 py-2" placeholder="Salesperson" value={salesperson} onChange={(e) => setSalesperson(e.target.value)} />
           <input className="rounded-xl border border-slate-300 px-3 py-2" placeholder="Notes" value={notes} onChange={(e) => setNotes(e.target.value)} />
         </div>
