@@ -41,6 +41,8 @@ type SavedSale = {
   confirmedAt: string;
 };
 
+type InventoryRow = Record<string, string | number>;
+
 type AlertState = {
   type: "success" | "warning" | "error";
   title: string;
@@ -64,6 +66,10 @@ function money(value: number) {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   })}`;
+}
+
+function itemKey(description: string, specification: string) {
+  return `${description.trim()}|||${specification.trim()}`;
 }
 
 function formatApiError(message: string): AlertState {
@@ -149,8 +155,22 @@ function WarningModal({ alert, onClose }: { alert: AlertState; onClose: () => vo
   );
 }
 
+function StatusPill({ value, kind }: { value: string; kind: "sale" | "payment" }) {
+  const normalized = value.toLowerCase();
+  const color = normalized === "confirmed" || normalized === "paid"
+    ? "bg-emerald-50 text-emerald-700"
+    : normalized === "partial"
+      ? "bg-amber-50 text-amber-700"
+      : normalized === "cancelled"
+        ? "bg-rose-50 text-rose-700"
+        : "bg-slate-100 text-slate-700";
+
+  return <span className={`rounded-full px-2.5 py-1 text-xs font-bold ${color}`}>{value || (kind === "sale" ? "Draft" : "Pending")}</span>;
+}
+
 export default function SalesPage() {
   const [pricing, setPricing] = useState<PriceRow[]>([]);
+  const [inventory, setInventory] = useState<InventoryRow[]>([]);
   const [rows, setRows] = useState<SavedSale[]>([]);
   const [saleDate, setSaleDate] = useState("");
   const [salesRefNo, setSalesRefNo] = useState("");
@@ -168,19 +188,63 @@ export default function SalesPage() {
   const [saving, setSaving] = useState(false);
 
   async function loadAll() {
-    const [salesRes, pricingRes] = await Promise.all([
+    const [salesRes, pricingRes, inventoryRes] = await Promise.all([
       fetch("/api/sales", { cache: "no-store" }),
       fetch("/api/pricing-base", { cache: "no-store" }),
+      fetch("/api/inventory", { cache: "no-store" }),
     ]);
     const salesData = await salesRes.json();
     const pricingData = await pricingRes.json();
+    const inventoryData = await inventoryRes.json();
     setRows(Array.isArray(salesData) ? salesData : []);
     setPricing(Array.isArray(pricingData) ? pricingData : []);
+    setInventory(Array.isArray(inventoryData) ? inventoryData : []);
   }
 
   useEffect(() => {
     loadAll().catch(console.error);
   }, []);
+
+  const stockByKey = useMemo(() => {
+    const map = new Map<string, number>();
+    inventory.forEach((row) => {
+      const description = String(row["Description"] || "").trim();
+      const specification = String(row["Specification"] || "").trim();
+      if (!description && !specification) return;
+      map.set(itemKey(description, specification), Number(row["Sellable Qty"] || 0) || 0);
+    });
+    return map;
+  }, [inventory]);
+
+  function stockForLine(item: SaleLine) {
+    if (!item.description || !item.specification) return null;
+    return stockByKey.get(itemKey(item.description, item.specification)) ?? null;
+  }
+
+  function validateClientStock(cleanItems: SaleLine[]) {
+    if (saleStatus.toLowerCase() !== "confirmed") return "";
+
+    const requested = new Map<string, { description: string; specification: string; qty: number }>();
+    cleanItems.forEach((item) => {
+      const key = itemKey(item.description, item.specification);
+      const current = requested.get(key);
+      requested.set(key, {
+        description: item.description,
+        specification: item.specification,
+        qty: (current?.qty || 0) + (Number(item.qty) || 0),
+      });
+    });
+
+    const issues: string[] = [];
+    requested.forEach(({ description, specification, qty }, key) => {
+      const available = stockByKey.get(key);
+      if (available !== undefined && qty > available) {
+        issues.push(`${description} / ${specification}: requested ${qty}, available ${available}`);
+      }
+    });
+
+    return issues.join("; ");
+  }
 
   function updateItem(index: number, patch: Partial<SaleLine>) {
     setItems((prev) => prev.map((item, i) => i === index ? { ...item, ...patch } : item));
@@ -251,6 +315,26 @@ export default function SalesPage() {
       const cleanItems = items.filter(
         (item) => item.description && item.specification && Number(item.qty) > 0
       );
+
+      if (!cleanItems.length) {
+        setAlert({
+          type: "warning",
+          title: "No valid product line",
+          message: "Add at least one product with description, specification, and quantity before saving.",
+        });
+        return;
+      }
+
+      const clientStockIssue = validateClientStock(cleanItems);
+      if (clientStockIssue) {
+        setAlert({
+          type: "warning",
+          title: "Sale cannot be confirmed",
+          message: "The requested quantity is higher than the stock currently available for confirmed sales.",
+          detail: clientStockIssue,
+        });
+        return;
+      }
 
       const res = await fetch("/api/sales", {
         method: "POST",
@@ -357,46 +441,52 @@ export default function SalesPage() {
         </div>
 
         <div className="space-y-3">
-          {items.map((item, index) => (
-            <div key={index} className="grid gap-3 rounded-2xl border border-slate-200 p-4 md:grid-cols-5">
-              <input
-                className="rounded-xl border border-slate-300 px-3 py-2"
-                placeholder="Description"
-                value={item.description}
-                onChange={(e) => updateItem(index, { description: e.target.value })}
-              />
-              <input
-                className="rounded-xl border border-slate-300 px-3 py-2"
-                placeholder="Specification"
-                value={item.specification}
-                onChange={(e) => updateItem(index, { specification: e.target.value })}
-                onBlur={() => autofillPrice(index, item.description, item.specification)}
-              />
-              <input
-                className="rounded-xl border border-slate-300 px-3 py-2"
-                type="number"
-                placeholder="Qty"
-                value={item.qty}
-                onChange={(e) => updateItem(index, { qty: Number(e.target.value) })}
-              />
-              <input
-                className="rounded-xl border border-slate-300 px-3 py-2"
-                type="number"
-                step="0.01"
-                placeholder="Unit Price (PHP)"
-                value={item.unitPricePhp}
-                onChange={(e) => updateItem(index, { unitPricePhp: Number(e.target.value) })}
-              />
-              <div className="flex items-center gap-2">
-                <div className="text-sm text-slate-700">
-                  Line Total: <span className="font-semibold">{money((Number(item.qty) || 0) * (Number(item.unitPricePhp) || 0))}</span>
+          {items.map((item, index) => {
+            const availableStock = stockForLine(item);
+            return (
+              <div key={index} className="grid gap-3 rounded-2xl border border-slate-200 p-4 md:grid-cols-5">
+                <input
+                  className="rounded-xl border border-slate-300 px-3 py-2"
+                  placeholder="Description"
+                  value={item.description}
+                  onChange={(e) => updateItem(index, { description: e.target.value })}
+                />
+                <input
+                  className="rounded-xl border border-slate-300 px-3 py-2"
+                  placeholder="Specification"
+                  value={item.specification}
+                  onChange={(e) => updateItem(index, { specification: e.target.value })}
+                  onBlur={() => autofillPrice(index, item.description, item.specification)}
+                />
+                <input
+                  className="rounded-xl border border-slate-300 px-3 py-2"
+                  type="number"
+                  placeholder="Qty"
+                  value={item.qty}
+                  onChange={(e) => updateItem(index, { qty: Number(e.target.value) })}
+                />
+                <input
+                  className="rounded-xl border border-slate-300 px-3 py-2"
+                  type="number"
+                  step="0.01"
+                  placeholder="Unit Price (PHP)"
+                  value={item.unitPricePhp}
+                  onChange={(e) => updateItem(index, { unitPricePhp: Number(e.target.value) })}
+                />
+                <div className="flex items-center gap-2">
+                  <div className="text-sm text-slate-700">
+                    <p>Line Total: <span className="font-semibold">{money((Number(item.qty) || 0) * (Number(item.unitPricePhp) || 0))}</span></p>
+                    <p className="mt-1 text-xs font-semibold text-slate-500">
+                      {availableStock === null ? "Stock: select valid item" : `Available: ${availableStock}`}
+                    </p>
+                  </div>
+                  <button type="button" onClick={() => removeLine(index)} className="rounded-lg border border-slate-300 px-3 py-1 text-xs font-medium text-slate-700">
+                    Remove
+                  </button>
                 </div>
-                <button type="button" onClick={() => removeLine(index)} className="rounded-lg border border-slate-300 px-3 py-1 text-xs font-medium text-slate-700">
-                  Remove
-                </button>
               </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
 
         <div className="flex gap-3">
@@ -443,11 +533,11 @@ export default function SalesPage() {
                   <td className="px-4 py-3 text-slate-700">{money(row.totalSalePhp)}</td>
                   <td className="px-4 py-3 text-slate-700">{money(row.costPricePhp)}</td>
                   <td className="px-4 py-3 text-slate-700">{money(row.grossProfitPhp)}</td>
-                  <td className="px-4 py-3 text-slate-700">{row.paymentStatus}</td>
+                  <td className="px-4 py-3 text-slate-700"><StatusPill value={row.paymentStatus} kind="payment" /></td>
                   <td className="px-4 py-3 text-slate-700">{row.paymentMethod}</td>
                   <td className="px-4 py-3 text-slate-700">{money(row.amountPaidPhp)}</td>
                   <td className="px-4 py-3 text-slate-700">{money(row.balancePhp)}</td>
-                  <td className="px-4 py-3 text-slate-700">{row.saleStatus}</td>
+                  <td className="px-4 py-3 text-slate-700"><StatusPill value={row.saleStatus} kind="sale" /></td>
                 </tr>
               ))}
               {!rows.length && (
