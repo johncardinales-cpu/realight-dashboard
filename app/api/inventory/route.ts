@@ -2,7 +2,8 @@ import { NextResponse } from "next/server";
 import { google } from "googleapis";
 
 const SHEET_ID = process.env.GOOGLE_SHEET_ID as string;
-const SHEET_NAME = "App_Deliveries";
+const INVENTORY_SHEET = "App_Deliveries";
+const SALES_SHEET = "Sales";
 
 type SheetCell = string | number | boolean | null | undefined;
 type SheetRow = SheetCell[];
@@ -57,58 +58,101 @@ function createEmptyItem(description: string, specification: string): InventoryI
   };
 }
 
+function getOrCreateItem(
+  grouped: Map<string, InventoryItem>,
+  description: string,
+  specification: string
+) {
+  const key = `${description}|||${specification}`;
+  if (!grouped.has(key)) grouped.set(key, createEmptyItem(description, specification));
+  return grouped.get(key);
+}
+
+function applyDeliveryRows(grouped: Map<string, InventoryItem>, rows: SheetRow[]) {
+  const data = rows.slice(1).filter((row: SheetRow) =>
+    row.some((cell: SheetCell) => String(cell || "").trim() !== "")
+  );
+
+  for (const row of data) {
+    const uploadDate = String(row[0] || "").trim();
+    const arrivalDate = String(row[1] || "").trim();
+    const description = String(row[4] || "").trim();
+    const specification = String(row[5] || "").trim();
+    const quantity = toNumber(row[6]);
+    const status = String(row[9] || "").trim().toLowerCase();
+
+    if (!description && !specification) continue;
+
+    const item = getOrCreateItem(grouped, description, specification);
+    if (!item) continue;
+
+    if (status === "incoming") {
+      item["Incoming Qty"] += quantity;
+      if (arrivalDate) item["Latest Incoming"] = arrivalDate;
+    } else if (status === "received") {
+      item["Received Qty"] += quantity;
+      if (arrivalDate) item["Latest Received"] = arrivalDate;
+    } else if (status === "available") {
+      item["Actual On Hand"] += quantity;
+      item["Sellable Qty"] += quantity;
+      if (arrivalDate) item["Latest Received"] = arrivalDate;
+    } else if (status === "damaged" || status === "defective" || status === "damage") {
+      item["Damaged Qty"] += quantity;
+      item["Actual On Hand"] -= quantity;
+      item["Sellable Qty"] -= quantity;
+    } else if (status === "in transit") {
+      if (arrivalDate) item["Latest Incoming"] = arrivalDate;
+    }
+
+    if (!item["Latest Incoming"] && uploadDate) item["Latest Incoming"] = uploadDate;
+  }
+}
+
+function applyConfirmedSalesRows(grouped: Map<string, InventoryItem>, rows: SheetRow[]) {
+  const data = rows.slice(1).filter((row: SheetRow) =>
+    row.some((cell: SheetCell) => String(cell || "").trim() !== "")
+  );
+
+  for (const row of data) {
+    const description = String(row[3] || "").trim();
+    const specification = String(row[4] || "").trim();
+    const quantity = toNumber(row[5]);
+    const saleStatus = String(row[20] || "Draft").trim().toLowerCase();
+
+    if (!description && !specification) continue;
+    if (quantity <= 0) continue;
+    if (saleStatus !== "confirmed") continue;
+
+    const item = getOrCreateItem(grouped, description, specification);
+    if (!item) continue;
+
+    item["Sold Qty"] += quantity;
+    item["Actual On Hand"] -= quantity;
+    item["Sellable Qty"] -= quantity;
+  }
+}
+
 export async function GET() {
   try {
     const sheets = getSheetsClient();
 
-    const response = await sheets.spreadsheets.values.get({
-      spreadsheetId: SHEET_ID,
-      range: `${SHEET_NAME}!A:L`,
-    });
+    const [deliveryResponse, salesResponse] = await Promise.all([
+      sheets.spreadsheets.values.get({
+        spreadsheetId: SHEET_ID,
+        range: `${INVENTORY_SHEET}!A:L`,
+      }),
+      sheets.spreadsheets.values.get({
+        spreadsheetId: SHEET_ID,
+        range: `${SALES_SHEET}!A:V`,
+      }),
+    ]);
 
-    const rows = (response.data.values || []) as SheetRow[];
-    const data = rows.slice(1).filter((row: SheetRow) =>
-      row.some((cell: SheetCell) => String(cell || "").trim() !== "")
-    );
-
+    const deliveryRows = (deliveryResponse.data.values || []) as SheetRow[];
+    const salesRows = (salesResponse.data.values || []) as SheetRow[];
     const grouped = new Map<string, InventoryItem>();
 
-    for (const row of data) {
-      const uploadDate = String(row[0] || "").trim();
-      const arrivalDate = String(row[1] || "").trim();
-      const description = String(row[4] || "").trim();
-      const specification = String(row[5] || "").trim();
-      const quantity = toNumber(row[6]);
-      const status = String(row[9] || "").trim().toLowerCase();
-
-      if (!description && !specification) continue;
-
-      const key = `${description}|||${specification}`;
-      if (!grouped.has(key)) grouped.set(key, createEmptyItem(description, specification));
-
-      const item = grouped.get(key);
-      if (!item) continue;
-
-      if (status === "incoming") {
-        item["Incoming Qty"] += quantity;
-        if (arrivalDate) item["Latest Incoming"] = arrivalDate;
-      } else if (status === "received") {
-        item["Received Qty"] += quantity;
-        if (arrivalDate) item["Latest Received"] = arrivalDate;
-      } else if (status === "available") {
-        item["Actual On Hand"] += quantity;
-        item["Sellable Qty"] += quantity;
-        if (arrivalDate) item["Latest Received"] = arrivalDate;
-      } else if (status === "damaged" || status === "defective" || status === "damage") {
-        item["Damaged Qty"] += quantity;
-        item["Actual On Hand"] -= quantity;
-        item["Sellable Qty"] -= quantity;
-      } else if (status === "in transit") {
-        if (arrivalDate) item["Latest Incoming"] = arrivalDate;
-      }
-
-      if (!item["Latest Incoming"] && uploadDate) item["Latest Incoming"] = uploadDate;
-    }
+    applyDeliveryRows(grouped, deliveryRows);
+    applyConfirmedSalesRows(grouped, salesRows);
 
     const normalized = Array.from(grouped.values()).map((item) => ({
       ...item,
