@@ -4,6 +4,7 @@ import { google } from "googleapis";
 const SHEET_ID = process.env.GOOGLE_SHEET_ID as string;
 const SALES_SHEET = "Sales";
 const PRICING_SHEET = "Pricing_Base";
+const INVENTORY_SHEET = "App_Deliveries";
 
 const auth = new google.auth.GoogleAuth({
   credentials: {
@@ -23,6 +24,10 @@ const SALES_HEADERS = [
 
 function toNumber(value: string | number | undefined) {
   return Number(String(value || "").replace(/[^0-9.-]/g, "")) || 0;
+}
+
+function itemKey(description: string, specification: string) {
+  return `${description.trim()}|||${specification.trim()}`;
 }
 
 function columnLetter(index: number) {
@@ -84,12 +89,109 @@ async function getPricingMap(sheets: any) {
   const map = new Map<string, number>();
 
   rows.slice(1).forEach((row: string[]) => {
-    const key = `${String(row[1] || "").trim()}|||${String(row[2] || "").trim()}`;
+    const key = itemKey(String(row[1] || ""), String(row[2] || ""));
     const costPhp = toNumber(row[7]);
     if (key !== "|||") map.set(key, costPhp);
   });
 
   return map;
+}
+
+async function getAvailableStockMap(sheets: any) {
+  const response = await sheets.spreadsheets.values.get({
+    spreadsheetId: SHEET_ID,
+    range: `${INVENTORY_SHEET}!A:L`,
+  });
+
+  const rows = (response.data.values || []) as string[][];
+  const map = new Map<string, number>();
+
+  rows.slice(1).forEach((row: string[]) => {
+    const description = String(row[4] || "").trim();
+    const specification = String(row[5] || "").trim();
+    const qty = toNumber(row[6]);
+    const status = String(row[9] || "").trim().toLowerCase();
+
+    if (!description && !specification) return;
+
+    const key = itemKey(description, specification);
+    const current = map.get(key) || 0;
+
+    if (status === "available") {
+      map.set(key, current + qty);
+    } else if (status === "damaged" || status === "defective" || status === "damage") {
+      map.set(key, current - qty);
+    }
+  });
+
+  return map;
+}
+
+async function getConfirmedSoldMap(sheets: any) {
+  const response = await sheets.spreadsheets.values.get({
+    spreadsheetId: SHEET_ID,
+    range: `${SALES_SHEET}!A:V`,
+  });
+
+  const rows = (response.data.values || []) as string[][];
+  const map = new Map<string, number>();
+
+  rows.slice(1).filter(isValidSalesRow).forEach((row: string[]) => {
+    const description = String(row[3] || "").trim();
+    const specification = String(row[4] || "").trim();
+    const qty = toNumber(row[5]);
+    const saleStatus = String(row[20] || "Draft").trim().toLowerCase();
+
+    if (saleStatus !== "confirmed") return;
+
+    const key = itemKey(description, specification);
+    map.set(key, (map.get(key) || 0) + qty);
+  });
+
+  return map;
+}
+
+function getRequestedQtyMap(items: any[]) {
+  const map = new Map<string, { description: string; specification: string; qty: number }>();
+
+  items.forEach((item: any) => {
+    const description = String(item?.description || "").trim();
+    const specification = String(item?.specification || "").trim();
+    const qty = toNumber(item?.qty);
+    const key = itemKey(description, specification);
+    const current = map.get(key);
+
+    map.set(key, {
+      description,
+      specification,
+      qty: (current?.qty || 0) + qty,
+    });
+  });
+
+  return map;
+}
+
+async function validateConfirmedStock(sheets: any, items: any[]) {
+  const [availableStockMap, confirmedSoldMap] = await Promise.all([
+    getAvailableStockMap(sheets),
+    getConfirmedSoldMap(sheets),
+  ]);
+  const requestedQtyMap = getRequestedQtyMap(items);
+  const insufficientItems: string[] = [];
+
+  requestedQtyMap.forEach(({ description, specification, qty }, key) => {
+    const availableQty = Math.max((availableStockMap.get(key) || 0) - (confirmedSoldMap.get(key) || 0), 0);
+
+    if (qty > availableQty) {
+      insufficientItems.push(`${description} / ${specification}: requested ${qty}, available ${availableQty}`);
+    }
+  });
+
+  if (insufficientItems.length) {
+    return `Insufficient confirmed stock. ${insufficientItems.join("; ")}`;
+  }
+
+  return "";
 }
 
 export async function GET() {
@@ -157,7 +259,8 @@ export async function POST(req: Request) {
     const transactionRef = String(body?.transactionRef || "").trim();
     const cashierName = String(body?.cashierName || "").trim();
     const saleStatus = String(body?.saleStatus || "Draft").trim();
-    const confirmedAt = saleStatus === "Confirmed"
+    const normalizedSaleStatus = saleStatus.toLowerCase();
+    const confirmedAt = normalizedSaleStatus === "confirmed"
       ? String(body?.confirmedAt || new Date().toISOString()).trim()
       : String(body?.confirmedAt || "").trim();
     const items = Array.isArray(body?.items) ? body.items : [];
@@ -173,12 +276,27 @@ export async function POST(req: Request) {
     const sheets = google.sheets({ version: "v4", auth: client as any });
     await ensureSheetExists(sheets, SALES_SHEET, SALES_HEADERS);
 
-    const pricingMap = await getPricingMap(sheets);
     const validItems = items.filter((item: any) =>
       String(item?.description || "").trim() &&
       String(item?.specification || "").trim() &&
       toNumber(item?.qty) > 0
     );
+
+    if (!validItems.length) {
+      return NextResponse.json(
+        { error: "At least one valid product line is required" },
+        { status: 400 }
+      );
+    }
+
+    if (normalizedSaleStatus === "confirmed") {
+      const stockError = await validateConfirmedStock(sheets, validItems);
+      if (stockError) {
+        return NextResponse.json({ error: stockError }, { status: 409 });
+      }
+    }
+
+    const pricingMap = await getPricingMap(sheets);
 
     const transactionTotal = validItems.reduce((sum: number, item: any) => {
       const qty = toNumber(item?.qty);
@@ -192,7 +310,7 @@ export async function POST(req: Request) {
       const qty = toNumber(item?.qty);
       const unitPricePhp = toNumber(item?.unitPricePhp);
 
-      const key = `${description}|||${specification}`;
+      const key = itemKey(description, specification);
       const costPricePhp = pricingMap.get(key) || 0;
       const totalSalePhp = qty * unitPricePhp;
       const totalCostPhp = qty * costPricePhp;
