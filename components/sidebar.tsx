@@ -8,6 +8,8 @@ const navItems = [
   { label: "Inventory", href: "/inventory", icon: "M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z" },
   { label: "Incoming Deliveries", href: "/incoming-deliveries", icon: "M3 7h11v10H3V7Zm11 4h3l3 3v3h-6v-6Zm-8 8a2 2 0 1 0 0-4 2 2 0 0 0 0 4Zm12 0a2 2 0 1 0 0-4 2 2 0 0 0 0 4Z" },
   { label: "Sales", href: "/sales", icon: "M4 19h16M7 16l4-4 3 3 5-7" },
+  { label: "Daily Reconciliation", href: "/daily-reconciliation", icon: "M9 11h6M9 15h6M8 3h8l3 3v15H5V3h3Zm8 0v4h4" },
+  { label: "Accounting Review", href: "/accounting-review", icon: "M4 5h16v14H4V5Zm4 4h8M8 13h3M14 13h2M8 17h8" },
   { label: "Expenses", href: "/expenses", icon: "M4 7h16v12H4V7Zm0 4h16M16 15h2" },
   { label: "Reports", href: "/reports", icon: "M6 3h9l3 3v15H6V3Zm8 0v4h4M9 13h6M9 17h6" },
   { label: "Users", href: "/users", icon: "M16 21v-2a4 4 0 0 0-8 0v2M12 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8Z" },
