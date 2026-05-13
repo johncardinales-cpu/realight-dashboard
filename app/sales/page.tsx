@@ -41,6 +41,13 @@ type SavedSale = {
   confirmedAt: string;
 };
 
+type AlertState = {
+  type: "success" | "warning" | "error";
+  title: string;
+  message: string;
+  detail?: string;
+};
+
 const emptyLine: SaleLine = {
   description: "",
   specification: "",
@@ -59,6 +66,89 @@ function money(value: number) {
   })}`;
 }
 
+function formatApiError(message: string): AlertState {
+  const stockPrefix = "Insufficient confirmed stock.";
+
+  if (message.startsWith(stockPrefix)) {
+    const detail = message.replace(stockPrefix, "").trim();
+    return {
+      type: "warning",
+      title: "Sale cannot be confirmed",
+      message: "The requested quantity is higher than the stock currently available for confirmed sales.",
+      detail: detail || message,
+    };
+  }
+
+  return {
+    type: "error",
+    title: "Sale was not saved",
+    message,
+  };
+}
+
+function AlertBanner({ alert, onDismiss }: { alert: AlertState; onDismiss: () => void }) {
+  const styles = {
+    success: "border-emerald-200 bg-emerald-50 text-emerald-900",
+    warning: "border-amber-200 bg-amber-50 text-amber-950",
+    error: "border-rose-200 bg-rose-50 text-rose-950",
+  }[alert.type];
+
+  const iconStyles = {
+    success: "bg-emerald-600 text-white",
+    warning: "bg-amber-500 text-white",
+    error: "bg-rose-600 text-white",
+  }[alert.type];
+
+  return (
+    <div className={`mt-4 rounded-2xl border p-4 shadow-sm ${styles}`} role="alert">
+      <div className="flex items-start gap-3">
+        <div className={`mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-sm font-bold ${iconStyles}`}>
+          {alert.type === "success" ? "✓" : "!"}
+        </div>
+        <div className="min-w-0 flex-1">
+          <p className="text-sm font-bold">{alert.title}</p>
+          <p className="mt-1 text-sm leading-6">{alert.message}</p>
+          {alert.detail ? <p className="mt-2 rounded-xl bg-white/70 px-3 py-2 text-sm font-semibold leading-6">{alert.detail}</p> : null}
+        </div>
+        <button type="button" onClick={onDismiss} className="rounded-full px-2 py-1 text-xs font-bold opacity-70 hover:bg-white/60 hover:opacity-100">
+          Close
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function WarningModal({ alert, onClose }: { alert: AlertState; onClose: () => void }) {
+  if (alert.type !== "warning" && alert.type !== "error") return null;
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/45 p-4">
+      <div className="w-full max-w-lg rounded-3xl border border-slate-200 bg-white p-6 shadow-2xl">
+        <div className="flex items-start gap-4">
+          <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-amber-50 text-2xl font-black text-amber-600">!</div>
+          <div className="min-w-0 flex-1">
+            <h2 className="text-2xl font-bold tracking-tight text-slate-950">{alert.title}</h2>
+            <p className="mt-2 text-sm leading-6 text-slate-600">{alert.message}</p>
+            {alert.detail ? (
+              <div className="mt-4 rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm font-semibold leading-6 text-amber-950">
+                {alert.detail}
+              </div>
+            ) : null}
+            <p className="mt-4 text-sm leading-6 text-slate-500">
+              To proceed, lower the quantity, select Draft instead of Confirmed, or replenish inventory first.
+            </p>
+          </div>
+        </div>
+        <div className="mt-6 flex justify-end">
+          <button type="button" onClick={onClose} className="rounded-2xl bg-slate-950 px-5 py-3 text-sm font-bold text-white shadow-sm">
+            Review Sale
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function SalesPage() {
   const [pricing, setPricing] = useState<PriceRow[]>([]);
   const [rows, setRows] = useState<SavedSale[]>([]);
@@ -74,7 +164,7 @@ export default function SalesPage() {
   const [salesperson, setSalesperson] = useState("");
   const [notes, setNotes] = useState("");
   const [items, setItems] = useState<SaleLine[]>([{ ...emptyLine }]);
-  const [message, setMessage] = useState("");
+  const [alert, setAlert] = useState<AlertState | null>(null);
   const [saving, setSaving] = useState(false);
 
   async function loadAll() {
@@ -155,7 +245,7 @@ export default function SalesPage() {
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
     setSaving(true);
-    setMessage("");
+    setAlert(null);
 
     try {
       const cleanItems = items.filter(
@@ -184,11 +274,15 @@ export default function SalesPage() {
       const data = await res.json();
       if (!res.ok) throw new Error(data?.error || "Failed to save sale");
 
-      setMessage(`Sale saved successfully with ${data?.lines || 0} line(s).`);
+      setAlert({
+        type: "success",
+        title: "Sale saved successfully",
+        message: `The sale was recorded with ${data?.lines || 0} line(s).`,
+      });
       resetForm();
       await loadAll();
     } catch (error: any) {
-      setMessage(error?.message || "Failed to save sale.");
+      setAlert(formatApiError(error?.message || "Failed to save sale."));
     } finally {
       setSaving(false);
     }
@@ -196,12 +290,14 @@ export default function SalesPage() {
 
   return (
     <section className="space-y-6">
+      {alert ? <WarningModal alert={alert} onClose={() => setAlert(null)} /> : null}
+
       <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
         <h1 className="text-3xl font-semibold text-slate-900">Sales</h1>
         <p className="mt-1 text-sm text-slate-600">
           You can add multiple products in one sale. Each line keeps its own quantity and unit price.
         </p>
-        {message ? <p className="mt-3 text-sm text-slate-700">{message}</p> : null}
+        {alert ? <AlertBanner alert={alert} onDismiss={() => setAlert(null)} /> : null}
       </div>
 
       <form onSubmit={onSubmit} className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm space-y-5">
