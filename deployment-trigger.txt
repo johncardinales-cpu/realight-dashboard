@@ -1,0 +1,4 @@
+Redeploy trigger for Vercel.
+
+Last triggered: 2026-05-13
+Reason: refresh deployment after Sales stock preview, oversell warning, and ledger status badge updates.
