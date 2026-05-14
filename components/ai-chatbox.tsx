@@ -111,13 +111,13 @@ export default function AIChatBox() {
   }
 
   return (
-    <div className="fixed bottom-5 right-5 z-50">
+    <div className="fixed bottom-3 right-3 z-40 sm:bottom-4 sm:right-4">
       {open ? (
-        <div className="mb-4 flex h-[620px] w-[min(420px,calc(100vw-2.5rem))] flex-col overflow-hidden rounded-[2rem] border border-slate-200 bg-white shadow-[0_24px_80px_rgba(15,23,42,0.22)]">
+        <div className="mb-3 flex h-[560px] w-[min(390px,calc(100vw-1.5rem))] flex-col overflow-hidden rounded-[1.5rem] border border-slate-200 bg-white/95 shadow-[0_18px_60px_rgba(15,23,42,0.20)] backdrop-blur">
           <div className="flex items-center justify-between border-b border-slate-100 bg-gradient-to-r from-slate-950 to-slate-800 px-5 py-4 text-white">
             <div className="flex items-center gap-3">
-              <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-amber-400 text-slate-950 shadow-sm">
-                <svg viewBox="0 0 24 24" aria-hidden="true" className="h-6 w-6" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <div className="flex h-10 w-10 items-center justify-center rounded-2xl bg-amber-400 text-slate-950 shadow-sm">
+                <svg viewBox="0 0 24 24" aria-hidden="true" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                   <path d="M12 3v3" />
                   <path d="M12 18v3" />
                   <path d="M3 12h3" />
@@ -241,11 +241,11 @@ export default function AIChatBox() {
       <button
         type="button"
         onClick={() => setOpen((value) => !value)}
-        className="flex items-center gap-3 rounded-full bg-slate-950 px-5 py-4 text-sm font-semibold text-white shadow-[0_18px_50px_rgba(15,23,42,0.35)] transition hover:-translate-y-0.5 hover:bg-slate-800"
+        className="group flex items-center gap-2 rounded-full bg-slate-950/75 px-3 py-2 text-xs font-semibold text-white shadow-[0_10px_30px_rgba(15,23,42,0.22)] backdrop-blur transition hover:-translate-y-0.5 hover:bg-slate-950/90 sm:opacity-75 sm:hover:opacity-100"
         aria-label="Open Reallights AI chat"
       >
-        <span className="flex h-9 w-9 items-center justify-center rounded-full bg-amber-400 text-slate-950">
-          <svg viewBox="0 0 24 24" aria-hidden="true" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <span className="flex h-7 w-7 items-center justify-center rounded-full bg-amber-400 text-slate-950">
+          <svg viewBox="0 0 24 24" aria-hidden="true" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
             <path d="M12 3v3" />
             <path d="M12 18v3" />
             <path d="M3 12h3" />
@@ -253,7 +253,7 @@ export default function AIChatBox() {
             <path d="M12 8l1.6 3.2L17 12l-3.4.8L12 16l-1.6-3.2L7 12l3.4-.8L12 8Z" />
           </svg>
         </span>
-        Ask Reallights AI
+        <span className="hidden sm:inline">Ask AI</span>
       </button>
     </div>
   );
