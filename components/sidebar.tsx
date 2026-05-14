@@ -14,6 +14,7 @@ const navItems = [
   { label: "Expenses", href: "/expenses", icon: "M4 7h16v12H4V7Zm0 4h16M16 15h2" },
   { label: "Reports", href: "/reports", icon: "M6 3h9l3 3v15H6V3Zm8 0v4h4M9 13h6M9 17h6" },
   { label: "Migration", href: "/migration", icon: "M4 7h16M4 12h10M4 17h16M16 10l4 4-4 4" },
+  { label: "Testing Reset", href: "/testing-reset", icon: "M4 4h16v6H4V4Zm0 10h16v6H4v-6Zm4-7h8M8 17h8" },
   { label: "Users", href: "/users", icon: "M16 21v-2a4 4 0 0 0-8 0v2M12 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8Z" },
   { label: "Settings", href: "/settings", icon: "M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6" },
 ];
