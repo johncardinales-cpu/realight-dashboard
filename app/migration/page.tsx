@@ -2,6 +2,12 @@
 
 import { useEffect, useState } from "react";
 
+type MigrationIssue = {
+  severity: "error" | "warning";
+  code: string;
+  message: string;
+};
+
 type MigrationStatus = {
   salesRows: number;
   paymentsRows: number;
@@ -9,6 +15,9 @@ type MigrationStatus = {
   missingSaleIds: number;
   missingPaymentIds: number;
   missingPaymentSaleLinks: number;
+  validationIssues: MigrationIssue[];
+  errorCount: number;
+  warningCount: number;
   migrationReady: boolean;
   recommendedDatabase: string;
   futureTables: string[];
@@ -21,7 +30,9 @@ const exports = [
   { label: "Expenses", type: "expenses" },
   { label: "Deliveries", type: "deliveries" },
   { label: "Pricing", type: "pricing" },
+  { label: "Inventory Movements", type: "inventory_movements" },
   { label: "Audit Logs", type: "audit_logs" },
+  { label: "Migration Manifest", type: "manifest" },
 ];
 
 function StatusCard({ label, value, helper }: { label: string; value: string | number; helper?: string }) {
@@ -86,7 +97,7 @@ export default function MigrationPage() {
           <div>
             <h1 className="text-3xl font-semibold text-slate-900">Migration Readiness</h1>
             <p className="mt-1 text-sm text-slate-600">
-              Prepare Google Sheets data for a future Supabase/Postgres migration with stable IDs, audit logs, and export-ready CSV files.
+              Prepare Google Sheets data for a future Supabase/Postgres migration with stable IDs, audit logs, validation checks, and export-ready files.
             </p>
           </div>
           <div className="flex flex-wrap gap-3">
@@ -104,8 +115,12 @@ export default function MigrationPage() {
       {status ? (
         <>
           <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
-            <p className={`rounded-2xl px-4 py-3 text-sm font-bold ${status.migrationReady ? "bg-emerald-50 text-emerald-700" : "bg-amber-50 text-amber-700"}`}>
-              {status.migrationReady ? "Migration-ready for core Sales and Payments records." : "Migration preparation still needs attention. Run backfill and refresh status."}
+            <p className={`rounded-2xl px-4 py-3 text-sm font-bold ${status.migrationReady ? "bg-emerald-50 text-emerald-700" : status.errorCount > 0 ? "bg-rose-50 text-rose-700" : "bg-amber-50 text-amber-700"}`}>
+              {status.migrationReady
+                ? "Migration-ready for core Sales and Payments records. Warnings, if any, should still be reviewed before final database cutover."
+                : status.errorCount > 0
+                  ? "Migration has blocking validation errors. Fix errors before database cutover."
+                  : "Migration preparation still needs attention. Run backfill and review warnings."}
             </p>
           </div>
 
@@ -114,20 +129,50 @@ export default function MigrationPage() {
             <StatusCard label="Payment Rows" value={status.paymentsRows} helper="Payment ledger records" />
             <StatusCard label="Audit Rows" value={status.auditRows} helper="Action history records" />
             <StatusCard label="Database Target" value={status.recommendedDatabase} helper="Recommended future backend" />
-            <StatusCard label="Missing Sale IDs" value={status.missingSaleIds} helper="Should be 0 before migration" />
-            <StatusCard label="Missing Payment IDs" value={status.missingPaymentIds} helper="Should be 0 before migration" />
-            <StatusCard label="Unlinked Payments" value={status.missingPaymentSaleLinks} helper="Old payments may need sale links" />
-            <StatusCard label="Future Tables" value={status.futureTables.length} helper="Suggested database tables" />
+            <StatusCard label="Missing Sale IDs" value={status.missingSaleIds} helper="Must be 0 before migration" />
+            <StatusCard label="Missing Payment IDs" value={status.missingPaymentIds} helper="Must be 0 before migration" />
+            <StatusCard label="Unlinked Payments" value={status.missingPaymentSaleLinks} helper="Review before final cutover" />
+            <StatusCard label="Validation" value={`${status.errorCount} errors / ${status.warningCount} warnings`} helper="Errors block migration" />
+          </div>
+
+          <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
+            <h2 className="text-xl font-semibold text-slate-900">Validation Issues</h2>
+            <p className="mt-1 text-sm text-slate-600">Errors must be fixed before migration. Warnings should be reviewed but may not block staging import.</p>
+            <div className="mt-4 overflow-x-auto rounded-2xl border border-slate-200">
+              <table className="w-full text-sm">
+                <thead className="bg-slate-100 text-slate-700">
+                  <tr>
+                    <th className="px-4 py-3 text-left font-medium">Severity</th>
+                    <th className="px-4 py-3 text-left font-medium">Code</th>
+                    <th className="px-4 py-3 text-left font-medium">Message</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {status.validationIssues?.map((issue) => (
+                    <tr key={`${issue.code}-${issue.message}`} className="border-t border-slate-100">
+                      <td className="px-4 py-3">
+                        <span className={`rounded-full px-2.5 py-1 text-xs font-bold ${issue.severity === "error" ? "bg-rose-50 text-rose-700" : "bg-amber-50 text-amber-700"}`}>{issue.severity}</span>
+                      </td>
+                      <td className="px-4 py-3 font-semibold text-slate-700">{issue.code}</td>
+                      <td className="px-4 py-3 text-slate-700">{issue.message}</td>
+                    </tr>
+                  ))}
+                  {!status.validationIssues?.length && (
+                    <tr><td colSpan={3} className="px-4 py-8 text-center text-slate-500">No validation issues found.</td></tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
           </div>
 
           <div className="grid gap-6 xl:grid-cols-2">
             <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
-              <h2 className="text-xl font-semibold text-slate-900">Export Database CSVs</h2>
-              <p className="mt-1 text-sm text-slate-600">Use these files for backup or future Supabase/Postgres import.</p>
+              <h2 className="text-xl font-semibold text-slate-900">Export Database Files</h2>
+              <p className="mt-1 text-sm text-slate-600">Use these files for backup, staging import, or final Supabase/Postgres migration.</p>
               <div className="mt-4 grid gap-3 sm:grid-cols-2">
                 {exports.map((item) => (
                   <a key={item.type} href={`/api/migration?export=${item.type}`} className="rounded-2xl border border-slate-300 px-4 py-3 text-sm font-bold text-slate-700 hover:bg-slate-50">
-                    Export {item.label} CSV
+                    Export {item.label}
                   </a>
                 ))}
               </div>
@@ -142,7 +187,7 @@ export default function MigrationPage() {
                 ))}
               </div>
               <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-50 p-4 text-sm leading-6 text-slate-700">
-                Best migration path: export CSVs, import to Supabase staging tables, validate totals, then switch API routes from Google Sheets to Postgres while keeping the same frontend pages.
+                Best migration path: backfill IDs, export all files plus manifest, import to staging tables, validate totals, then switch API routes from Google Sheets to Postgres while keeping the same frontend pages.
               </div>
             </div>
           </div>
