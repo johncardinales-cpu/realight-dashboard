@@ -46,6 +46,24 @@ function titleForMode(mode: ReportMode) {
   return "Daily";
 }
 
+function csvEscape(value: string | number) {
+  const text = String(value ?? "");
+  return `"${text.replace(/"/g, '""')}"`;
+}
+
+function downloadCsv(filename: string, rows: Array<Array<string | number>>) {
+  const csv = rows.map((row) => row.map(csvEscape).join(",")).join("\n");
+  const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  URL.revokeObjectURL(url);
+}
+
 function StatCard({ label, value, helper }: { label: string; value: string; helper?: string }) {
   return (
     <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
@@ -92,6 +110,67 @@ export default function ReportsPage() {
     }
   }
 
+  function exportSummary() {
+    if (!data) return;
+    const s = data.summary;
+    downloadCsv(`realights-${data.mode}-summary-${data.startDate}-to-${data.endDate}.csv`, [
+      ["Report Mode", data.mode],
+      ["Start Date", data.startDate],
+      ["End Date", data.endDate],
+      ["Sales", s.totalSalesToday],
+      ["Confirmed Sales", s.confirmedSalesToday],
+      ["Collections", s.collectionsToday],
+      ["Initial Collections", s.initialCollectionsToday],
+      ["Follow-up Collections", s.followUpCollectionsToday],
+      ["Gross Profit", s.grossProfitToday],
+      ["Expenses", s.expensesToday],
+      ["Net Profit", s.netProfitToday],
+      ["New Receivables", s.newReceivablesToday],
+      ["Ending Receivables", s.endingReceivables],
+      ["Sale Count", s.dailySaleCount],
+    ]);
+  }
+
+  function exportSales() {
+    if (!data) return;
+    downloadCsv(`realights-${data.mode}-sales-${data.startDate}-to-${data.endDate}.csv`, [
+      ["Date", "Sales Ref", "Customer", "Total Sale", "Paid", "Balance", "Gross Profit", "Payment Status", "Sale Status"],
+      ...data.dailySales.map((sale) => [sale.saleDate, sale.salesRefNo, sale.customerName, sale.totalSalePhp, sale.totalPaidPhp, sale.balancePhp, sale.grossProfitPhp, sale.paymentStatus, sale.saleStatus]),
+    ]);
+  }
+
+  function exportCollections() {
+    if (!data) return;
+    downloadCsv(`realights-${data.mode}-collections-${data.startDate}-to-${data.endDate}.csv`, [
+      ["Method", "Amount"],
+      ...data.collectionsByMethod.map((item) => [item.method, item.amount]),
+    ]);
+  }
+
+  function exportReceivables() {
+    if (!data) return;
+    downloadCsv(`realights-open-receivables-${data.startDate}-to-${data.endDate}.csv`, [
+      ["Date", "Sales Ref", "Customer", "Total Sale", "Paid", "Balance", "Payment Status", "Sale Status"],
+      ...data.openReceivables.map((sale) => [sale.saleDate, sale.salesRefNo, sale.customerName, sale.totalSalePhp, sale.totalPaidPhp, sale.balancePhp, sale.paymentStatus, sale.saleStatus]),
+    ]);
+  }
+
+  function exportExpenses() {
+    if (!data) return;
+    downloadCsv(`realights-${data.mode}-expenses-${data.startDate}-to-${data.endDate}.csv`, [
+      ["Date", "Category", "Description", "Amount", "Source"],
+      ...data.dailyExpenses.map((expense) => [expense.date, expense.category, expense.description, expense.amount, expense.source]),
+    ]);
+  }
+
+  function exportProductMovement() {
+    if (!data) return;
+    downloadCsv(`realights-${data.mode}-product-movement-${data.startDate}-to-${data.endDate}.csv`, [
+      ["Description", "Specification", "Qty Sold", "Confirmed Qty", "Total Sale", "Gross Profit"],
+      ...data.productMovement.map((item) => [item.description, item.specification, item.qty, item.confirmedQty, item.totalSalePhp, item.grossProfitPhp]),
+    ]);
+  }
+
   useEffect(() => {
     loadReport(reportDate, mode).catch(console.error);
   }, []);
@@ -123,6 +202,16 @@ export default function ReportsPage() {
             </button>
           </form>
         </div>
+        {data ? (
+          <div className="mt-4 flex flex-wrap gap-2">
+            <button type="button" onClick={exportSummary} className="rounded-xl border border-slate-300 px-3 py-2 text-xs font-bold text-slate-700 hover:bg-slate-50">Export Summary CSV</button>
+            <button type="button" onClick={exportSales} className="rounded-xl border border-slate-300 px-3 py-2 text-xs font-bold text-slate-700 hover:bg-slate-50">Export Sales CSV</button>
+            <button type="button" onClick={exportCollections} className="rounded-xl border border-slate-300 px-3 py-2 text-xs font-bold text-slate-700 hover:bg-slate-50">Export Collections CSV</button>
+            <button type="button" onClick={exportReceivables} className="rounded-xl border border-slate-300 px-3 py-2 text-xs font-bold text-slate-700 hover:bg-slate-50">Export Receivables CSV</button>
+            <button type="button" onClick={exportExpenses} className="rounded-xl border border-slate-300 px-3 py-2 text-xs font-bold text-slate-700 hover:bg-slate-50">Export Expenses CSV</button>
+            <button type="button" onClick={exportProductMovement} className="rounded-xl border border-slate-300 px-3 py-2 text-xs font-bold text-slate-700 hover:bg-slate-50">Export Product Movement CSV</button>
+          </div>
+        ) : null}
         {message ? <p className="mt-3 rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm font-semibold text-rose-700">{message}</p> : null}
       </div>
 
