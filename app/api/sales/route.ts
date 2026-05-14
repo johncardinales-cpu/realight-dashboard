@@ -289,7 +289,34 @@ export async function POST(req: Request) {
       );
     }
 
+    const transactionTotal = validItems.reduce((sum: number, item: any) => {
+      const qty = toNumber(item?.qty);
+      const unitPricePhp = toNumber(item?.unitPricePhp);
+      return sum + (qty * unitPricePhp);
+    }, 0);
+
+    if (amountPaidPhp > transactionTotal) {
+      return NextResponse.json(
+        { error: "Amount Paid cannot be higher than Total Sale" },
+        { status: 400 }
+      );
+    }
+
     if (normalizedSaleStatus === "confirmed") {
+      if (!paymentMethod) {
+        return NextResponse.json(
+          { error: "Payment Method is required before confirming a sale" },
+          { status: 400 }
+        );
+      }
+
+      if (!cashierName) {
+        return NextResponse.json(
+          { error: "Cashier Name is required before confirming a sale" },
+          { status: 400 }
+        );
+      }
+
       const stockError = await validateConfirmedStock(sheets, validItems);
       if (stockError) {
         return NextResponse.json({ error: stockError }, { status: 409 });
@@ -297,12 +324,6 @@ export async function POST(req: Request) {
     }
 
     const pricingMap = await getPricingMap(sheets);
-
-    const transactionTotal = validItems.reduce((sum: number, item: any) => {
-      const qty = toNumber(item?.qty);
-      const unitPricePhp = toNumber(item?.unitPricePhp);
-      return sum + (qty * unitPricePhp);
-    }, 0);
 
     const rowsToAppend = validItems.map((item: any) => {
       const description = String(item?.description || "").trim();
@@ -318,7 +339,7 @@ export async function POST(req: Request) {
       const lineAmountPaidPhp = transactionTotal > 0
         ? amountPaidPhp * (totalSalePhp / transactionTotal)
         : 0;
-      const lineBalancePhp = totalSalePhp - lineAmountPaidPhp;
+      const lineBalancePhp = Math.max(totalSalePhp - lineAmountPaidPhp, 0);
 
       return [
         saleDate, salesRefNo, customerName, description, specification, qty,
