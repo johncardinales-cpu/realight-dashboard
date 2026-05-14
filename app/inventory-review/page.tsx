@@ -32,14 +32,6 @@ function getErrorMessage(error: unknown, fallback = "Something went wrong.") {
   return error instanceof Error ? error.message : fallback;
 }
 
-function formatDate(value: string | number | undefined) {
-  const raw = String(value || "").trim();
-  if (!raw) return "-";
-  const date = new Date(raw);
-  if (Number.isNaN(date.getTime())) return raw;
-  return date.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
-}
-
 function StatusBadge({ status }: { status: InventoryStatus }) {
   const className = {
     "In Stock": "bg-emerald-50 text-emerald-700",
@@ -116,7 +108,7 @@ export default function InventoryReviewPage() {
             <p className="text-sm font-bold uppercase tracking-[0.2em] text-emerald-600">Confirmed sales inventory review</p>
             <h1 className="mt-2 text-4xl font-bold tracking-tight text-slate-950">Inventory Review</h1>
             <p className="mt-2 max-w-3xl text-sm text-slate-500">
-              This review view exposes the Sold Qty from confirmed sales beside On Hand, Sellable, Damaged, and Incoming inventory.
+              Quantity-only review showing confirmed Sold Qty beside On Hand, Sellable, Damaged, and Incoming inventory. Delivery dates are managed from Incoming Deliveries.
             </p>
             {message ? <p className="mt-3 text-sm font-semibold text-slate-600">{message}</p> : null}
           </div>
@@ -169,8 +161,6 @@ export default function InventoryReviewPage() {
                 <th className="px-5 py-4 font-semibold">Sold</th>
                 <th className="px-5 py-4 font-semibold">Damaged</th>
                 <th className="px-5 py-4 font-semibold">Incoming</th>
-                <th className="px-5 py-4 font-semibold">Latest Received</th>
-                <th className="px-5 py-4 font-semibold">Latest Incoming</th>
               </tr>
             </thead>
             <tbody>
@@ -187,14 +177,12 @@ export default function InventoryReviewPage() {
                     <td className="px-5 py-4 font-bold text-indigo-700">{qty(row, "Sold Qty")}</td>
                     <td className="px-5 py-4 font-bold text-rose-600">{qty(row, "Damaged Qty")}</td>
                     <td className="px-5 py-4 font-bold text-blue-600">{qty(row, "Incoming Qty")}</td>
-                    <td className="px-5 py-4 text-slate-600">{formatDate(row["Latest Received"])}</td>
-                    <td className="px-5 py-4 text-slate-600">{formatDate(row["Latest Incoming"])}</td>
                   </tr>
                 );
               })}
               {!filteredRows.length ? (
                 <tr>
-                  <td colSpan={10} className="px-5 py-12 text-center text-slate-500">No inventory rows found.</td>
+                  <td colSpan={8} className="px-5 py-12 text-center text-slate-500">No inventory rows found.</td>
                 </tr>
               ) : null}
             </tbody>
