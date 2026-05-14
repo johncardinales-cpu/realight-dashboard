@@ -9,6 +9,7 @@ const navItems = [
   { label: "Inventory Review", href: "/inventory-review", icon: "M4 5h16M4 12h16M4 19h16M8 5v14M16 5v14" },
   { label: "Incoming Deliveries", href: "/incoming-deliveries", icon: "M3 7h11v10H3V7Zm11 4h3l3 3v3h-6v-6Zm-8 8a2 2 0 1 0 0-4 2 2 0 0 0 0 4Zm12 0a2 2 0 1 0 0-4 2 2 0 0 0 0 4Z" },
   { label: "Sales", href: "/sales", icon: "M4 19h16M7 16l4-4 3 3 5-7" },
+  { label: "Confirm Sales", href: "/confirm-sales", icon: "M9 12l2 2 4-5M4 4h16v16H4V4Z" },
   { label: "Payments", href: "/payments", icon: "M4 7h16v10H4V7Zm0 3h16M7 15h4" },
   { label: "Expenses", href: "/expenses", icon: "M4 7h16v12H4V7Zm0 4h16M16 15h2" },
   { label: "Reports", href: "/reports", icon: "M6 3h9l3 3v15H6V3Zm8 0v4h4M9 13h6M9 17h6" },
