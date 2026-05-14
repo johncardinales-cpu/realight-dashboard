@@ -27,8 +27,42 @@ function today() {
   return new Date().toISOString().slice(0, 10);
 }
 
-function sameDate(value: string, targetDate: string) {
-  return safeText(value).slice(0, 10) === targetDate;
+function toDate(value: string) {
+  const parsed = new Date(`${safeText(value).slice(0, 10)}T00:00:00`);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
+function formatDate(date: Date) {
+  return date.toISOString().slice(0, 10);
+}
+
+function getPeriodRange(mode: string, dateValue: string) {
+  const base = toDate(dateValue) || toDate(today()) as Date;
+  const normalizedMode = ["daily", "weekly", "monthly"].includes(mode) ? mode : "daily";
+  const start = new Date(base);
+  const end = new Date(base);
+
+  if (normalizedMode === "weekly") {
+    const day = start.getDay();
+    const mondayOffset = day === 0 ? -6 : 1 - day;
+    start.setDate(start.getDate() + mondayOffset);
+    end.setTime(start.getTime());
+    end.setDate(start.getDate() + 6);
+  } else if (normalizedMode === "monthly") {
+    start.setDate(1);
+    end.setMonth(start.getMonth() + 1, 0);
+  }
+
+  return {
+    mode: normalizedMode,
+    startDate: formatDate(start),
+    endDate: formatDate(end),
+  };
+}
+
+function inRange(value: string, startDate: string, endDate: string) {
+  const date = safeText(value).slice(0, 10);
+  return date >= startDate && date <= endDate;
 }
 
 function getPaymentStatus(totalPaid: number, totalSale: number) {
@@ -50,28 +84,18 @@ async function readRange(sheets: any, range: string) {
 
 function buildPaymentLedgerTotals(paymentRows: string[][]) {
   const byKey = new Map<string, number>();
-  const byDate = new Map<string, number>();
-  const byMethod = new Map<string, number>();
-  let totalLedgerPayments = 0;
 
   paymentRows.slice(1).forEach((row) => {
-    const paymentDate = safeText(row[0]);
     const salesRefNo = safeText(row[1]);
     const groupRef = safeText(row[2]);
-    const paymentMethod = safeText(row[4]) || "Unspecified";
     const amount = toNumber(row[5]);
     const key = saleKey(salesRefNo, groupRef);
 
     if (!key || amount <= 0) return;
-
     byKey.set(key, (byKey.get(key) || 0) + amount);
-    totalLedgerPayments += amount;
-
-    if (paymentDate) byDate.set(paymentDate.slice(0, 10), (byDate.get(paymentDate.slice(0, 10)) || 0) + amount);
-    byMethod.set(paymentMethod, (byMethod.get(paymentMethod) || 0) + amount);
   });
 
-  return { byKey, byDate, byMethod, totalLedgerPayments };
+  return { byKey };
 }
 
 function buildSaleSummaries(salesRows: string[][], paymentRows: string[][]) {
@@ -167,10 +191,83 @@ function summarizeMethodBreakdown(entries: Array<{ method: string; amount: numbe
     .sort((a, b) => b.amount - a.amount);
 }
 
+function summarizeByCategory(entries: Array<{ category: string; amount: number }>) {
+  const map = new Map<string, number>();
+  entries.forEach((entry) => {
+    const category = entry.category || "Uncategorized";
+    map.set(category, (map.get(category) || 0) + entry.amount);
+  });
+
+  return Array.from(map.entries())
+    .map(([category, amount]) => ({ category, amount }))
+    .sort((a, b) => b.amount - a.amount);
+}
+
+function summarizeDaily(periodSales: any[], periodExpenses: any[], initialCollections: any[], followUpCollections: any[]) {
+  const days = new Map<string, any>();
+  const ensure = (date: string) => {
+    if (!days.has(date)) {
+      days.set(date, { date, sales: 0, collections: 0, expenses: 0, grossProfit: 0, netProfit: 0, receivables: 0 });
+    }
+    return days.get(date);
+  };
+
+  periodSales.forEach((sale) => {
+    const item = ensure(sale.saleDate.slice(0, 10));
+    item.sales += sale.totalSalePhp;
+    item.grossProfit += sale.grossProfitPhp;
+    item.receivables += sale.balancePhp;
+  });
+
+  periodExpenses.forEach((expense) => {
+    const item = ensure(expense.date.slice(0, 10));
+    item.expenses += expense.amount;
+  });
+
+  [...initialCollections, ...followUpCollections].forEach((entry) => {
+    const item = ensure(entry.date);
+    item.collections += entry.amount;
+  });
+
+  return Array.from(days.values())
+    .map((item) => ({ ...item, netProfit: item.grossProfit - item.expenses }))
+    .sort((a, b) => a.date.localeCompare(b.date));
+}
+
+function summarizeProductMovement(salesRows: string[][], startDate: string, endDate: string) {
+  const map = new Map<string, any>();
+
+  salesRows.slice(1).forEach((row) => {
+    const saleDate = safeText(row[0]);
+    if (!inRange(saleDate, startDate, endDate)) return;
+
+    const description = safeText(row[3]);
+    const specification = safeText(row[4]);
+    const key = `${description}|||${specification}`;
+    const qty = toNumber(row[5]);
+    const totalSalePhp = toNumber(row[7]);
+    const grossProfitPhp = toNumber(row[10]);
+    const saleStatus = safeText(row[20]) || "Draft";
+
+    if (!description && !specification) return;
+
+    const current = map.get(key) || { description, specification, qty: 0, totalSalePhp: 0, grossProfitPhp: 0, confirmedQty: 0 };
+    current.qty += qty;
+    current.totalSalePhp += totalSalePhp;
+    current.grossProfitPhp += grossProfitPhp;
+    if (saleStatus.toLowerCase() === "confirmed") current.confirmedQty += qty;
+    map.set(key, current);
+  });
+
+  return Array.from(map.values()).sort((a, b) => b.totalSalePhp - a.totalSalePhp);
+}
+
 export async function GET(req: Request) {
   try {
     const url = new URL(req.url);
     const reportDate = url.searchParams.get("date") || today();
+    const mode = url.searchParams.get("mode") || "daily";
+    const period = getPeriodRange(mode, reportDate);
     const client = await auth.getClient();
     const sheets = google.sheets({ version: "v4", auth: client as any });
 
@@ -182,52 +279,58 @@ export async function GET(req: Request) {
     ]);
 
     const saleSummaries = buildSaleSummaries(salesRows, paymentRows);
-    const dailySales = saleSummaries.filter((sale) => sameDate(sale.saleDate, reportDate));
+    const periodSales = saleSummaries.filter((sale) => inRange(sale.saleDate, period.startDate, period.endDate));
     const allExpenses = [...parseExpenseRows(expenseRows), ...parseSupplierRows(supplierRows)];
-    const dailyExpenses = allExpenses.filter((expense) => sameDate(expense.date, reportDate));
+    const periodExpenses = allExpenses.filter((expense) => inRange(expense.date, period.startDate, period.endDate));
 
-    const initialCollectionsToday = dailySales
+    const initialCollections = periodSales
       .filter((sale) => sale.initialPaidPhp > 0)
-      .map((sale) => ({ method: sale.initialPaymentMethod || "Unspecified", amount: sale.initialPaidPhp }));
+      .map((sale) => ({ date: sale.saleDate.slice(0, 10), method: sale.initialPaymentMethod || "Unspecified", amount: sale.initialPaidPhp }));
 
-    const followUpCollectionsToday = paymentRows.slice(1)
-      .filter((row) => sameDate(safeText(row[0]), reportDate))
-      .map((row) => ({ method: safeText(row[4]) || "Unspecified", amount: toNumber(row[5]) }))
+    const followUpCollections = paymentRows.slice(1)
+      .filter((row) => inRange(safeText(row[0]), period.startDate, period.endDate))
+      .map((row) => ({ date: safeText(row[0]).slice(0, 10), method: safeText(row[4]) || "Unspecified", amount: toNumber(row[5]) }))
       .filter((row) => row.amount > 0);
 
-    const totalSalesToday = dailySales.reduce((sum, sale) => sum + sale.totalSalePhp, 0);
-    const confirmedSalesToday = dailySales.filter((sale) => sale.saleStatus.toLowerCase() === "confirmed").reduce((sum, sale) => sum + sale.totalSalePhp, 0);
-    const grossProfitToday = dailySales.reduce((sum, sale) => sum + sale.grossProfitPhp, 0);
-    const expensesToday = dailyExpenses.reduce((sum, expense) => sum + expense.amount, 0);
-    const initialCollectionsTotal = initialCollectionsToday.reduce((sum, entry) => sum + entry.amount, 0);
-    const followUpCollectionsTotal = followUpCollectionsToday.reduce((sum, entry) => sum + entry.amount, 0);
-    const collectionsToday = initialCollectionsTotal + followUpCollectionsTotal;
+    const totalSales = periodSales.reduce((sum, sale) => sum + sale.totalSalePhp, 0);
+    const confirmedSales = periodSales.filter((sale) => sale.saleStatus.toLowerCase() === "confirmed").reduce((sum, sale) => sum + sale.totalSalePhp, 0);
+    const grossProfit = periodSales.reduce((sum, sale) => sum + sale.grossProfitPhp, 0);
+    const expenses = periodExpenses.reduce((sum, expense) => sum + expense.amount, 0);
+    const initialCollectionsTotal = initialCollections.reduce((sum, entry) => sum + entry.amount, 0);
+    const followUpCollectionsTotal = followUpCollections.reduce((sum, entry) => sum + entry.amount, 0);
+    const collections = initialCollectionsTotal + followUpCollectionsTotal;
     const endingReceivables = saleSummaries.reduce((sum, sale) => sum + sale.balancePhp, 0);
-    const newReceivablesToday = dailySales.reduce((sum, sale) => sum + sale.balancePhp, 0);
+    const newReceivables = periodSales.reduce((sum, sale) => sum + sale.balancePhp, 0);
 
-    const paymentStatusCounts = dailySales.reduce((acc: Record<string, number>, sale) => {
+    const paymentStatusCounts = periodSales.reduce((acc: Record<string, number>, sale) => {
       acc[sale.paymentStatus] = (acc[sale.paymentStatus] || 0) + 1;
       return acc;
     }, {});
 
     return NextResponse.json({
       reportDate,
+      mode: period.mode,
+      startDate: period.startDate,
+      endDate: period.endDate,
       summary: {
-        totalSalesToday,
-        confirmedSalesToday,
-        grossProfitToday,
-        expensesToday,
-        netProfitToday: grossProfitToday - expensesToday,
+        totalSalesToday: totalSales,
+        confirmedSalesToday: confirmedSales,
+        grossProfitToday: grossProfit,
+        expensesToday: expenses,
+        netProfitToday: grossProfit - expenses,
         initialCollectionsToday: initialCollectionsTotal,
         followUpCollectionsToday: followUpCollectionsTotal,
-        collectionsToday,
-        newReceivablesToday,
+        collectionsToday: collections,
+        newReceivablesToday: newReceivables,
         endingReceivables,
-        dailySaleCount: dailySales.length,
+        dailySaleCount: periodSales.length,
         paymentStatusCounts,
       },
-      collectionsByMethod: summarizeMethodBreakdown([...initialCollectionsToday, ...followUpCollectionsToday]),
-      dailySales: dailySales.map((sale) => ({
+      collectionsByMethod: summarizeMethodBreakdown([...initialCollections, ...followUpCollections]),
+      expensesByCategory: summarizeByCategory(periodExpenses),
+      dailyTrend: summarizeDaily(periodSales, periodExpenses, initialCollections, followUpCollections),
+      productMovement: summarizeProductMovement(salesRows, period.startDate, period.endDate),
+      dailySales: periodSales.map((sale) => ({
         saleDate: sale.saleDate,
         salesRefNo: sale.salesRefNo,
         customerName: sale.customerName,
@@ -238,7 +341,7 @@ export async function GET(req: Request) {
         paymentStatus: sale.paymentStatus,
         saleStatus: sale.saleStatus,
       })),
-      dailyExpenses,
+      dailyExpenses: periodExpenses,
       openReceivables: saleSummaries
         .filter((sale) => sale.balancePhp > 0)
         .sort((a, b) => b.balancePhp - a.balancePhp)
