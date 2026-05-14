@@ -140,7 +140,8 @@ function buildSaleSummaries(salesRows: string[][], paymentRows: string[][]) {
     current.totalSalePhp += totalSalePhp;
     current.legacyAmountPaidPhp += legacyAmountPaidPhp;
     current.paymentCount = paymentCounts.get(key) || 0;
-    current.totalPaidPhp = paymentTotals.has(key) ? paymentTotals.get(key) || 0 : current.legacyAmountPaidPhp;
+    current.paymentLedgerPaidPhp = paymentTotals.get(key) || 0;
+    current.totalPaidPhp = current.legacyAmountPaidPhp + current.paymentLedgerPaidPhp;
     current.balancePhp = Math.max(current.totalSalePhp - current.totalPaidPhp, 0);
     current.paymentStatus = getPaymentStatus(current.totalPaidPhp, current.totalSalePhp);
     current.rows.push({ rowNumber: index + 2, row });
@@ -155,6 +156,8 @@ function buildSaleSummaries(salesRows: string[][], paymentRows: string[][]) {
     customerName: summary.customerName,
     totalSalePhp: summary.totalSalePhp,
     totalPaidPhp: summary.totalPaidPhp || 0,
+    legacyAmountPaidPhp: summary.legacyAmountPaidPhp || 0,
+    paymentLedgerPaidPhp: summary.paymentLedgerPaidPhp || 0,
     balancePhp: Math.max(summary.totalSalePhp - (summary.totalPaidPhp || 0), 0),
     paymentStatus: getPaymentStatus(summary.totalPaidPhp || 0, summary.totalSalePhp),
     saleStatus: summary.saleStatus,
@@ -162,7 +165,12 @@ function buildSaleSummaries(salesRows: string[][], paymentRows: string[][]) {
   }));
 }
 
-async function updateSalePaymentFields(sheets: any, salesRows: string[][], key: string, totalPaid: number, balance: number, paymentStatus: string) {
+async function updateSalePaymentFields(sheets: any, salesRows: string[][], key: string, totalPaid: number, paymentStatus: string) {
+  const matchingRows = salesRows.slice(1).filter((candidate) =>
+    saleKey(String(candidate[1] || "").trim(), String(candidate[14] || "").trim()) === key
+  );
+  const totalSaleForKey = matchingRows.reduce((sum, candidate) => sum + toNumber(candidate[7]), 0);
+
   const requests = salesRows.slice(1).flatMap((row, index) => {
     const rowSalesRefNo = String(row[1] || "").trim();
     const rowGroupRef = String(row[14] || "").trim();
@@ -171,10 +179,8 @@ async function updateSalePaymentFields(sheets: any, salesRows: string[][], key: 
     if (rowKey !== key) return [];
 
     const totalSalePhp = toNumber(row[7]);
-    const lineShare = totalSalePhp > 0 ? totalSalePhp / salesRows.slice(1)
-      .filter((candidate) => saleKey(String(candidate[1] || "").trim(), String(candidate[14] || "").trim()) === key)
-      .reduce((sum, candidate) => sum + toNumber(candidate[7]), 0) : 0;
-    const linePaid = totalPaid * lineShare;
+    const lineShare = totalSaleForKey > 0 ? totalSalePhp / totalSaleForKey : 0;
+    const linePaid = Math.min(totalSalePhp, totalPaid * lineShare);
     const lineBalance = Math.max(totalSalePhp - linePaid, 0);
     const rowNumber = index + 2;
 
@@ -290,7 +296,7 @@ export async function POST(req: Request) {
     const newBalance = Math.max(summary.totalSalePhp - newTotalPaid, 0);
     const newPaymentStatus = getPaymentStatus(newTotalPaid, summary.totalSalePhp);
 
-    await updateSalePaymentFields(sheets, salesRows, summary.key, newTotalPaid, newBalance, newPaymentStatus);
+    await updateSalePaymentFields(sheets, salesRows, summary.key, newTotalPaid, newPaymentStatus);
 
     return NextResponse.json({
       ok: true,
