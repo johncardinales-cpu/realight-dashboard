@@ -114,6 +114,13 @@ export default function ConfirmSalesPage() {
   }
 
   async function updateConfirmation(sale: SaleSummary, action: "confirm" | "undo") {
+    const isUndo = action === "undo";
+    const prompt = isUndo
+      ? `Undo confirmation for ${sale.salesRefNo || sale.groupRef}?\n\nThis will return the sale to Draft and restore inventory calculations.`
+      : `Confirm sale ${sale.salesRefNo || sale.groupRef}?\n\nThis will deduct inventory because confirmed sales affect stock.`;
+
+    if (!window.confirm(prompt)) return;
+
     setWorkingKey(`${action}-${sale.key}`);
     setMessage("");
 
