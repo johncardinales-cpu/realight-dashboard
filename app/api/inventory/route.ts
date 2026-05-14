@@ -58,20 +58,14 @@ function createEmptyItem(description: string, specification: string): InventoryI
   };
 }
 
-function getOrCreateItem(
-  grouped: Map<string, InventoryItem>,
-  description: string,
-  specification: string
-) {
+function getOrCreateItem(grouped: Map<string, InventoryItem>, description: string, specification: string) {
   const key = `${description}|||${specification}`;
   if (!grouped.has(key)) grouped.set(key, createEmptyItem(description, specification));
   return grouped.get(key);
 }
 
 function applyDeliveryRows(grouped: Map<string, InventoryItem>, rows: SheetRow[]) {
-  const data = rows.slice(1).filter((row: SheetRow) =>
-    row.some((cell: SheetCell) => String(cell || "").trim() !== "")
-  );
+  const data = rows.slice(1).filter((row: SheetRow) => row.some((cell: SheetCell) => String(cell || "").trim() !== ""));
 
   for (const row of data) {
     const uploadDate = String(row[0] || "").trim();
@@ -109,9 +103,7 @@ function applyDeliveryRows(grouped: Map<string, InventoryItem>, rows: SheetRow[]
 }
 
 function applyConfirmedSalesRows(grouped: Map<string, InventoryItem>, rows: SheetRow[]) {
-  const data = rows.slice(1).filter((row: SheetRow) =>
-    row.some((cell: SheetCell) => String(cell || "").trim() !== "")
-  );
+  const data = rows.slice(1).filter((row: SheetRow) => row.some((cell: SheetCell) => String(cell || "").trim() !== ""));
 
   for (const row of data) {
     const description = String(row[3] || "").trim();
@@ -137,14 +129,8 @@ export async function GET() {
     const sheets = getSheetsClient();
 
     const [deliveryResponse, salesResponse] = await Promise.all([
-      sheets.spreadsheets.values.get({
-        spreadsheetId: SHEET_ID,
-        range: `${INVENTORY_SHEET}!A:L`,
-      }),
-      sheets.spreadsheets.values.get({
-        spreadsheetId: SHEET_ID,
-        range: `${SALES_SHEET}!A:V`,
-      }),
+      sheets.spreadsheets.values.get({ spreadsheetId: SHEET_ID, range: `${INVENTORY_SHEET}!A:L` }),
+      sheets.spreadsheets.values.get({ spreadsheetId: SHEET_ID, range: `${SALES_SHEET}!A:Y` }),
     ]);
 
     const deliveryRows = (deliveryResponse.data.values || []) as SheetRow[];
