@@ -96,7 +96,7 @@ export default function ConfirmSalesPage() {
   const [rows, setRows] = useState<SaleRow[]>([]);
   const [message, setMessage] = useState("");
   const [loading, setLoading] = useState(false);
-  const [confirmingKey, setConfirmingKey] = useState("");
+  const [workingKey, setWorkingKey] = useState("");
 
   async function loadSales() {
     setLoading(true);
@@ -113,8 +113,8 @@ export default function ConfirmSalesPage() {
     }
   }
 
-  async function confirmSale(sale: SaleSummary) {
-    setConfirmingKey(sale.key);
+  async function updateConfirmation(sale: SaleSummary, action: "confirm" | "undo") {
+    setWorkingKey(`${action}-${sale.key}`);
     setMessage("");
 
     try {
@@ -122,7 +122,7 @@ export default function ConfirmSalesPage() {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          action: "confirm",
+          action,
           saleId: sale.saleId,
           salesRefNo: sale.salesRefNo,
           groupRef: sale.groupRef,
@@ -130,13 +130,13 @@ export default function ConfirmSalesPage() {
         }),
       });
       const data = await res.json();
-      if (!res.ok) throw new Error(data?.error || "Failed to confirm sale");
-      setMessage(data?.message || "Sale confirmed successfully.");
+      if (!res.ok) throw new Error(data?.error || "Failed to update sale confirmation");
+      setMessage(data?.message || "Sale confirmation updated successfully.");
       await loadSales();
     } catch (error: any) {
-      setMessage(error?.message || "Failed to confirm sale.");
+      setMessage(error?.message || "Failed to update sale confirmation.");
     } finally {
-      setConfirmingKey("");
+      setWorkingKey("");
     }
   }
 
@@ -145,7 +145,7 @@ export default function ConfirmSalesPage() {
   }, []);
 
   const summaries = useMemo(() => summarizeSales(rows), [rows]);
-  const confirmable = summaries.filter((sale) => sale.saleStatus.toLowerCase() !== "confirmed" && sale.saleStatus.toLowerCase() !== "cancelled");
+  const reviewSales = summaries.filter((sale) => sale.saleStatus.toLowerCase() !== "cancelled");
 
   return (
     <section className="space-y-6">
@@ -154,7 +154,7 @@ export default function ConfirmSalesPage() {
           <div>
             <h1 className="text-3xl font-semibold text-slate-900">Confirm Sales</h1>
             <p className="mt-1 text-sm text-slate-600">
-              Confirm an existing sale to release it and make it count for inventory deduction. Draft sales do not deduct stock.
+              Confirm an existing sale to release it and make it count for inventory deduction. Use Undo Confirm if a sale was confirmed by mistake.
             </p>
           </div>
           <button type="button" onClick={loadSales} disabled={loading} className="rounded-xl border border-slate-300 px-4 py-2 text-sm font-bold text-slate-700 disabled:opacity-60">
@@ -165,7 +165,7 @@ export default function ConfirmSalesPage() {
       </div>
 
       <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
-        <h2 className="mb-4 text-xl font-semibold text-slate-900">Sales Ready for Review</h2>
+        <h2 className="mb-4 text-xl font-semibold text-slate-900">Sales Confirmation Review</h2>
         <div className="overflow-x-auto rounded-2xl border border-slate-200">
           <table className="w-full text-sm">
             <thead className="bg-slate-100 text-slate-700">
@@ -176,7 +176,8 @@ export default function ConfirmSalesPage() {
               </tr>
             </thead>
             <tbody>
-              {confirmable.map((sale) => {
+              {reviewSales.map((sale) => {
+                const isConfirmed = sale.saleStatus.toLowerCase() === "confirmed";
                 const isPendingUnpaid = sale.paymentStatus.toLowerCase() === "pending" && sale.paidPhp <= 0;
                 return (
                   <tr key={sale.key} className="border-t border-slate-100 align-top">
@@ -195,26 +196,37 @@ export default function ConfirmSalesPage() {
                     <td className="px-4 py-3"><StatusPill value={sale.paymentStatus} /></td>
                     <td className="px-4 py-3"><StatusPill value={sale.saleStatus} /></td>
                     <td className="px-4 py-3">
-                      <button
-                        type="button"
-                        onClick={() => confirmSale(sale)}
-                        disabled={confirmingKey === sale.key || isPendingUnpaid}
-                        className="rounded-xl bg-emerald-600 px-3 py-2 text-xs font-bold text-white disabled:bg-slate-300 disabled:text-slate-600"
-                      >
-                        {confirmingKey === sale.key ? "Confirming..." : isPendingUnpaid ? "Payment Required" : "Confirm Sale"}
-                      </button>
+                      {isConfirmed ? (
+                        <button
+                          type="button"
+                          onClick={() => updateConfirmation(sale, "undo")}
+                          disabled={workingKey === `undo-${sale.key}`}
+                          className="rounded-xl bg-amber-500 px-3 py-2 text-xs font-bold text-white disabled:bg-slate-300 disabled:text-slate-600"
+                        >
+                          {workingKey === `undo-${sale.key}` ? "Undoing..." : "Undo Confirm"}
+                        </button>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => updateConfirmation(sale, "confirm")}
+                          disabled={workingKey === `confirm-${sale.key}` || isPendingUnpaid}
+                          className="rounded-xl bg-emerald-600 px-3 py-2 text-xs font-bold text-white disabled:bg-slate-300 disabled:text-slate-600"
+                        >
+                          {workingKey === `confirm-${sale.key}` ? "Confirming..." : isPendingUnpaid ? "Payment Required" : "Confirm Sale"}
+                        </button>
+                      )}
                     </td>
                   </tr>
                 );
               })}
-              {!confirmable.length && (
-                <tr><td colSpan={10} className="px-4 py-8 text-center text-slate-500">No draft sales available for confirmation.</td></tr>
+              {!reviewSales.length && (
+                <tr><td colSpan={10} className="px-4 py-8 text-center text-slate-500">No sales available for confirmation review.</td></tr>
               )}
             </tbody>
           </table>
         </div>
         <p className="mt-4 text-xs leading-6 text-slate-500">
-          Rule: Pending/unpaid sales are blocked. Partial and Paid sales may be confirmed if stock is available. Confirmed sales affect inventory calculations.
+          Rule: Pending/unpaid sales are blocked. Partial and Paid sales may be confirmed if stock is available. Undo Confirm returns the sale to Draft and removes its inventory deduction from calculations.
         </p>
       </div>
     </section>
