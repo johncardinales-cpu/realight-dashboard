@@ -72,10 +72,6 @@ function saleKey(salesRefNo: string, groupRef: string) {
   return safeText(groupRef) || safeText(salesRefNo);
 }
 
-function itemKey(description: string, specification: string) {
-  return `${safeText(description)}|||${safeText(specification)}`;
-}
-
 function csvEscape(value: unknown) {
   const text = String(value ?? "");
   return `"${text.replace(/"/g, '""')}"`;
@@ -219,10 +215,14 @@ function buildValidationIssues(salesData: SheetRow[], paymentData: SheetRow[]) {
   const paymentIds = paymentData.map((row) => safeText(row[10]));
   const knownSaleIds = new Set(saleIds.filter(Boolean));
 
-  const duplicateSaleIds = findDuplicateCount(Array.from(new Set(salesData.map((row) => saleKey(row[1], row[14])).filter(Boolean)).map((key) => {
-    const row = salesData.find((item) => saleKey(item[1], item[14]) === key);
-    return safeText(row?.[22]);
-  }));
+  const saleIdByKey = new Map<string, string>();
+  salesData.forEach((row) => {
+    const key = saleKey(row[1], row[14]);
+    const saleId = safeText(row[22]);
+    if (key && saleId && !saleIdByKey.has(key)) saleIdByKey.set(key, saleId);
+  });
+
+  const duplicateSaleIds = findDuplicateCount(Array.from(saleIdByKey.values()));
   const duplicateSaleItemIds = findDuplicateCount(saleItemIds);
   const duplicatePaymentIds = findDuplicateCount(paymentIds);
   const orphanPaymentLinks = paymentData.filter((row) => safeText(row[11]) && !knownSaleIds.has(safeText(row[11]))).length;
