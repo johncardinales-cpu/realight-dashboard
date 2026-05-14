@@ -5,6 +5,7 @@ const SHEET_ID = process.env.GOOGLE_SHEET_ID as string;
 const SALES_SHEET = "Sales";
 const PRICING_SHEET = "Pricing_Base";
 const INVENTORY_SHEET = "App_Deliveries";
+const AUDIT_LOG_SHEET = "Audit_Log";
 
 const auth = new google.auth.GoogleAuth({
   credentials: {
@@ -19,7 +20,11 @@ const SALES_HEADERS = [
   "Manual Unit Price (PHP)","Total Sale (PHP)","Cost Price (PHP)","Total Cost (PHP)",
   "Gross Profit (PHP)","Payment Status","Salesperson","Notes","Group Ref",
   "Payment Method","Amount Paid (PHP)","Balance (PHP)","Transaction Ref",
-  "Cashier Name","Sale Status","Confirmed At",
+  "Cashier Name","Sale Status","Confirmed At","Sale ID","Sale Item ID","Created At",
+];
+
+const AUDIT_HEADERS = [
+  "Audit ID","Created At","Module","Action","Record ID","Record Ref","Actor","Summary","Before JSON","After JSON",
 ];
 
 function toNumber(value: string | number | undefined) {
@@ -41,6 +46,12 @@ function columnLetter(index: number) {
   }
 
   return column;
+}
+
+function makeId(prefix: string) {
+  const stamp = new Date().toISOString().replace(/[-:.TZ]/g, "").slice(0, 14);
+  const random = Math.random().toString(36).slice(2, 8).toUpperCase();
+  return `${prefix}_${stamp}_${random}`;
 }
 
 function isValidSalesRow(row: string[]) {
@@ -79,12 +90,41 @@ async function ensureSheetExists(sheets: any, title: string, headers: string[]) 
   });
 }
 
-async function getPricingMap(sheets: any) {
-  const response = await sheets.spreadsheets.values.get({
+async function appendAuditLog(sheets: any, entry: {
+  module: string;
+  action: string;
+  recordId: string;
+  recordRef: string;
+  actor: string;
+  summary: string;
+  before?: unknown;
+  after?: unknown;
+}) {
+  await ensureSheetExists(sheets, AUDIT_LOG_SHEET, AUDIT_HEADERS);
+  await sheets.spreadsheets.values.append({
     spreadsheetId: SHEET_ID,
-    range: `${PRICING_SHEET}!A:N`,
+    range: `${AUDIT_LOG_SHEET}!A:J`,
+    valueInputOption: "USER_ENTERED",
+    insertDataOption: "INSERT_ROWS",
+    requestBody: {
+      values: [[
+        makeId("AUDIT"),
+        new Date().toISOString(),
+        entry.module,
+        entry.action,
+        entry.recordId,
+        entry.recordRef,
+        entry.actor,
+        entry.summary,
+        entry.before ? JSON.stringify(entry.before) : "",
+        entry.after ? JSON.stringify(entry.after) : "",
+      ]],
+    },
   });
+}
 
+async function getPricingMap(sheets: any) {
+  const response = await sheets.spreadsheets.values.get({ spreadsheetId: SHEET_ID, range: `${PRICING_SHEET}!A:N` });
   const rows = (response.data.values || []) as string[][];
   const map = new Map<string, number>();
 
@@ -98,11 +138,7 @@ async function getPricingMap(sheets: any) {
 }
 
 async function getAvailableStockMap(sheets: any) {
-  const response = await sheets.spreadsheets.values.get({
-    spreadsheetId: SHEET_ID,
-    range: `${INVENTORY_SHEET}!A:L`,
-  });
-
+  const response = await sheets.spreadsheets.values.get({ spreadsheetId: SHEET_ID, range: `${INVENTORY_SHEET}!A:L` });
   const rows = (response.data.values || []) as string[][];
   const map = new Map<string, number>();
 
@@ -111,28 +147,18 @@ async function getAvailableStockMap(sheets: any) {
     const specification = String(row[5] || "").trim();
     const qty = toNumber(row[6]);
     const status = String(row[9] || "").trim().toLowerCase();
-
     if (!description && !specification) return;
-
     const key = itemKey(description, specification);
     const current = map.get(key) || 0;
-
-    if (status === "available") {
-      map.set(key, current + qty);
-    } else if (status === "damaged" || status === "defective" || status === "damage") {
-      map.set(key, current - qty);
-    }
+    if (status === "available") map.set(key, current + qty);
+    else if (status === "damaged" || status === "defective" || status === "damage") map.set(key, current - qty);
   });
 
   return map;
 }
 
 async function getConfirmedSoldMap(sheets: any) {
-  const response = await sheets.spreadsheets.values.get({
-    spreadsheetId: SHEET_ID,
-    range: `${SALES_SHEET}!A:V`,
-  });
-
+  const response = await sheets.spreadsheets.values.get({ spreadsheetId: SHEET_ID, range: `${SALES_SHEET}!A:Y` });
   const rows = (response.data.values || []) as string[][];
   const map = new Map<string, number>();
 
@@ -141,9 +167,7 @@ async function getConfirmedSoldMap(sheets: any) {
     const specification = String(row[4] || "").trim();
     const qty = toNumber(row[5]);
     const saleStatus = String(row[20] || "Draft").trim().toLowerCase();
-
     if (saleStatus !== "confirmed") return;
-
     const key = itemKey(description, specification);
     map.set(key, (map.get(key) || 0) + qty);
   });
@@ -153,45 +177,28 @@ async function getConfirmedSoldMap(sheets: any) {
 
 function getRequestedQtyMap(items: any[]) {
   const map = new Map<string, { description: string; specification: string; qty: number }>();
-
   items.forEach((item: any) => {
     const description = String(item?.description || "").trim();
     const specification = String(item?.specification || "").trim();
     const qty = toNumber(item?.qty);
     const key = itemKey(description, specification);
     const current = map.get(key);
-
-    map.set(key, {
-      description,
-      specification,
-      qty: (current?.qty || 0) + qty,
-    });
+    map.set(key, { description, specification, qty: (current?.qty || 0) + qty });
   });
-
   return map;
 }
 
 async function validateConfirmedStock(sheets: any, items: any[]) {
-  const [availableStockMap, confirmedSoldMap] = await Promise.all([
-    getAvailableStockMap(sheets),
-    getConfirmedSoldMap(sheets),
-  ]);
+  const [availableStockMap, confirmedSoldMap] = await Promise.all([getAvailableStockMap(sheets), getConfirmedSoldMap(sheets)]);
   const requestedQtyMap = getRequestedQtyMap(items);
   const insufficientItems: string[] = [];
 
   requestedQtyMap.forEach(({ description, specification, qty }, key) => {
     const availableQty = Math.max((availableStockMap.get(key) || 0) - (confirmedSoldMap.get(key) || 0), 0);
-
-    if (qty > availableQty) {
-      insufficientItems.push(`${description} / ${specification}: requested ${qty}, available ${availableQty}`);
-    }
+    if (qty > availableQty) insufficientItems.push(`${description} / ${specification}: requested ${qty}, available ${availableQty}`);
   });
 
-  if (insufficientItems.length) {
-    return `Insufficient confirmed stock. ${insufficientItems.join("; ")}`;
-  }
-
-  return "";
+  return insufficientItems.length ? `Insufficient confirmed stock. ${insufficientItems.join("; ")}` : "";
 }
 
 export async function GET() {
@@ -199,12 +206,9 @@ export async function GET() {
     const client = await auth.getClient();
     const sheets = google.sheets({ version: "v4", auth: client as any });
     await ensureSheetExists(sheets, SALES_SHEET, SALES_HEADERS);
+    await ensureSheetExists(sheets, AUDIT_LOG_SHEET, AUDIT_HEADERS);
 
-    const response = await sheets.spreadsheets.values.get({
-      spreadsheetId: SHEET_ID,
-      range: `${SALES_SHEET}!A:V`,
-    });
-
+    const response = await sheets.spreadsheets.values.get({ spreadsheetId: SHEET_ID, range: `${SALES_SHEET}!A:Y` });
     const rows = (response.data.values || []) as string[][];
     const data = rows.slice(1).filter(isValidSalesRow);
 
@@ -232,15 +236,15 @@ export async function GET() {
       cashierName: String(row[19] || ""),
       saleStatus: String(row[20] || "Draft"),
       confirmedAt: String(row[21] || ""),
+      saleId: String(row[22] || ""),
+      saleItemId: String(row[23] || ""),
+      createdAt: String(row[24] || ""),
     }));
 
     return NextResponse.json(items);
   } catch (error: any) {
     console.error("SALES GET ERROR:", error);
-    return NextResponse.json(
-      { error: error?.message || String(error) || "Failed to load sales" },
-      { status: 500 }
-    );
+    return NextResponse.json({ error: error?.message || String(error) || "Failed to load sales" }, { status: 500 });
   }
 }
 
@@ -260,110 +264,79 @@ export async function POST(req: Request) {
     const cashierName = String(body?.cashierName || "").trim();
     const saleStatus = String(body?.saleStatus || "Draft").trim();
     const normalizedSaleStatus = saleStatus.toLowerCase();
-    const confirmedAt = normalizedSaleStatus === "confirmed"
-      ? String(body?.confirmedAt || new Date().toISOString()).trim()
-      : String(body?.confirmedAt || "").trim();
+    const createdAt = new Date().toISOString();
+    const confirmedAt = normalizedSaleStatus === "confirmed" ? String(body?.confirmedAt || createdAt).trim() : String(body?.confirmedAt || "").trim();
     const items = Array.isArray(body?.items) ? body.items : [];
 
     if (!saleDate || !customerName || !items.length) {
-      return NextResponse.json(
-        { error: "Sale Date, Customer Name, and at least one product are required" },
-        { status: 400 }
-      );
+      return NextResponse.json({ error: "Sale Date, Customer Name, and at least one product are required" }, { status: 400 });
     }
 
     const client = await auth.getClient();
     const sheets = google.sheets({ version: "v4", auth: client as any });
     await ensureSheetExists(sheets, SALES_SHEET, SALES_HEADERS);
+    await ensureSheetExists(sheets, AUDIT_LOG_SHEET, AUDIT_HEADERS);
 
-    const validItems = items.filter((item: any) =>
-      String(item?.description || "").trim() &&
-      String(item?.specification || "").trim() &&
-      toNumber(item?.qty) > 0
-    );
+    const validItems = items.filter((item: any) => String(item?.description || "").trim() && String(item?.specification || "").trim() && toNumber(item?.qty) > 0);
+    if (!validItems.length) return NextResponse.json({ error: "At least one valid product line is required" }, { status: 400 });
 
-    if (!validItems.length) {
-      return NextResponse.json(
-        { error: "At least one valid product line is required" },
-        { status: 400 }
-      );
-    }
-
-    const transactionTotal = validItems.reduce((sum: number, item: any) => {
-      const qty = toNumber(item?.qty);
-      const unitPricePhp = toNumber(item?.unitPricePhp);
-      return sum + (qty * unitPricePhp);
-    }, 0);
-
-    if (amountPaidPhp > transactionTotal) {
-      return NextResponse.json(
-        { error: "Amount Paid cannot be higher than Total Sale" },
-        { status: 400 }
-      );
-    }
+    const transactionTotal = validItems.reduce((sum: number, item: any) => sum + (toNumber(item?.qty) * toNumber(item?.unitPricePhp)), 0);
+    if (amountPaidPhp > transactionTotal) return NextResponse.json({ error: "Amount Paid cannot be higher than Total Sale" }, { status: 400 });
 
     if (normalizedSaleStatus === "confirmed") {
-      if (!paymentMethod) {
-        return NextResponse.json(
-          { error: "Payment Method is required before confirming a sale" },
-          { status: 400 }
-        );
-      }
-
-      if (!cashierName) {
-        return NextResponse.json(
-          { error: "Cashier Name is required before confirming a sale" },
-          { status: 400 }
-        );
-      }
-
+      if (!paymentMethod) return NextResponse.json({ error: "Payment Method is required before confirming a sale" }, { status: 400 });
+      if (!cashierName) return NextResponse.json({ error: "Cashier Name is required before confirming a sale" }, { status: 400 });
       const stockError = await validateConfirmedStock(sheets, validItems);
-      if (stockError) {
-        return NextResponse.json({ error: stockError }, { status: 409 });
-      }
+      if (stockError) return NextResponse.json({ error: stockError }, { status: 409 });
     }
 
     const pricingMap = await getPricingMap(sheets);
+    const saleId = makeId("SALE");
 
-    const rowsToAppend = validItems.map((item: any) => {
+    const rowsToAppend = validItems.map((item: any, index: number) => {
       const description = String(item?.description || "").trim();
       const specification = String(item?.specification || "").trim();
       const qty = toNumber(item?.qty);
       const unitPricePhp = toNumber(item?.unitPricePhp);
-
       const key = itemKey(description, specification);
       const costPricePhp = pricingMap.get(key) || 0;
       const totalSalePhp = qty * unitPricePhp;
       const totalCostPhp = qty * costPricePhp;
       const grossProfitPhp = totalSalePhp - totalCostPhp;
-      const lineAmountPaidPhp = transactionTotal > 0
-        ? amountPaidPhp * (totalSalePhp / transactionTotal)
-        : 0;
+      const lineAmountPaidPhp = transactionTotal > 0 ? amountPaidPhp * (totalSalePhp / transactionTotal) : 0;
       const lineBalancePhp = Math.max(totalSalePhp - lineAmountPaidPhp, 0);
+      const saleItemId = `${saleId}_ITEM_${String(index + 1).padStart(3, "0")}`;
 
       return [
         saleDate, salesRefNo, customerName, description, specification, qty,
         unitPricePhp, totalSalePhp, costPricePhp, totalCostPhp, grossProfitPhp,
         paymentStatus, salesperson, notes, groupRef,
         paymentMethod, lineAmountPaidPhp, lineBalancePhp, transactionRef,
-        cashierName, saleStatus, confirmedAt,
+        cashierName, saleStatus, confirmedAt, saleId, saleItemId, createdAt,
       ];
     });
 
     await sheets.spreadsheets.values.append({
       spreadsheetId: SHEET_ID,
-      range: `${SALES_SHEET}!A:V`,
+      range: `${SALES_SHEET}!A:Y`,
       valueInputOption: "USER_ENTERED",
       insertDataOption: "INSERT_ROWS",
       requestBody: { values: rowsToAppend },
     });
 
-    return NextResponse.json({ ok: true, lines: rowsToAppend.length });
+    await appendAuditLog(sheets, {
+      module: "Sales",
+      action: "CREATE_SALE",
+      recordId: saleId,
+      recordRef: salesRefNo || groupRef,
+      actor: cashierName || salesperson || "System",
+      summary: `Created sale with ${rowsToAppend.length} line(s), total ${transactionTotal}`,
+      after: { saleId, salesRefNo, groupRef, customerName, transactionTotal, paymentStatus, saleStatus, itemCount: rowsToAppend.length },
+    });
+
+    return NextResponse.json({ ok: true, lines: rowsToAppend.length, saleId });
   } catch (error: any) {
     console.error("SALES POST ERROR:", error);
-    return NextResponse.json(
-      { error: error?.message || String(error) || "Failed to save sale" },
-      { status: 500 }
-    );
+    return NextResponse.json({ error: error?.message || String(error) || "Failed to save sale" }, { status: 500 });
   }
 }
