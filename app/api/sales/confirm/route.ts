@@ -214,7 +214,7 @@ export async function PATCH(req: Request) {
     const action = safeText(body?.action || "confirm").toLowerCase();
     const actor = safeText(body?.actor || body?.cashierName || "System");
 
-    if (action !== "confirm") {
+    if (!["confirm", "undo", "unconfirm"].includes(action)) {
       return NextResponse.json({ error: "Unsupported sales action" }, { status: 400 });
     }
 
@@ -230,6 +230,37 @@ export async function PATCH(req: Request) {
     const target = summarizeTarget(targetRows);
     const normalizedSaleStatus = target.saleStatus.toLowerCase();
     const normalizedPaymentStatus = target.paymentStatus.toLowerCase();
+
+    if (action === "undo" || action === "unconfirm") {
+      if (normalizedSaleStatus !== "confirmed") {
+        return NextResponse.json({ ok: true, message: "Sale is not confirmed, no undo needed", sale: target });
+      }
+
+      const updateData = targetRows.flatMap(({ rowNumber }) => [
+        { range: `${SALES_SHEET}!U${rowNumber}:V${rowNumber}`, values: [["Draft", ""]] },
+      ]);
+
+      await sheets.spreadsheets.values.batchUpdate({
+        spreadsheetId: SHEET_ID,
+        requestBody: { valueInputOption: "USER_ENTERED", data: updateData },
+      });
+
+      await appendAuditLog(sheets, {
+        action: "UNDO_CONFIRM_SALE",
+        recordId: target.saleId || target.key,
+        recordRef: target.salesRefNo || target.groupRef,
+        actor,
+        summary: `Undid confirmation for sale ${target.salesRefNo || target.groupRef} with ${targetRows.length} line(s)` ,
+        before: { saleStatus: target.saleStatus, paymentStatus: target.paymentStatus, balance: target.balance },
+        after: { saleStatus: "Draft", confirmedAt: "", paymentStatus: target.paymentStatus, balance: target.balance },
+      });
+
+      return NextResponse.json({
+        ok: true,
+        message: "Sale confirmation undone successfully",
+        sale: { ...target, saleStatus: "Draft", confirmedAt: "" },
+      });
+    }
 
     if (normalizedSaleStatus === "confirmed") {
       return NextResponse.json({ ok: true, message: "Sale is already confirmed", sale: target });
@@ -276,6 +307,6 @@ export async function PATCH(req: Request) {
     });
   } catch (error: any) {
     console.error("CONFIRM SALE ERROR:", error);
-    return NextResponse.json({ error: error?.message || String(error) || "Failed to confirm sale" }, { status: 500 });
+    return NextResponse.json({ error: error?.message || String(error) || "Failed to update sale confirmation" }, { status: 500 });
   }
 }
