@@ -37,7 +37,7 @@ function formatDate(date: Date) {
 }
 
 function getPeriodRange(mode: string, dateValue: string) {
-  const base = toDate(dateValue) || toDate(today()) as Date;
+  const base = toDate(dateValue) || (toDate(today()) as Date);
   const normalizedMode = ["daily", "weekly", "monthly"].includes(mode) ? mode : "daily";
   const start = new Date(base);
   const end = new Date(base);
@@ -53,11 +53,7 @@ function getPeriodRange(mode: string, dateValue: string) {
     end.setMonth(start.getMonth() + 1, 0);
   }
 
-  return {
-    mode: normalizedMode,
-    startDate: formatDate(start),
-    endDate: formatDate(end),
-  };
+  return { mode: normalizedMode, startDate: formatDate(start), endDate: formatDate(end) };
 }
 
 function inRange(value: string, startDate: string, endDate: string) {
@@ -72,8 +68,8 @@ function getPaymentStatus(totalPaid: number, totalSale: number) {
   return "Partial";
 }
 
-function saleKey(salesRefNo: string, groupRef: string) {
-  return groupRef || salesRefNo;
+function saleKey(salesRefNo: string, groupRef: string, saleId?: string) {
+  return safeText(saleId) || safeText(groupRef) || safeText(salesRefNo);
 }
 
 async function readRange(sheets: any, range: string) {
@@ -89,10 +85,14 @@ function buildPaymentLedgerTotals(paymentRows: string[][]) {
     const salesRefNo = safeText(row[1]);
     const groupRef = safeText(row[2]);
     const amount = toNumber(row[5]);
-    const key = saleKey(salesRefNo, groupRef);
+    const saleId = safeText(row[11]);
+    const key = saleKey(salesRefNo, groupRef, saleId);
 
     if (!key || amount <= 0) return;
     byKey.set(key, (byKey.get(key) || 0) + amount);
+    if (saleId) byKey.set(saleId, (byKey.get(saleId) || 0) + amount);
+    if (groupRef) byKey.set(groupRef, (byKey.get(groupRef) || 0) + amount);
+    if (salesRefNo) byKey.set(salesRefNo, (byKey.get(salesRefNo) || 0) + amount);
   });
 
   return { byKey };
@@ -107,7 +107,8 @@ function buildSaleSummaries(salesRows: string[][], paymentRows: string[][]) {
     const salesRefNo = safeText(row[1]);
     const customerName = safeText(row[2]);
     const groupRef = safeText(row[14]);
-    const key = saleKey(salesRefNo, groupRef);
+    const saleId = safeText(row[22]);
+    const key = saleKey(salesRefNo, groupRef, saleId);
     const totalSalePhp = toNumber(row[7]);
     const grossProfitPhp = toNumber(row[10]);
     const initialPaidPhp = toNumber(row[16]);
@@ -118,6 +119,7 @@ function buildSaleSummaries(salesRows: string[][], paymentRows: string[][]) {
 
     const current = map.get(key) || {
       key,
+      saleId,
       saleDate,
       salesRefNo,
       groupRef,
@@ -137,17 +139,11 @@ function buildSaleSummaries(salesRows: string[][], paymentRows: string[][]) {
   });
 
   return Array.from(map.values()).map((sale) => {
-    const followUpPaidPhp = paymentLedger.byKey.get(sale.key) || 0;
+    const followUpPaidPhp = paymentLedger.byKey.get(sale.saleId) || paymentLedger.byKey.get(sale.groupRef) || paymentLedger.byKey.get(sale.salesRefNo) || 0;
     const totalPaidPhp = sale.initialPaidPhp + followUpPaidPhp;
     const balancePhp = Math.max(sale.totalSalePhp - totalPaidPhp, 0);
 
-    return {
-      ...sale,
-      followUpPaidPhp,
-      totalPaidPhp,
-      balancePhp,
-      paymentStatus: getPaymentStatus(totalPaidPhp, sale.totalSalePhp),
-    };
+    return { ...sale, followUpPaidPhp, totalPaidPhp, balancePhp, paymentStatus: getPaymentStatus(totalPaidPhp, sale.totalSalePhp) };
   });
 }
 
@@ -185,10 +181,7 @@ function summarizeMethodBreakdown(entries: Array<{ method: string; amount: numbe
     const method = entry.method || "Unspecified";
     map.set(method, (map.get(method) || 0) + entry.amount);
   });
-
-  return Array.from(map.entries())
-    .map(([method, amount]) => ({ method, amount }))
-    .sort((a, b) => b.amount - a.amount);
+  return Array.from(map.entries()).map(([method, amount]) => ({ method, amount })).sort((a, b) => b.amount - a.amount);
 }
 
 function summarizeByCategory(entries: Array<{ category: string; amount: number }>) {
@@ -197,18 +190,13 @@ function summarizeByCategory(entries: Array<{ category: string; amount: number }
     const category = entry.category || "Uncategorized";
     map.set(category, (map.get(category) || 0) + entry.amount);
   });
-
-  return Array.from(map.entries())
-    .map(([category, amount]) => ({ category, amount }))
-    .sort((a, b) => b.amount - a.amount);
+  return Array.from(map.entries()).map(([category, amount]) => ({ category, amount })).sort((a, b) => b.amount - a.amount);
 }
 
 function summarizeDaily(periodSales: any[], periodExpenses: any[], initialCollections: any[], followUpCollections: any[]) {
   const days = new Map<string, any>();
   const ensure = (date: string) => {
-    if (!days.has(date)) {
-      days.set(date, { date, sales: 0, collections: 0, expenses: 0, grossProfit: 0, netProfit: 0, receivables: 0 });
-    }
+    if (!days.has(date)) days.set(date, { date, sales: 0, collections: 0, expenses: 0, grossProfit: 0, netProfit: 0, receivables: 0 });
     return days.get(date);
   };
 
@@ -229,9 +217,7 @@ function summarizeDaily(periodSales: any[], periodExpenses: any[], initialCollec
     item.collections += entry.amount;
   });
 
-  return Array.from(days.values())
-    .map((item) => ({ ...item, netProfit: item.grossProfit - item.expenses }))
-    .sort((a, b) => a.date.localeCompare(b.date));
+  return Array.from(days.values()).map((item) => ({ ...item, netProfit: item.grossProfit - item.expenses })).sort((a, b) => a.date.localeCompare(b.date));
 }
 
 function summarizeProductMovement(salesRows: string[][], startDate: string, endDate: string) {
@@ -272,8 +258,8 @@ export async function GET(req: Request) {
     const sheets = google.sheets({ version: "v4", auth: client as any });
 
     const [salesRows, paymentRows, expenseRows, supplierRows] = await Promise.all([
-      readRange(sheets, `${SALES_SHEET}!A:V`),
-      readRange(sheets, `${PAYMENTS_SHEET}!A:J`),
+      readRange(sheets, `${SALES_SHEET}!A:Y`),
+      readRange(sheets, `${PAYMENTS_SHEET}!A:L`),
       readRange(sheets, `${EXPENSES_SHEET}!A:Z`),
       readRange(sheets, `${SUPPLIER_COSTS_SHEET}!A:L`),
     ]);
@@ -283,14 +269,8 @@ export async function GET(req: Request) {
     const allExpenses = [...parseExpenseRows(expenseRows), ...parseSupplierRows(supplierRows)];
     const periodExpenses = allExpenses.filter((expense) => inRange(expense.date, period.startDate, period.endDate));
 
-    const initialCollections = periodSales
-      .filter((sale) => sale.initialPaidPhp > 0)
-      .map((sale) => ({ date: sale.saleDate.slice(0, 10), method: sale.initialPaymentMethod || "Unspecified", amount: sale.initialPaidPhp }));
-
-    const followUpCollections = paymentRows.slice(1)
-      .filter((row) => inRange(safeText(row[0]), period.startDate, period.endDate))
-      .map((row) => ({ date: safeText(row[0]).slice(0, 10), method: safeText(row[4]) || "Unspecified", amount: toNumber(row[5]) }))
-      .filter((row) => row.amount > 0);
+    const initialCollections = periodSales.filter((sale) => sale.initialPaidPhp > 0).map((sale) => ({ date: sale.saleDate.slice(0, 10), method: sale.initialPaymentMethod || "Unspecified", amount: sale.initialPaidPhp }));
+    const followUpCollections = paymentRows.slice(1).filter((row) => inRange(safeText(row[0]), period.startDate, period.endDate)).map((row) => ({ date: safeText(row[0]).slice(0, 10), method: safeText(row[4]) || "Unspecified", amount: toNumber(row[5]) })).filter((row) => row.amount > 0);
 
     const totalSales = periodSales.reduce((sum, sale) => sum + sale.totalSalePhp, 0);
     const confirmedSales = periodSales.filter((sale) => sale.saleStatus.toLowerCase() === "confirmed").reduce((sum, sale) => sum + sale.totalSalePhp, 0);
@@ -342,25 +322,19 @@ export async function GET(req: Request) {
         saleStatus: sale.saleStatus,
       })),
       dailyExpenses: periodExpenses,
-      openReceivables: saleSummaries
-        .filter((sale) => sale.balancePhp > 0)
-        .sort((a, b) => b.balancePhp - a.balancePhp)
-        .map((sale) => ({
-          saleDate: sale.saleDate,
-          salesRefNo: sale.salesRefNo,
-          customerName: sale.customerName,
-          totalSalePhp: sale.totalSalePhp,
-          totalPaidPhp: sale.totalPaidPhp,
-          balancePhp: sale.balancePhp,
-          paymentStatus: sale.paymentStatus,
-          saleStatus: sale.saleStatus,
-        })),
+      openReceivables: saleSummaries.filter((sale) => sale.balancePhp > 0).sort((a, b) => b.balancePhp - a.balancePhp).map((sale) => ({
+        saleDate: sale.saleDate,
+        salesRefNo: sale.salesRefNo,
+        customerName: sale.customerName,
+        totalSalePhp: sale.totalSalePhp,
+        totalPaidPhp: sale.totalPaidPhp,
+        balancePhp: sale.balancePhp,
+        paymentStatus: sale.paymentStatus,
+        saleStatus: sale.saleStatus,
+      })),
     });
   } catch (error: any) {
     console.error("REPORTS API ERROR:", error);
-    return NextResponse.json(
-      { error: error?.message || String(error) || "Failed to load reports" },
-      { status: 500 }
-    );
+    return NextResponse.json({ error: error?.message || String(error) || "Failed to load reports" }, { status: 500 });
   }
 }
