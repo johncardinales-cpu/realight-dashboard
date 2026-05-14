@@ -135,14 +135,29 @@ function isPaymentDataRow(row: SheetRow) {
   return Boolean(safeText(row[1]) || safeText(row[2]) || toNumber(row[5]) > 0);
 }
 
+function addSaleIdAlias(map: Map<string, string>, key: string, saleId: string) {
+  const cleanKey = safeText(key);
+  const cleanSaleId = safeText(saleId);
+  if (cleanKey && cleanSaleId && !map.has(cleanKey)) map.set(cleanKey, cleanSaleId);
+}
+
 function salesIdMap(salesRows: SheetRow[]) {
   const map = new Map<string, string>();
   salesRows.slice(1).filter(isSalesDataRow).forEach((row) => {
-    const key = saleKey(row[1], row[14]);
+    const salesRefNo = safeText(row[1]);
+    const groupRef = safeText(row[14]);
     const saleId = safeText(row[22]);
-    if (key && saleId && !map.has(key)) map.set(key, saleId);
+    addSaleIdAlias(map, saleKey(salesRefNo, groupRef), saleId);
+    addSaleIdAlias(map, salesRefNo, saleId);
+    addSaleIdAlias(map, groupRef, saleId);
   });
   return map;
+}
+
+function resolveSaleIdForPayment(keyToSaleId: Map<string, string>, row: SheetRow) {
+  const salesRefNo = safeText(row[1]);
+  const groupRef = safeText(row[2]);
+  return keyToSaleId.get(saleKey(salesRefNo, groupRef)) || keyToSaleId.get(salesRefNo) || keyToSaleId.get(groupRef) || "";
 }
 
 async function backfillSales(sheets: any, salesRows: SheetRow[]) {
@@ -160,8 +175,10 @@ async function backfillSales(sheets: any, salesRows: SheetRow[]) {
     let createdAt = safeText(row[24]);
 
     if (!saleId) {
-      saleId = keyToSaleId.get(key) || makeId("SALE");
-      keyToSaleId.set(key, saleId);
+      saleId = keyToSaleId.get(key) || keyToSaleId.get(safeText(row[1])) || keyToSaleId.get(safeText(row[14])) || makeId("SALE");
+      addSaleIdAlias(keyToSaleId, key, saleId);
+      addSaleIdAlias(keyToSaleId, safeText(row[1]), saleId);
+      addSaleIdAlias(keyToSaleId, safeText(row[14]), saleId);
     }
     if (!saleItemId) saleItemId = `${saleId}_ITEM_${String(rowNumber).padStart(5, "0")}`;
     if (!createdAt) createdAt = safeText(row[0]) ? `${safeText(row[0]).slice(0, 10)}T00:00:00.000Z` : now;
@@ -190,11 +207,10 @@ async function backfillPayments(sheets: any, paymentRows: SheetRow[], salesRows:
     let createdAt = safeText(row[9]);
     let paymentId = safeText(row[10]);
     let saleId = safeText(row[11]);
-    const key = saleKey(row[1], row[2]);
 
     if (!createdAt) createdAt = safeText(row[0]) ? `${safeText(row[0]).slice(0, 10)}T00:00:00.000Z` : now;
     if (!paymentId) paymentId = makeId("PAY");
-    if (!saleId && key) saleId = keyToSaleId.get(key) || "";
+    if (!saleId) saleId = resolveSaleIdForPayment(keyToSaleId, row);
 
     if (safeText(row[9]) !== createdAt || safeText(row[10]) !== paymentId || safeText(row[11]) !== saleId) {
       updates.push({ range: `${PAYMENTS_SHEET}!J${rowNumber}:L${rowNumber}`, values: [[createdAt, paymentId, saleId]] });
@@ -217,9 +233,8 @@ function buildValidationIssues(salesData: SheetRow[], paymentData: SheetRow[]) {
 
   const saleIdByKey = new Map<string, string>();
   salesData.forEach((row) => {
-    const key = saleKey(row[1], row[14]);
     const saleId = safeText(row[22]);
-    if (key && saleId && !saleIdByKey.has(key)) saleIdByKey.set(key, saleId);
+    addSaleIdAlias(saleIdByKey, saleKey(row[1], row[14]), saleId);
   });
 
   const duplicateSaleIds = findDuplicateCount(Array.from(saleIdByKey.values()));
