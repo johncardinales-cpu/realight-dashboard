@@ -21,6 +21,7 @@ const SALES_HEADERS = [
   "Gross Profit (PHP)","Payment Status","Salesperson","Notes","Group Ref",
   "Payment Method","Amount Paid (PHP)","Balance (PHP)","Transaction Ref",
   "Cashier Name","Sale Status","Confirmed At","Sale ID","Sale Item ID","Created At",
+  "Product Subtotal (PHP)","Tax Rate (%)","Tax Amount (PHP)","Grand Total (PHP)",
 ];
 
 const AUDIT_HEADERS = [
@@ -29,6 +30,10 @@ const AUDIT_HEADERS = [
 
 function toNumber(value: string | number | undefined) {
   return Number(String(value || "").replace(/[^0-9.-]/g, "")) || 0;
+}
+
+function roundMoney(value: number) {
+  return Math.round((Number(value) || 0) * 100) / 100;
 }
 
 function itemKey(description: string, specification: string) {
@@ -158,7 +163,7 @@ async function getAvailableStockMap(sheets: any) {
 }
 
 async function getConfirmedSoldMap(sheets: any) {
-  const response = await sheets.spreadsheets.values.get({ spreadsheetId: SHEET_ID, range: `${SALES_SHEET}!A:Y` });
+  const response = await sheets.spreadsheets.values.get({ spreadsheetId: SHEET_ID, range: `${SALES_SHEET}!A:AC` });
   const rows = (response.data.values || []) as string[][];
   const map = new Map<string, number>();
 
@@ -208,7 +213,7 @@ export async function GET() {
     await ensureSheetExists(sheets, SALES_SHEET, SALES_HEADERS);
     await ensureSheetExists(sheets, AUDIT_LOG_SHEET, AUDIT_HEADERS);
 
-    const response = await sheets.spreadsheets.values.get({ spreadsheetId: SHEET_ID, range: `${SALES_SHEET}!A:Y` });
+    const response = await sheets.spreadsheets.values.get({ spreadsheetId: SHEET_ID, range: `${SALES_SHEET}!A:AC` });
     const rows = (response.data.values || []) as string[][];
     const data = rows.slice(1).filter(isValidSalesRow);
 
@@ -239,6 +244,10 @@ export async function GET() {
       saleId: String(row[22] || ""),
       saleItemId: String(row[23] || ""),
       createdAt: String(row[24] || ""),
+      productSubtotalPhp: toNumber(row[25] || row[7]),
+      taxRatePct: toNumber(row[26]),
+      taxAmountPhp: toNumber(row[27]),
+      grandTotalPhp: toNumber(row[28] || row[7]),
     }));
 
     return NextResponse.json(items);
@@ -280,8 +289,13 @@ export async function POST(req: Request) {
     const validItems = items.filter((item: any) => String(item?.description || "").trim() && String(item?.specification || "").trim() && toNumber(item?.qty) > 0);
     if (!validItems.length) return NextResponse.json({ error: "At least one valid product line is required" }, { status: 400 });
 
-    const transactionTotal = validItems.reduce((sum: number, item: any) => sum + (toNumber(item?.qty) * toNumber(item?.unitPricePhp)), 0);
-    if (amountPaidPhp > transactionTotal) return NextResponse.json({ error: "Amount Paid cannot be higher than Total Sale" }, { status: 400 });
+    const productSubtotalPhp = roundMoney(validItems.reduce((sum: number, item: any) => sum + (toNumber(item?.qty) * toNumber(item?.unitPricePhp)), 0));
+    const taxRatePct = Math.max(toNumber(body?.taxRatePct), 0);
+    const requestedTaxAmountPhp = toNumber(body?.taxAmountPhp);
+    const taxAmountPhp = roundMoney(requestedTaxAmountPhp > 0 ? requestedTaxAmountPhp : productSubtotalPhp * (taxRatePct / 100));
+    const transactionTotal = roundMoney(productSubtotalPhp + taxAmountPhp);
+
+    if (amountPaidPhp > transactionTotal) return NextResponse.json({ error: "Amount Paid cannot be higher than Grand Total" }, { status: 400 });
 
     if (normalizedSaleStatus === "confirmed") {
       if (!paymentMethod) return NextResponse.json({ error: "Payment Method is required before confirming a sale" }, { status: 400 });
@@ -300,25 +314,29 @@ export async function POST(req: Request) {
       const unitPricePhp = toNumber(item?.unitPricePhp);
       const key = itemKey(description, specification);
       const costPricePhp = pricingMap.get(key) || 0;
-      const totalSalePhp = qty * unitPricePhp;
-      const totalCostPhp = qty * costPricePhp;
-      const grossProfitPhp = totalSalePhp - totalCostPhp;
-      const lineAmountPaidPhp = transactionTotal > 0 ? amountPaidPhp * (totalSalePhp / transactionTotal) : 0;
-      const lineBalancePhp = Math.max(totalSalePhp - lineAmountPaidPhp, 0);
+      const lineProductSubtotalPhp = roundMoney(qty * unitPricePhp);
+      const lineShare = productSubtotalPhp > 0 ? lineProductSubtotalPhp / productSubtotalPhp : 0;
+      const lineTaxAmountPhp = roundMoney(taxAmountPhp * lineShare);
+      const lineGrandTotalPhp = roundMoney(lineProductSubtotalPhp + lineTaxAmountPhp);
+      const totalCostPhp = roundMoney(qty * costPricePhp);
+      const grossProfitPhp = roundMoney(lineGrandTotalPhp - totalCostPhp);
+      const lineAmountPaidPhp = transactionTotal > 0 ? roundMoney(amountPaidPhp * (lineGrandTotalPhp / transactionTotal)) : 0;
+      const lineBalancePhp = roundMoney(Math.max(lineGrandTotalPhp - lineAmountPaidPhp, 0));
       const saleItemId = `${saleId}_ITEM_${String(index + 1).padStart(3, "0")}`;
 
       return [
         saleDate, salesRefNo, customerName, description, specification, qty,
-        unitPricePhp, totalSalePhp, costPricePhp, totalCostPhp, grossProfitPhp,
+        unitPricePhp, lineGrandTotalPhp, costPricePhp, totalCostPhp, grossProfitPhp,
         paymentStatus, salesperson, notes, groupRef,
         paymentMethod, lineAmountPaidPhp, lineBalancePhp, transactionRef,
         cashierName, saleStatus, confirmedAt, saleId, saleItemId, createdAt,
+        lineProductSubtotalPhp, taxRatePct, lineTaxAmountPhp, lineGrandTotalPhp,
       ];
     });
 
     await sheets.spreadsheets.values.append({
       spreadsheetId: SHEET_ID,
-      range: `${SALES_SHEET}!A:Y`,
+      range: `${SALES_SHEET}!A:AC`,
       valueInputOption: "USER_ENTERED",
       insertDataOption: "INSERT_ROWS",
       requestBody: { values: rowsToAppend },
@@ -330,11 +348,11 @@ export async function POST(req: Request) {
       recordId: saleId,
       recordRef: salesRefNo || groupRef,
       actor: cashierName || salesperson || "System",
-      summary: `Created sale with ${rowsToAppend.length} line(s), total ${transactionTotal}`,
-      after: { saleId, salesRefNo, groupRef, customerName, transactionTotal, paymentStatus, saleStatus, itemCount: rowsToAppend.length },
+      summary: `Created sale with ${rowsToAppend.length} line(s), subtotal ${productSubtotalPhp}, tax ${taxAmountPhp}, grand total ${transactionTotal}`,
+      after: { saleId, salesRefNo, groupRef, customerName, productSubtotalPhp, taxRatePct, taxAmountPhp, transactionTotal, paymentStatus, saleStatus, itemCount: rowsToAppend.length },
     });
 
-    return NextResponse.json({ ok: true, lines: rowsToAppend.length, saleId });
+    return NextResponse.json({ ok: true, lines: rowsToAppend.length, saleId, productSubtotalPhp, taxRatePct, taxAmountPhp, grandTotalPhp: transactionTotal });
   } catch (error: any) {
     console.error("SALES POST ERROR:", error);
     return NextResponse.json({ error: error?.message || String(error) || "Failed to save sale" }, { status: 500 });
