@@ -12,6 +12,18 @@ type DashboardData = {
   netGain: number;
 };
 
+type ActivityItem = {
+  id: string;
+  title: string;
+  note: string;
+  actor: string;
+  module: string;
+  action: string;
+  recordRef: string;
+  time: string;
+  icon: string;
+};
+
 function peso(value: number) {
   return `₱${value.toLocaleString()}`;
 }
@@ -27,7 +39,28 @@ const iconPaths = {
   sales: "M6 6h15l-2 8H8L6 6Zm0 0L5 3H3M9 20a1 1 0 1 0 0-2 1 1 0 0 0 0 2Zm9 0a1 1 0 1 0 0-2 1 1 0 0 0 0 2Z",
   expenses: "M4 7h16v12H4V7Zm0 4h16M16 15h2",
   gain: "M4 17 10 11l4 4 6-8M20 7v6h-6",
+  payment: "M4 7h16v10H4V7Zm0 3h16M7 15h4",
+  reset: "M4 4h16v6H4V4Zm0 10h16v6H4v-6Zm4-7h8M8 17h8",
+  activity: "M12 8v5l3 2M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z",
 };
+
+function activityIconPath(icon: string) {
+  if (icon === "sales") return iconPaths.sales;
+  if (icon === "payment") return iconPaths.payment;
+  if (icon === "inventory") return iconPaths.warehouse;
+  if (icon === "expense") return iconPaths.expenses;
+  if (icon === "reset") return iconPaths.reset;
+  return iconPaths.activity;
+}
+
+function activityTone(icon: string): "emerald" | "blue" | "amber" | "violet" | "rose" {
+  if (icon === "sales") return "violet";
+  if (icon === "payment") return "emerald";
+  if (icon === "inventory") return "blue";
+  if (icon === "expense") return "rose";
+  if (icon === "reset") return "amber";
+  return "emerald";
+}
 
 function MetricIcon({ path, tone = "emerald" }: { path: string; tone?: "emerald" | "blue" | "amber" | "violet" | "rose" }) {
   const tones = {
@@ -49,12 +82,23 @@ function MetricIcon({ path, tone = "emerald" }: { path: string; tone?: "emerald"
 
 export default function HomePage() {
   const [data, setData] = useState<DashboardData | null>(null);
+  const [activity, setActivity] = useState<ActivityItem[]>([]);
+
+  async function loadDashboard() {
+    const res = await fetch("/api/dashboard", { cache: "no-store" });
+    const nextData = await res.json();
+    setData(nextData);
+  }
+
+  async function loadActivity() {
+    const res = await fetch("/api/recent-activity", { cache: "no-store" });
+    const nextActivity = await res.json();
+    setActivity(Array.isArray(nextActivity) ? nextActivity : []);
+  }
 
   useEffect(() => {
-    fetch("/api/dashboard")
-      .then((res) => res.json())
-      .then(setData)
-      .catch(console.error);
+    loadDashboard().catch(console.error);
+    loadActivity().catch(console.error);
   }, []);
 
   const kpis = useMemo(
@@ -94,14 +138,6 @@ export default function HomePage() {
     })
     .join(" ");
 
-  const activity = [
-    { title: "Delivery added", note: "New delivery was recorded", time: "10:24 AM", tone: "emerald", icon: "M3 7h11v10H3V7Zm11 4h3l3 3v3h-6v-6Z" },
-    { title: "Inventory updated", note: "Stock levels updated", time: "9:15 AM", tone: "blue", icon: iconPaths.warehouse },
-    { title: "Sales recorded", note: "New sales entry added", time: "Yesterday", tone: "violet", icon: iconPaths.sales },
-    { title: "Expense recorded", note: "New expense entry added", time: "Yesterday", tone: "amber", icon: iconPaths.expenses },
-    { title: "User added", note: "New user account created", time: "May 28", tone: "emerald", icon: "M16 21v-2a4 4 0 0 0-8 0v2M12 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8Zm7-4v6m3-3h-6" },
-  ];
-
   return (
     <section className="w-full space-y-5">
       <div className="rounded-[1.75rem] border border-slate-200/80 bg-white p-6 shadow-[0_18px_50px_rgba(15,23,42,0.06)]">
@@ -111,14 +147,13 @@ export default function HomePage() {
             <p className="mt-2 text-sm font-medium text-slate-500">Live data from Google Sheets.</p>
           </div>
           <div className="flex flex-wrap gap-3">
-            <button className="inline-flex items-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 shadow-sm transition hover:border-slate-300 hover:bg-slate-50">
-              <svg viewBox="0 0 24 24" aria-hidden="true" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M12 3v12" /><path d="m7 10 5 5 5-5" /><path d="M5 21h14" /></svg>
-              Export Report
+            <button onClick={() => { loadDashboard().catch(console.error); loadActivity().catch(console.error); }} className="inline-flex items-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 shadow-sm transition hover:border-slate-300 hover:bg-slate-50">
+              Refresh
             </button>
-            <button className="inline-flex items-center gap-2 rounded-2xl bg-emerald-600 px-5 py-2.5 text-sm font-semibold text-white shadow-sm shadow-emerald-600/20 transition hover:bg-emerald-700">
+            <a href="/add-delivery" className="inline-flex items-center gap-2 rounded-2xl bg-emerald-600 px-5 py-2.5 text-sm font-semibold text-white shadow-sm shadow-emerald-600/20 transition hover:bg-emerald-700">
               <span className="text-lg leading-none">+</span>
               Add Delivery
-            </button>
+            </a>
           </div>
         </div>
       </div>
@@ -186,13 +221,14 @@ export default function HomePage() {
 
         <div className="rounded-[1.75rem] border border-slate-200/80 bg-white p-6 shadow-[0_18px_50px_rgba(15,23,42,0.06)]">
           <div className="mb-5 flex items-center justify-between">
-            <div className="flex items-center gap-3"><span className="flex h-9 w-9 items-center justify-center rounded-full bg-emerald-50 text-emerald-600"><svg viewBox="0 0 24 24" aria-hidden="true" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M12 8v5l3 2" /><path d="M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" /></svg></span><h2 className="text-xl font-semibold tracking-tight text-slate-950">Recent Activity</h2></div>
-            <button className="text-sm font-semibold text-emerald-600 hover:text-emerald-700">View all</button>
+            <div className="flex items-center gap-3"><span className="flex h-9 w-9 items-center justify-center rounded-full bg-emerald-50 text-emerald-600"><svg viewBox="0 0 24 24" aria-hidden="true" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d={iconPaths.activity} /></svg></span><h2 className="text-xl font-semibold tracking-tight text-slate-950">Recent Activity</h2></div>
+            <button onClick={() => loadActivity().catch(console.error)} className="text-sm font-semibold text-emerald-600 hover:text-emerald-700">Refresh</button>
           </div>
           <div className="divide-y divide-slate-100">
             {activity.map((item) => (
-              <div key={item.title} className="flex items-center gap-4 py-4 first:pt-0 last:pb-0"><MetricIcon path={item.icon} tone={item.tone as "emerald" | "blue" | "amber" | "violet" | "rose"} /><div className="min-w-0 flex-1"><p className="font-semibold text-slate-950">{item.title}</p><p className="mt-1 truncate text-sm text-slate-500">{item.note}</p></div><p className="whitespace-nowrap text-sm font-medium text-slate-500">{item.time}</p></div>
+              <div key={item.id || `${item.title}-${item.time}`} className="flex items-center gap-4 py-4 first:pt-0 last:pb-0"><MetricIcon path={activityIconPath(item.icon)} tone={activityTone(item.icon)} /><div className="min-w-0 flex-1"><p className="font-semibold text-slate-950">{item.title}</p><p className="mt-1 truncate text-sm text-slate-500">{item.note}</p><p className="mt-1 text-xs font-medium text-slate-400">By {item.actor}</p></div><p className="whitespace-nowrap text-sm font-medium text-slate-500">{item.time}</p></div>
             ))}
+            {!activity.length ? <div className="py-8 text-center text-sm font-medium text-slate-500">No recent activity yet.</div> : null}
           </div>
         </div>
       </div>
