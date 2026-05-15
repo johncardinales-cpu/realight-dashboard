@@ -39,6 +39,10 @@ type SavedSale = {
   cashierName: string;
   saleStatus: string;
   confirmedAt: string;
+  productSubtotalPhp?: number;
+  taxRatePct?: number;
+  taxAmountPhp?: number;
+  grandTotalPhp?: number;
 };
 
 type InventoryRow = Record<string, string | number>;
@@ -66,6 +70,10 @@ function money(value: number) {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   })}`;
+}
+
+function roundMoney(value: number) {
+  return Math.round((Number(value) || 0) * 100) / 100;
 }
 
 function itemKey(description: string, specification: string) {
@@ -178,6 +186,7 @@ export default function SalesPage() {
   const [paymentStatus, setPaymentStatus] = useState("Pending");
   const [paymentMethod, setPaymentMethod] = useState("");
   const [amountPaidPhp, setAmountPaidPhp] = useState(0);
+  const [taxRatePct, setTaxRatePct] = useState(0);
   const [transactionRef, setTransactionRef] = useState("");
   const [cashierName, setCashierName] = useState("");
   const [saleStatus, setSaleStatus] = useState("Draft");
@@ -270,7 +279,7 @@ export default function SalesPage() {
   }
 
   const totals = useMemo(() => {
-    return items.reduce(
+    const base = items.reduce(
       (acc, item) => {
         const matched = pricing.find(
           (row) =>
@@ -280,16 +289,24 @@ export default function SalesPage() {
         const qty = Number(item.qty) || 0;
         const unit = Number(item.unitPricePhp) || 0;
         const cost = Number(matched?.costPricePhp) || 0;
-        acc.sale += qty * unit;
+        acc.subtotal += qty * unit;
         acc.cost += qty * cost;
-        acc.profit += (qty * unit) - (qty * cost);
         return acc;
       },
-      { sale: 0, cost: 0, profit: 0 }
+      { subtotal: 0, cost: 0 }
     );
-  }, [items, pricing]);
+    const tax = roundMoney(base.subtotal * ((Number(taxRatePct) || 0) / 100));
+    const grandTotal = roundMoney(base.subtotal + tax);
+    return {
+      subtotal: roundMoney(base.subtotal),
+      tax,
+      grandTotal,
+      cost: roundMoney(base.cost),
+      profit: roundMoney(grandTotal - base.cost),
+    };
+  }, [items, pricing, taxRatePct]);
 
-  const balancePhp = Math.max(totals.sale - (Number(amountPaidPhp) || 0), 0);
+  const balancePhp = Math.max(totals.grandTotal - (Number(amountPaidPhp) || 0), 0);
 
   function resetForm() {
     setSaleDate("");
@@ -298,6 +315,7 @@ export default function SalesPage() {
     setPaymentStatus("Pending");
     setPaymentMethod("");
     setAmountPaidPhp(0);
+    setTaxRatePct(0);
     setTransactionRef("");
     setCashierName("");
     setSaleStatus("Draft");
@@ -346,6 +364,8 @@ export default function SalesPage() {
           paymentStatus,
           paymentMethod,
           amountPaidPhp,
+          taxRatePct,
+          taxAmountPhp: totals.tax,
           transactionRef,
           cashierName,
           saleStatus,
@@ -361,7 +381,7 @@ export default function SalesPage() {
       setAlert({
         type: "success",
         title: "Sale saved successfully",
-        message: `The sale was recorded with ${data?.lines || 0} line(s).`,
+        message: `The sale was recorded with ${data?.lines || 0} line(s). Grand total: ${money(data?.grandTotalPhp || totals.grandTotal)}.`,
       });
       resetForm();
       await loadAll();
@@ -379,7 +399,7 @@ export default function SalesPage() {
       <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
         <h1 className="text-3xl font-semibold text-slate-900">Sales</h1>
         <p className="mt-1 text-sm text-slate-600">
-          You can add multiple products in one sale. Each line keeps its own quantity and unit price.
+          Add products, calculate cashiering tax, record payment, and save the sale. Inventory deducts only after confirmation.
         </p>
         {alert ? <AlertBanner alert={alert} onDismiss={() => setAlert(null)} /> : null}
       </div>
@@ -389,14 +409,8 @@ export default function SalesPage() {
           <input className="rounded-xl border border-slate-300 px-3 py-2" type="date" value={saleDate} onChange={(e) => setSaleDate(e.target.value)} />
           <input className="rounded-xl border border-slate-300 px-3 py-2" placeholder="Sales Ref No." value={salesRefNo} onChange={(e) => setSalesRefNo(e.target.value)} />
           <input className="rounded-xl border border-slate-300 px-3 py-2" placeholder="Customer Name" value={customerName} onChange={(e) => setCustomerName(e.target.value)} />
-          <select
-            className="rounded-xl border border-slate-300 px-3 py-2"
-            value={paymentStatus}
-            onChange={(e) => setPaymentStatus(e.target.value)}
-          >
-            {paymentStatusOptions.map((status) => (
-              <option key={status} value={status}>{status}</option>
-            ))}
+          <select className="rounded-xl border border-slate-300 px-3 py-2" value={paymentStatus} onChange={(e) => setPaymentStatus(e.target.value)}>
+            {paymentStatusOptions.map((status) => <option key={status} value={status}>{status}</option>)}
           </select>
           <input className="rounded-xl border border-slate-300 px-3 py-2" placeholder="Salesperson" value={salesperson} onChange={(e) => setSalesperson(e.target.value)} />
           <input className="rounded-xl border border-slate-300 px-3 py-2" placeholder="Notes" value={notes} onChange={(e) => setNotes(e.target.value)} />
@@ -405,38 +419,23 @@ export default function SalesPage() {
         <div className="rounded-2xl border border-emerald-100 bg-emerald-50/40 p-4">
           <h2 className="mb-3 text-sm font-semibold text-slate-800">Cashiering</h2>
           <div className="grid gap-4 md:grid-cols-3">
-            <select
-              className="rounded-xl border border-slate-300 bg-white px-3 py-2"
-              value={paymentMethod}
-              onChange={(e) => setPaymentMethod(e.target.value)}
-            >
-              {paymentMethodOptions.map((method) => (
-                <option key={method || "blank"} value={method}>{method || "Payment Method"}</option>
-              ))}
+            <select className="rounded-xl border border-slate-300 bg-white px-3 py-2" value={paymentMethod} onChange={(e) => setPaymentMethod(e.target.value)}>
+              {paymentMethodOptions.map((method) => <option key={method || "blank"} value={method}>{method || "Payment Method"}</option>)}
             </select>
-            <input
-              className="rounded-xl border border-slate-300 bg-white px-3 py-2"
-              type="number"
-              step="0.01"
-              placeholder="Amount Paid (PHP)"
-              value={amountPaidPhp}
-              onChange={(e) => setAmountPaidPhp(Number(e.target.value))}
-            />
+            <input className="rounded-xl border border-slate-300 bg-white px-3 py-2" type="number" step="0.01" min="0" placeholder="Tax Rate (%)" value={taxRatePct} onChange={(e) => setTaxRatePct(Number(e.target.value))} />
+            <input className="rounded-xl border border-slate-300 bg-slate-50 px-3 py-2" value={`Tax: ${money(totals.tax)}`} readOnly />
+            <input className="rounded-xl border border-slate-300 bg-slate-50 px-3 py-2" value={`Subtotal: ${money(totals.subtotal)}`} readOnly />
+            <input className="rounded-xl border border-slate-300 bg-slate-50 px-3 py-2 font-semibold" value={`Grand Total: ${money(totals.grandTotal)}`} readOnly />
+            <input className="rounded-xl border border-slate-300 bg-white px-3 py-2" type="number" step="0.01" placeholder="Amount Paid (PHP)" value={amountPaidPhp} onChange={(e) => setAmountPaidPhp(Number(e.target.value))} />
             <input className="rounded-xl border border-slate-300 bg-slate-50 px-3 py-2" value={`Balance: ${money(balancePhp)}`} readOnly />
             <input className="rounded-xl border border-slate-300 bg-white px-3 py-2" placeholder="Transaction / Receipt Ref" value={transactionRef} onChange={(e) => setTransactionRef(e.target.value)} />
             <input className="rounded-xl border border-slate-300 bg-white px-3 py-2" placeholder="Cashier Name" value={cashierName} onChange={(e) => setCashierName(e.target.value)} />
-            <select
-              className="rounded-xl border border-slate-300 bg-white px-3 py-2"
-              value={saleStatus}
-              onChange={(e) => setSaleStatus(e.target.value)}
-            >
-              {saleStatusOptions.map((status) => (
-                <option key={status} value={status}>{status}</option>
-              ))}
+            <select className="rounded-xl border border-slate-300 bg-white px-3 py-2" value={saleStatus} onChange={(e) => setSaleStatus(e.target.value)}>
+              {saleStatusOptions.map((status) => <option key={status} value={status}>{status}</option>)}
             </select>
           </div>
           <p className="mt-2 text-xs text-slate-600">
-            Sale Status controls future inventory deduction. Inventory should deduct only when a sale is Confirmed.
+            Tax is added to the sale during cashiering. Payments and balance are calculated from Grand Total. Inventory deducts only when a sale is Confirmed.
           </p>
         </div>
 
@@ -445,44 +444,16 @@ export default function SalesPage() {
             const availableStock = stockForLine(item);
             return (
               <div key={index} className="grid gap-3 rounded-2xl border border-slate-200 p-4 md:grid-cols-5">
-                <input
-                  className="rounded-xl border border-slate-300 px-3 py-2"
-                  placeholder="Description"
-                  value={item.description}
-                  onChange={(e) => updateItem(index, { description: e.target.value })}
-                />
-                <input
-                  className="rounded-xl border border-slate-300 px-3 py-2"
-                  placeholder="Specification"
-                  value={item.specification}
-                  onChange={(e) => updateItem(index, { specification: e.target.value })}
-                  onBlur={() => autofillPrice(index, item.description, item.specification)}
-                />
-                <input
-                  className="rounded-xl border border-slate-300 px-3 py-2"
-                  type="number"
-                  placeholder="Qty"
-                  value={item.qty}
-                  onChange={(e) => updateItem(index, { qty: Number(e.target.value) })}
-                />
-                <input
-                  className="rounded-xl border border-slate-300 px-3 py-2"
-                  type="number"
-                  step="0.01"
-                  placeholder="Unit Price (PHP)"
-                  value={item.unitPricePhp}
-                  onChange={(e) => updateItem(index, { unitPricePhp: Number(e.target.value) })}
-                />
+                <input className="rounded-xl border border-slate-300 px-3 py-2" placeholder="Description" value={item.description} onChange={(e) => updateItem(index, { description: e.target.value })} />
+                <input className="rounded-xl border border-slate-300 px-3 py-2" placeholder="Specification" value={item.specification} onChange={(e) => updateItem(index, { specification: e.target.value })} onBlur={() => autofillPrice(index, item.description, item.specification)} />
+                <input className="rounded-xl border border-slate-300 px-3 py-2" type="number" placeholder="Qty" value={item.qty} onChange={(e) => updateItem(index, { qty: Number(e.target.value) })} />
+                <input className="rounded-xl border border-slate-300 px-3 py-2" type="number" step="0.01" placeholder="Unit Price (PHP)" value={item.unitPricePhp} onChange={(e) => updateItem(index, { unitPricePhp: Number(e.target.value) })} />
                 <div className="flex items-center gap-2">
                   <div className="text-sm text-slate-700">
-                    <p>Line Total: <span className="font-semibold">{money((Number(item.qty) || 0) * (Number(item.unitPricePhp) || 0))}</span></p>
-                    <p className="mt-1 text-xs font-semibold text-slate-500">
-                      {availableStock === null ? "Stock: select valid item" : `Available: ${availableStock}`}
-                    </p>
+                    <p>Line Subtotal: <span className="font-semibold">{money((Number(item.qty) || 0) * (Number(item.unitPricePhp) || 0))}</span></p>
+                    <p className="mt-1 text-xs font-semibold text-slate-500">{availableStock === null ? "Stock: select valid item" : `Available: ${availableStock}`}</p>
                   </div>
-                  <button type="button" onClick={() => removeLine(index)} className="rounded-lg border border-slate-300 px-3 py-1 text-xs font-medium text-slate-700">
-                    Remove
-                  </button>
+                  <button type="button" onClick={() => removeLine(index)} className="rounded-lg border border-slate-300 px-3 py-1 text-xs font-medium text-slate-700">Remove</button>
                 </div>
               </div>
             );
@@ -490,19 +461,16 @@ export default function SalesPage() {
         </div>
 
         <div className="flex gap-3">
-          <button type="button" onClick={addLine} className="rounded-xl border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700">
-            Add Product Line
-          </button>
-          <button type="submit" disabled={saving} className="rounded-xl bg-emerald-600 px-4 py-2 text-sm font-medium text-white disabled:opacity-60">
-            {saving ? "Saving..." : "Save Sale"}
-          </button>
+          <button type="button" onClick={addLine} className="rounded-xl border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700">Add Product Line</button>
+          <button type="submit" disabled={saving} className="rounded-xl bg-emerald-600 px-4 py-2 text-sm font-medium text-white disabled:opacity-60">{saving ? "Saving..." : "Save Sale"}</button>
         </div>
 
-        <div className="grid gap-2 text-sm text-slate-700 md:grid-cols-4">
-          <p>Total Sale: <span className="font-semibold">{money(totals.sale)}</span></p>
+        <div className="grid gap-2 text-sm text-slate-700 md:grid-cols-5">
+          <p>Product Subtotal: <span className="font-semibold">{money(totals.subtotal)}</span></p>
+          <p>Tax: <span className="font-semibold">{money(totals.tax)}</span></p>
+          <p>Grand Total: <span className="font-semibold">{money(totals.grandTotal)}</span></p>
           <p>Amount Paid: <span className="font-semibold">{money(amountPaidPhp)}</span></p>
           <p>Balance: <span className="font-semibold">{money(balancePhp)}</span></p>
-          <p>Gross Profit: <span className="font-semibold">{money(totals.profit)}</span></p>
         </div>
       </form>
 
@@ -513,11 +481,9 @@ export default function SalesPage() {
             <thead className="bg-slate-100 text-slate-700">
               <tr>
                 {[
-                  "Date","Sales Ref","Customer","Description","Specification","Qty","Unit Price","Total Sale",
+                  "Date","Sales Ref","Customer","Description","Specification","Qty","Unit Price","Subtotal","Tax","Grand Total",
                   "Cost Price","Gross Profit","Payment Status","Method","Paid","Balance","Sale Status"
-                ].map((head) => (
-                  <th key={head} className="px-4 py-3 text-left font-medium whitespace-nowrap">{head}</th>
-                ))}
+                ].map((head) => <th key={head} className="px-4 py-3 text-left font-medium whitespace-nowrap">{head}</th>)}
               </tr>
             </thead>
             <tbody>
@@ -530,7 +496,9 @@ export default function SalesPage() {
                   <td className="px-4 py-3 text-slate-700">{row.specification}</td>
                   <td className="px-4 py-3 text-slate-700">{row.qty}</td>
                   <td className="px-4 py-3 text-slate-700">{money(row.unitPricePhp)}</td>
-                  <td className="px-4 py-3 text-slate-700">{money(row.totalSalePhp)}</td>
+                  <td className="px-4 py-3 text-slate-700">{money(row.productSubtotalPhp ?? row.totalSalePhp)}</td>
+                  <td className="px-4 py-3 text-slate-700">{money(row.taxAmountPhp ?? 0)}</td>
+                  <td className="px-4 py-3 text-slate-700">{money(row.grandTotalPhp ?? row.totalSalePhp)}</td>
                   <td className="px-4 py-3 text-slate-700">{money(row.costPricePhp)}</td>
                   <td className="px-4 py-3 text-slate-700">{money(row.grossProfitPhp)}</td>
                   <td className="px-4 py-3 text-slate-700"><StatusPill value={row.paymentStatus} kind="payment" /></td>
@@ -540,11 +508,7 @@ export default function SalesPage() {
                   <td className="px-4 py-3 text-slate-700"><StatusPill value={row.saleStatus} kind="sale" /></td>
                 </tr>
               ))}
-              {!rows.length && (
-                <tr>
-                  <td colSpan={15} className="px-4 py-8 text-center text-slate-500">No sales recorded yet.</td>
-                </tr>
-              )}
+              {!rows.length && <tr><td colSpan={17} className="px-4 py-8 text-center text-slate-500">No sales recorded yet.</td></tr>}
             </tbody>
           </table>
         </div>
