@@ -80,6 +80,38 @@ function MetricIcon({ path, tone = "emerald" }: { path: string; tone?: "emerald"
   );
 }
 
+function DetailLine({ label, value }: { label: string; value: string }) {
+  if (!value) return null;
+  return (
+    <div className="grid grid-cols-[82px_minmax(0,1fr)] gap-2 text-xs leading-5">
+      <span className="font-bold uppercase tracking-wide text-slate-400">{label}</span>
+      <span className="break-words font-semibold text-slate-700">{value}</span>
+    </div>
+  );
+}
+
+function ActivityDetails({ item }: { item: ActivityItem }) {
+  return (
+    <div className="pointer-events-none absolute right-0 top-full z-30 mt-2 hidden w-[min(340px,calc(100vw-3rem))] rounded-2xl border border-slate-200 bg-white p-4 text-left shadow-2xl ring-1 ring-slate-900/5 group-hover:block group-focus-within:block">
+      <div className="mb-3 flex items-start gap-3 border-b border-slate-100 pb-3">
+        <MetricIcon path={activityIconPath(item.icon)} tone={activityTone(item.icon)} />
+        <div className="min-w-0">
+          <p className="text-sm font-bold text-slate-950">{item.title}</p>
+          <p className="mt-1 text-xs font-medium text-slate-500">Complete activity details</p>
+        </div>
+      </div>
+      <div className="space-y-2">
+        <DetailLine label="Action" value={item.action || item.title} />
+        <DetailLine label="Module" value={item.module} />
+        <DetailLine label="Ref" value={item.recordRef} />
+        <DetailLine label="Actor" value={item.actor} />
+        <DetailLine label="Time" value={item.time} />
+        <DetailLine label="Summary" value={item.note} />
+      </div>
+    </div>
+  );
+}
+
 export default function HomePage() {
   const [data, setData] = useState<DashboardData | null>(null);
   const [activity, setActivity] = useState<ActivityItem[]>([]);
@@ -224,9 +256,14 @@ export default function HomePage() {
             <div className="flex items-center gap-3"><span className="flex h-9 w-9 items-center justify-center rounded-full bg-emerald-50 text-emerald-600"><svg viewBox="0 0 24 24" aria-hidden="true" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d={iconPaths.activity} /></svg></span><h2 className="text-xl font-semibold tracking-tight text-slate-950">Recent Activity</h2></div>
             <button onClick={() => loadActivity().catch(console.error)} className="text-sm font-semibold text-emerald-600 hover:text-emerald-700">Refresh</button>
           </div>
-          <div className="divide-y divide-slate-100">
+          <div className="divide-y divide-slate-100 overflow-visible">
             {activity.map((item) => (
-              <div key={item.id || `${item.title}-${item.time}`} className="flex items-center gap-4 py-4 first:pt-0 last:pb-0"><MetricIcon path={activityIconPath(item.icon)} tone={activityTone(item.icon)} /><div className="min-w-0 flex-1"><p className="font-semibold text-slate-950">{item.title}</p><p className="mt-1 truncate text-sm text-slate-500">{item.note}</p><p className="mt-1 text-xs font-medium text-slate-400">By {item.actor}</p></div><p className="whitespace-nowrap text-sm font-medium text-slate-500">{item.time}</p></div>
+              <div key={item.id || `${item.title}-${item.time}`} tabIndex={0} className="group relative flex cursor-help items-center gap-4 rounded-2xl px-2 py-4 transition hover:bg-slate-50 focus:bg-slate-50 focus:outline-none first:pt-0 last:pb-0">
+                <MetricIcon path={activityIconPath(item.icon)} tone={activityTone(item.icon)} />
+                <div className="min-w-0 flex-1"><p className="font-semibold text-slate-950">{item.title}</p><p className="mt-1 truncate text-sm text-slate-500">{item.note}</p><p className="mt-1 text-xs font-medium text-slate-400">By {item.actor}</p></div>
+                <p className="whitespace-nowrap text-sm font-medium text-slate-500">{item.time}</p>
+                <ActivityDetails item={item} />
+              </div>
             ))}
             {!activity.length ? <div className="py-8 text-center text-sm font-medium text-slate-500">No recent activity yet.</div> : null}
           </div>
