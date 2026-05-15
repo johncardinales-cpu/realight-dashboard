@@ -5,6 +5,7 @@ const SHEET_ID = process.env.GOOGLE_SHEET_ID as string;
 const EXPENSES_SHEET = "Expenses";
 const SUPPLIER_COSTS_SHEET = "Supplier_Invoice_Costs";
 const AUDIT_LOG_SHEET = "Audit_Log";
+const SALES_SHEET = "Sales";
 
 const auth = new google.auth.GoogleAuth({
   credentials: {
@@ -62,6 +63,10 @@ function toNumber(value: string | number | undefined) {
 
 function safeText(value: unknown) {
   return String(value || "").trim();
+}
+
+function normalizeRef(value: unknown) {
+  return safeText(value).toLowerCase();
 }
 
 function columnLetter(index: number) {
@@ -122,6 +127,25 @@ async function appendAuditLog(sheets: any, entry: { module: string; action: stri
       ]],
     },
   });
+}
+
+async function getSalesRefSet(sheets: any) {
+  const response = await sheets.spreadsheets.values.get({
+    spreadsheetId: SHEET_ID,
+    range: `${SALES_SHEET}!A:AC`,
+  }).catch(() => ({ data: { values: [] } }));
+
+  const rows = (response.data.values || []) as string[][];
+  const refs = new Set<string>();
+  rows.slice(1).forEach((row) => {
+    const salesRefNo = normalizeRef(row[1]);
+    const groupRef = normalizeRef(row[14]);
+    const saleId = normalizeRef(row[22]);
+    if (salesRefNo) refs.add(salesRefNo);
+    if (groupRef) refs.add(groupRef);
+    if (saleId) refs.add(saleId);
+  });
+  return refs;
 }
 
 function parseExpenseRow(row: string[], header: string[]) {
@@ -265,6 +289,13 @@ export async function POST(req: Request) {
     await ensureSheetExists(sheets, EXPENSES_SHEET, EXPENSE_HEADERS);
     await ensureSheetExists(sheets, AUDIT_LOG_SHEET, AUDIT_HEADERS);
 
+    if (relatedSalesRefNo) {
+      const refs = await getSalesRefSet(sheets);
+      if (!refs.has(normalizeRef(relatedSalesRefNo))) {
+        return NextResponse.json({ error: `Related Sales Ref No. was not found in Sales: ${relatedSalesRefNo}` }, { status: 400 });
+      }
+    }
+
     const createdAt = new Date().toISOString();
     const expenseId = makeId("EXP");
 
@@ -284,7 +315,7 @@ export async function POST(req: Request) {
       recordId: expenseId,
       recordRef: referenceNo || relatedSalesRefNo || category,
       actor,
-      summary: `Recorded expense ${amount} for ${category}: ${description}`,
+      summary: `Recorded expense ${amount} for ${category}: ${description}${relatedSalesRefNo ? ` linked to sale ${relatedSalesRefNo}` : ""}`,
       after: { expenseId, expenseDate, category, description, amount, paymentMethod, referenceNo, relatedSalesRefNo, payee, notes },
     });
 
