@@ -18,12 +18,36 @@ const auth = new google.auth.GoogleAuth({
 function toNumber(value: string | number | undefined) { return Number(String(value || "").replace(/[^0-9.-]/g, "")) || 0; }
 function safeText(value: unknown) { return String(value || "").trim(); }
 function today() { return new Date().toISOString().slice(0, 10); }
-function toDate(value: string) { const parsed = new Date(`${safeText(value).slice(0, 10)}T00:00:00`); return Number.isNaN(parsed.getTime()) ? null : parsed; }
 function formatDate(date: Date) { return date.toISOString().slice(0, 10); }
 function saleKey(salesRefNo: string, groupRef: string, saleId?: string) { return safeText(saleId) || safeText(groupRef) || safeText(salesRefNo); }
 function normalizeRef(value: unknown) { return safeText(value).toLowerCase(); }
-function inRange(value: string, startDate: string, endDate: string) { const date = safeText(value).slice(0, 10); return date >= startDate && date <= endDate; }
 function getPaymentStatus(totalPaid: number, totalDue: number) { if (totalDue <= 0 || totalPaid <= 0) return "Pending"; if (totalPaid >= totalDue) return "Paid"; return "Partial"; }
+
+function normalizeDate(value: unknown) {
+  const text = safeText(value);
+  if (!text) return "";
+  if (/^\d{4}-\d{2}-\d{2}/.test(text)) return text.slice(0, 10);
+  if (/^\d{1,2}\/\d{1,2}\/\d{2,4}$/.test(text)) {
+    const [first, second, yearPart] = text.split("/").map((part) => Number(part));
+    const year = yearPart < 100 ? 2000 + yearPart : yearPart;
+    const month = first;
+    const day = second;
+    return `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+  }
+  if (/^\d+(\.\d+)?$/.test(text)) {
+    const serial = Number(text);
+    if (serial > 20000 && serial < 90000) {
+      const utcDays = Math.floor(serial - 25569);
+      const utcValue = utcDays * 86400 * 1000;
+      return new Date(utcValue).toISOString().slice(0, 10);
+    }
+  }
+  const parsed = new Date(text);
+  return Number.isNaN(parsed.getTime()) ? text.slice(0, 10) : parsed.toISOString().slice(0, 10);
+}
+
+function toDate(value: string) { const normalized = normalizeDate(value); const parsed = new Date(`${normalized}T00:00:00`); return Number.isNaN(parsed.getTime()) ? null : parsed; }
+function inRange(value: unknown, startDate: string, endDate: string) { const date = normalizeDate(value); return date >= startDate && date <= endDate; }
 
 function getPeriodRange(mode: string, dateValue: string) {
   const base = toDate(dateValue) || (toDate(today()) as Date);
@@ -65,7 +89,7 @@ function buildSaleSummaries(salesRows: string[][], paymentRows: string[][]) {
   const paymentLedger = buildPaymentLedgerTotals(paymentRows);
   const map = new Map<string, any>();
   salesRows.slice(1).forEach((row) => {
-    const saleDate = safeText(row[0]);
+    const saleDate = normalizeDate(row[0]);
     const salesRefNo = safeText(row[1]);
     const customerName = safeText(row[2]);
     const groupRef = safeText(row[14]);
@@ -119,10 +143,10 @@ function parseExpenseRows(expenseRows: string[][]) {
     const map: Record<string, string> = {};
     header.forEach((h, i) => { map[h] = safeText(row[i]); });
     return {
-      date: map["Expense Date"] || map["Date"] || map["Upload Date"] || "",
+      date: normalizeDate(map["Expense Date"] || map["Date"] || map["Upload Date"] || ""),
       category: map["Category"] || "General Expense",
       description: map["Description"] || map["Expense"] || "",
-      amount: toNumber(map["Amount"] || map["Total"] || map["Expense Amount"]),
+      amount: toNumber(map["Total Amount"] || map["Amount"] || map["Total"] || map["Expense Amount"]),
       paymentMethod: map["Payment Method"] || "",
       reference: map["Reference No."] || map["Reference"] || "",
       relatedSalesRefNo: map["Related Sales Ref No."] || "",
@@ -135,7 +159,7 @@ function parseExpenseRows(expenseRows: string[][]) {
 
 function parseSupplierRows(supplierRows: string[][]) {
   return supplierRows.slice(1).map((row) => ({
-    date: safeText(row[0]), category: "Supplier Invoice Cost", description: safeText(row[1]), amount: toNumber(row[10]),
+    date: normalizeDate(row[0]), category: "Supplier Invoice Cost", description: safeText(row[1]), amount: toNumber(row[10]),
     paymentMethod: "", reference: safeText(row[3]) || safeText(row[2]), relatedSalesRefNo: "", payee: safeText(row[1]), notes: safeText(row[11]), source: "Supplier_Invoice_Costs",
   })).filter((row) => row.date || row.description || row.amount > 0);
 }
@@ -168,8 +192,8 @@ function summarizeByCategory(entries: Array<{ category: string; amount: number }
 function summarizeDaily(periodSales: any[], periodExpenses: any[], initialCollections: any[], followUpCollections: any[]) {
   const days = new Map<string, any>();
   const ensure = (date: string) => { if (!days.has(date)) days.set(date, { date, sales: 0, productSubtotal: 0, deliveryFee: 0, installationFee: 0, otherCharge: 0, discount: 0, tax: 0, collections: 0, expenses: 0, linkedExpenses: 0, grossProfit: 0, netProfit: 0, receivables: 0 }); return days.get(date); };
-  periodSales.forEach((sale) => { const item = ensure(sale.saleDate.slice(0, 10)); item.sales += sale.totalSalePhp; item.productSubtotal += sale.productSubtotalPhp; item.deliveryFee += sale.deliveryFeePhp; item.installationFee += sale.installationFeePhp; item.otherCharge += sale.otherChargePhp; item.discount += sale.discountPhp; item.tax += sale.taxAmountPhp; item.grossProfit += sale.grossProfitPhp; item.linkedExpenses += sale.linkedExpensesPhp || 0; item.receivables += sale.balancePhp; });
-  periodExpenses.forEach((expense) => { const item = ensure(expense.date.slice(0, 10)); item.expenses += expense.amount; });
+  periodSales.forEach((sale) => { const item = ensure(sale.saleDate); item.sales += sale.totalSalePhp; item.productSubtotal += sale.productSubtotalPhp; item.deliveryFee += sale.deliveryFeePhp; item.installationFee += sale.installationFeePhp; item.otherCharge += sale.otherChargePhp; item.discount += sale.discountPhp; item.tax += sale.taxAmountPhp; item.grossProfit += sale.grossProfitPhp; item.linkedExpenses += sale.linkedExpensesPhp || 0; item.receivables += sale.balancePhp; });
+  periodExpenses.forEach((expense) => { const item = ensure(expense.date); item.expenses += expense.amount; });
   [...initialCollections, ...followUpCollections].forEach((entry) => { const item = ensure(entry.date); item.collections += entry.amount; });
   return Array.from(days.values()).map((item) => ({ ...item, netProfit: item.grossProfit - item.expenses })).sort((a, b) => a.date.localeCompare(b.date));
 }
@@ -177,7 +201,7 @@ function summarizeDaily(periodSales: any[], periodExpenses: any[], initialCollec
 function summarizeProductMovement(salesRows: string[][], startDate: string, endDate: string) {
   const map = new Map<string, any>();
   salesRows.slice(1).forEach((row) => {
-    const saleDate = safeText(row[0]);
+    const saleDate = normalizeDate(row[0]);
     if (!inRange(saleDate, startDate, endDate)) return;
     const description = safeText(row[3]);
     const specification = safeText(row[4]);
@@ -211,8 +235,8 @@ export async function GET(req: Request) {
     const linkedExpensesTotal = periodSales.reduce((sum, sale) => sum + (sale.linkedExpensesPhp || 0), 0);
     const unlinkedExpenses = periodExpenses.filter((expense) => !safeText(expense.relatedSalesRefNo));
     const periodExpenseTotal = periodExpenses.reduce((sum, expense) => sum + expense.amount, 0);
-    const initialCollections = periodSales.filter((sale) => sale.initialPaidPhp > 0).map((sale) => ({ date: sale.saleDate.slice(0, 10), method: sale.initialPaymentMethod || "Unspecified", amount: sale.initialPaidPhp }));
-    const followUpCollections = paymentRows.slice(1).filter((row) => inRange(safeText(row[0]), period.startDate, period.endDate)).map((row) => ({ date: safeText(row[0]).slice(0, 10), method: safeText(row[4]) || "Unspecified", amount: toNumber(row[5]) })).filter((row) => row.amount > 0);
+    const initialCollections = periodSales.filter((sale) => sale.initialPaidPhp > 0).map((sale) => ({ date: sale.saleDate, method: sale.initialPaymentMethod || "Unspecified", amount: sale.initialPaidPhp }));
+    const followUpCollections = paymentRows.slice(1).filter((row) => inRange(row[0], period.startDate, period.endDate)).map((row) => ({ date: normalizeDate(row[0]), method: safeText(row[4]) || "Unspecified", amount: toNumber(row[5]) })).filter((row) => row.amount > 0);
     const productSubtotal = periodSales.reduce((sum, sale) => sum + sale.productSubtotalPhp, 0);
     const deliveryFee = periodSales.reduce((sum, sale) => sum + sale.deliveryFeePhp, 0);
     const installationFee = periodSales.reduce((sum, sale) => sum + sale.installationFeePhp, 0);
