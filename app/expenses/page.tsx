@@ -46,8 +46,8 @@ function today() {
   return new Date().toISOString().slice(0, 10);
 }
 
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
-  return <label className="block space-y-1"><span className="block text-xs font-bold uppercase tracking-wide text-slate-600">{label}</span>{children}</label>;
+function Field({ label, children, className = "" }: { label: string; children: React.ReactNode; className?: string }) {
+  return <label className={`block space-y-1 ${className}`}><span className="block text-xs font-bold uppercase tracking-wide text-slate-600">{label}</span>{children}</label>;
 }
 
 export default function ExpensesPage() {
@@ -66,7 +66,8 @@ export default function ExpensesPage() {
   const [notes, setNotes] = useState("");
 
   const totalAmount = useMemo(() => Math.max((Number(baseAmount) || 0) + (Number(taxFee) || 0), 0), [baseAmount, taxFee]);
-  const inputClass = "rounded-xl border border-slate-300 px-3 py-2 text-sm outline-none focus:border-emerald-400 focus:ring-4 focus:ring-emerald-50";
+  const inputClass = "w-full rounded-xl border border-slate-300 px-3 py-2 text-sm outline-none focus:border-emerald-400 focus:ring-4 focus:ring-emerald-50";
+  const readOnlyClass = "w-full rounded-xl border border-slate-300 bg-slate-50 px-3 py-2 text-sm font-semibold text-slate-800";
 
   async function loadRows() {
     const res = await fetch("/api/expenses", { cache: "no-store" });
@@ -150,12 +151,12 @@ export default function ExpensesPage() {
           <Field label="Description"><input className={inputClass} placeholder="Expense description" value={description} onChange={(event) => setDescription(event.target.value)} required /></Field>
           <Field label="Base Expense Amount"><input className={inputClass} type="number" step="0.01" min="0" placeholder="Amount before tax / fee" value={baseAmount} onChange={(event) => setBaseAmount(Number(event.target.value))} required /></Field>
           <Field label="Tax / VAT / Fee Amount"><input className={inputClass} type="number" step="0.01" min="0" placeholder="Tax, VAT, bank fee, or service fee" value={taxFee} onChange={(event) => setTaxFee(Number(event.target.value))} /></Field>
-          <Field label="Total Expense Amount"><input className="rounded-xl border border-slate-300 bg-slate-50 px-3 py-2 text-sm font-semibold text-slate-800" value={currency(totalAmount)} readOnly /></Field>
+          <Field label="Total Expense Amount"><input className={readOnlyClass} value={currency(totalAmount)} readOnly /></Field>
           <Field label="Payment Method"><select className={inputClass} value={paymentMethod} onChange={(event) => setPaymentMethod(event.target.value)}>{paymentMethods.map((item) => <option key={item || "blank"} value={item}>{item || "Select payment method"}</option>)}</select></Field>
           <Field label="Payment / Receipt Reference"><input className={inputClass} placeholder="Receipt, bank, or wallet ref" value={referenceNo} onChange={(event) => setReferenceNo(event.target.value)} /></Field>
           <Field label="Related Sales Ref No."><input className={inputClass} placeholder="Optional sale reference" value={relatedSalesRefNo} onChange={(event) => setRelatedSalesRefNo(event.target.value)} /></Field>
           <Field label="Payee / Vendor"><input className={inputClass} placeholder="Vendor or payee" value={payee} onChange={(event) => setPayee(event.target.value)} /></Field>
-          <Field label="Notes"><input className={`${inputClass} md:col-span-2`} placeholder="Optional notes" value={notes} onChange={(event) => setNotes(event.target.value)} /></Field>
+          <Field label="Notes" className="md:col-span-2"><input className={inputClass} placeholder="Optional notes" value={notes} onChange={(event) => setNotes(event.target.value)} /></Field>
         </div>
         <div className="mt-5 flex flex-wrap items-center gap-3">
           <button type="submit" disabled={saving} className="rounded-xl bg-emerald-600 px-5 py-2 text-sm font-bold text-white disabled:opacity-60">{saving ? "Saving..." : "Save Expense"}</button>
