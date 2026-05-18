@@ -7,32 +7,26 @@ type ChatMessage = {
   content: string;
 };
 
-type ImportMode = "general" | "receipt" | "product" | "inventory" | "supplier" | "customer";
+type ImportMode = "general" | "receipt" | "salesDocument";
 
 const starterPrompts: Array<{ label: string; prompt: string; mode: ImportMode }> = [
-  { label: "Receipt upload", prompt: "receipt", mode: "receipt" },
-  { label: "Product template", prompt: "product upload", mode: "product" },
-  { label: "Inventory upload", prompt: "inventory upload", mode: "inventory" },
+  { label: "Expense receipt", prompt: "receipt", mode: "receipt" },
+  { label: "Customer invoice/receipt", prompt: "customer invoice receipt", mode: "salesDocument" },
   { label: "Find customer", prompt: "find customer", mode: "general" },
   { label: "Find sale/ref", prompt: "find sale ref", mode: "general" },
+  { label: "Find expense", prompt: "find expense", mode: "general" },
 ];
 
 function detectMode(text: string): ImportMode {
   const value = text.trim().toLowerCase();
-  if (value === "receipt" || value.startsWith("receipt ")) return "receipt";
-  if (value.includes("product upload") || value.includes("pricing upload")) return "product";
-  if (value.includes("inventory upload") || value.includes("delivery upload")) return "inventory";
-  if (value.includes("supplier upload") || value.includes("invoice upload")) return "supplier";
-  if (value.includes("customer upload")) return "customer";
+  if (value === "receipt" || value.startsWith("receipt ") || value.includes("expense receipt")) return "receipt";
+  if (value.includes("customer invoice") || value.includes("sales invoice") || value.includes("customer receipt") || value.includes("manual invoice")) return "salesDocument";
   return "general";
 }
 
 function modeLabel(mode: ImportMode) {
   if (mode === "receipt") return "Receipt → Expenses";
-  if (mode === "product") return "Product/Pricing Import";
-  if (mode === "inventory") return "Inventory/Delivery Import";
-  if (mode === "supplier") return "Supplier Cost Import";
-  if (mode === "customer") return "Customer Import";
+  if (mode === "salesDocument") return "Customer Receipt/Invoice → Sales or Payment";
   return "General AI Search";
 }
 
@@ -43,7 +37,7 @@ export default function AIChatBox() {
     {
       role: "assistant",
       content:
-        "Hi, I’m Reallights AI. For receipts, type receipt first, then upload the file. I will treat it as an expense receipt preview. You can also ask me to find customers, sales refs, products, balances, expenses, or inventory.",
+        "Hi, I’m Reallights AI. Use me for expense receipts, customer invoices/receipts, and record search. For new inventory or purchased supplies, use Incoming Deliveries → Import CSV, not the AI upload.",
     },
   ]);
   const [fileContext, setFileContext] = useState<string>("");
@@ -77,24 +71,9 @@ export default function AIChatBox() {
         throw new Error(result?.error || "AI request failed.");
       }
 
-      setMessages((current) => [
-        ...current,
-        {
-          role: "assistant",
-          content: result.reply || "I could not generate a response. Please try again.",
-        },
-      ]);
+      setMessages((current) => [...current, { role: "assistant", content: result.reply || "I could not generate a response. Please try again." }]);
     } catch (error) {
-      setMessages((current) => [
-        ...current,
-        {
-          role: "assistant",
-          content:
-            error instanceof Error
-              ? error.message
-              : "Something went wrong while contacting the AI assistant.",
-        },
-      ]);
+      setMessages((current) => [...current, { role: "assistant", content: error instanceof Error ? error.message : "Something went wrong while contacting the AI assistant." }]);
     } finally {
       setLoading(false);
     }
@@ -109,14 +88,21 @@ export default function AIChatBox() {
     const modePrefix = `IMPORT_MODE=${importMode}\nFILE_NAME=${file.name}\n`;
 
     if (!supportedTextFile) {
-      setFileContext(`${modePrefix}Uploaded file is binary or not directly text-readable in this version. If import mode is receipt, treat this upload as an expense receipt and ask for any missing fields needed for expense preview: date, payee/vendor, amount, category, payment method, reference number, and related sales ref if applicable.`);
+      const binaryGuidance = importMode === "receipt"
+        ? "Treat this upload as an expense receipt. Prepare an Expenses preview. Extract or ask for: expense date, payee/vendor, amount, category, payment method, reference number, related sales ref if applicable, and notes."
+        : importMode === "salesDocument"
+          ? "Treat this upload as a customer invoice or customer receipt. Identify whether it should become a Sale, a Payment, or both. Prepare a preview only and ask for confirmation before saving."
+          : "This AI upload is for receipts, expenses, customer invoices/receipts, and record search only. For new inventory or purchased supplies from suppliers, tell the user to use Incoming Deliveries -> Import CSV.";
+      setFileContext(`${modePrefix}Uploaded file is binary or not directly text-readable in this version. ${binaryGuidance}`);
       setMessages((current) => [
         ...current,
         {
           role: "assistant",
           content: importMode === "receipt"
-            ? `Receipt mode is active. I attached ${file.name} as an expense receipt. If I cannot read the image/PDF text directly, I will ask for the missing receipt fields before preparing an expense preview.`
-            : `I attached ${file.name}. For this version, I can read CSV, TXT, MD, and JSON directly. PDF/image/Excel parsing can be added next; I will still classify the file based on the selected mode: ${modeLabel(importMode)}.`,
+            ? `Receipt mode is active. I attached ${file.name} as an expense receipt. I will prepare an Expenses preview before anything is saved.`
+            : importMode === "salesDocument"
+              ? `Customer invoice/receipt mode is active. I attached ${file.name}. I will identify whether it belongs to Sales, Payments, or both, then prepare a preview.`
+              : `I attached ${file.name}. This AI upload is only for receipts, expenses, customer invoices/receipts, and record search. For new inventory or purchased supplies, use Incoming Deliveries → Import CSV.`,
         },
       ]);
       return;
@@ -131,7 +117,9 @@ export default function AIChatBox() {
         role: "assistant",
         content: importMode === "receipt"
           ? `I uploaded ${file.name} in Receipt mode. I will treat its contents as an expense receipt and prepare an Expenses preview before saving.`
-          : `I uploaded ${file.name} for ${modeLabel(importMode)}. Ask me to identify the template, validate the rows, or prepare an import preview.`,
+          : importMode === "salesDocument"
+            ? `I uploaded ${file.name} as a customer invoice/receipt. I will identify if it belongs to Sales, Payments, or both, then prepare a preview.`
+            : `I uploaded ${file.name}. I can review it, but inventory imports should go through Incoming Deliveries → Import CSV.`,
       },
     ]);
   }
@@ -165,7 +153,6 @@ export default function AIChatBox() {
                 <p className="text-xs text-slate-300">{modeLabel(importMode)}</p>
               </div>
             </div>
-
             <button type="button" onClick={() => setOpen(false)} className="rounded-full p-2 text-slate-300 transition hover:bg-white/10 hover:text-white" aria-label="Close AI chat">
               <svg viewBox="0 0 24 24" aria-hidden="true" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M18 6 6 18" /><path d="m6 6 12 12" /></svg>
             </button>
@@ -173,7 +160,7 @@ export default function AIChatBox() {
 
           <div className="border-b border-slate-100 bg-slate-50 px-4 py-3">
             <div className="mb-2 rounded-2xl bg-white px-3 py-2 text-xs font-semibold leading-5 text-slate-600 ring-1 ring-slate-200">
-              Receipt rule: type <span className="font-black text-emerald-700">receipt</span> first, then upload. Receipt uploads become expense previews.
+              AI upload is for <span className="font-black text-emerald-700">receipts, expenses, and customer invoices/receipts</span>. New inventory uses Incoming Deliveries → Import CSV.
             </div>
             <div className="flex flex-wrap gap-2">
               {starterPrompts.map((prompt) => (
@@ -201,7 +188,7 @@ export default function AIChatBox() {
               <button type="button" onClick={() => fileInputRef.current?.click()} className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-white text-slate-500 shadow-sm transition hover:text-emerald-600" aria-label="Upload file">
                 <svg viewBox="0 0 24 24" aria-hidden="true" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21.44 11.05 12.25 20.24a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 1 1-2.83-2.83l8.49-8.48" /></svg>
               </button>
-              <textarea value={input} onChange={(event) => setInput(event.target.value)} placeholder="Type receipt, product upload, or ask to find records..." rows={1} className="max-h-28 min-h-11 flex-1 resize-none bg-transparent px-2 py-3 text-sm text-slate-700 outline-none placeholder:text-slate-400" />
+              <textarea value={input} onChange={(event) => setInput(event.target.value)} placeholder="Type receipt, customer invoice, or ask to find records..." rows={1} className="max-h-28 min-h-11 flex-1 resize-none bg-transparent px-2 py-3 text-sm text-slate-700 outline-none placeholder:text-slate-400" />
               <button type="submit" disabled={loading || !input.trim()} className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-emerald-600 text-white shadow-sm transition hover:bg-emerald-700 disabled:cursor-not-allowed disabled:bg-slate-300" aria-label="Send message">
                 <svg viewBox="0 0 24 24" aria-hidden="true" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m22 2-7 20-4-9-9-4Z" /><path d="M22 2 11 13" /></svg>
               </button>
