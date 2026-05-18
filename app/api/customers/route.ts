@@ -3,6 +3,7 @@ import { google } from "googleapis";
 
 const SHEET_ID = process.env.GOOGLE_SHEET_ID as string;
 const CUSTOMERS_SHEET = "Customers";
+const SALES_SHEET = "Sales";
 const AUDIT_LOG_SHEET = "Audit_Log";
 
 const CUSTOMER_HEADERS = [
@@ -41,6 +42,14 @@ const auth = new google.auth.GoogleAuth({
 
 function safeText(value: unknown) {
   return String(value || "").trim();
+}
+
+function normalizeName(value: unknown) {
+  return safeText(value).toLowerCase().replace(/\s+/g, " ");
+}
+
+function toNumber(value: string | number | undefined) {
+  return Number(String(value || "").replace(/[^0-9.-]/g, "")) || 0;
 }
 
 function columnLetter(index: number) {
@@ -118,25 +127,77 @@ function parseCustomer(row: string[], index: number) {
   };
 }
 
+function parseSale(row: string[]) {
+  return {
+    saleDate: safeText(row[0]),
+    salesRefNo: safeText(row[1]),
+    customerName: safeText(row[2]),
+    description: safeText(row[3]),
+    specification: safeText(row[4]),
+    qty: toNumber(row[5]),
+    unitPricePhp: toNumber(row[6]),
+    productSubtotalPhp: toNumber(row[25] || row[7]),
+    taxAmountPhp: toNumber(row[27]),
+    grandTotalPhp: toNumber(row[28] || row[7]),
+    deliveryFeePhp: toNumber(row[29]),
+    installationFeePhp: toNumber(row[30]),
+    otherChargePhp: toNumber(row[31]),
+    discountPhp: toNumber(row[32]),
+    amountPaidPhp: toNumber(row[16]),
+    balancePhp: toNumber(row[17]),
+    paymentStatus: safeText(row[11]) || "Pending",
+    saleStatus: safeText(row[20]) || "Draft",
+    groupRef: safeText(row[14]),
+    saleId: safeText(row[22]),
+  };
+}
+
+function attachSalesHistory(customers: any[], salesRows: string[][]) {
+  const sales = salesRows.slice(1).map(parseSale).filter((sale) => sale.customerName && sale.description && sale.qty > 0);
+  return customers.map((customer) => {
+    const customerKey = normalizeName(customer.customerName);
+    const customerSales = sales.filter((sale) => normalizeName(sale.customerName) === customerKey);
+    const totalOrders = new Set(customerSales.map((sale) => sale.salesRefNo || sale.groupRef || sale.saleId).filter(Boolean)).size || customerSales.length;
+    const totalPurchasedPhp = customerSales.reduce((sum, sale) => sum + sale.grandTotalPhp, 0);
+    const totalPaidPhp = customerSales.reduce((sum, sale) => sum + sale.amountPaidPhp, 0);
+    const outstandingBalancePhp = customerSales.reduce((sum, sale) => sum + sale.balancePhp, 0);
+    const lastPurchaseDate = customerSales
+      .map((sale) => sale.saleDate)
+      .filter(Boolean)
+      .sort((a, b) => new Date(b).getTime() - new Date(a).getTime())[0] || "";
+
+    return {
+      ...customer,
+      totalOrders,
+      totalPurchasedPhp,
+      totalPaidPhp,
+      outstandingBalancePhp,
+      lastPurchaseDate,
+      purchases: customerSales.slice(0, 25),
+    };
+  });
+}
+
 export async function GET() {
   try {
     const client = await auth.getClient();
     const sheets = google.sheets({ version: "v4", auth: client as any });
     await ensureSheetExists(sheets, CUSTOMERS_SHEET, CUSTOMER_HEADERS);
 
-    const response = await sheets.spreadsheets.values.get({
-      spreadsheetId: SHEET_ID,
-      range: `${CUSTOMERS_SHEET}!A:J`,
-    }).catch(() => ({ data: { values: [] } }));
+    const [customerResponse, salesResponse] = await Promise.all([
+      sheets.spreadsheets.values.get({ spreadsheetId: SHEET_ID, range: `${CUSTOMERS_SHEET}!A:J` }).catch(() => ({ data: { values: [] } })),
+      sheets.spreadsheets.values.get({ spreadsheetId: SHEET_ID, range: `${SALES_SHEET}!A:AG` }).catch(() => ({ data: { values: [] } })),
+    ]);
 
-    const rows = (response.data.values || []) as string[][];
+    const rows = (customerResponse.data.values || []) as string[][];
+    const salesRows = (salesResponse.data.values || []) as string[][];
     const customers = rows
       .slice(1)
       .map(parseCustomer)
       .filter((row) => row.customerName || row.phone || row.email)
       .sort((a, b) => a.customerName.localeCompare(b.customerName));
 
-    return NextResponse.json(customers);
+    return NextResponse.json(attachSalesHistory(customers, salesRows));
   } catch (error: any) {
     console.error("CUSTOMERS GET ERROR:", error);
     return NextResponse.json({ error: error?.message || String(error) || "Failed to load customers" }, { status: 500 });
@@ -169,18 +230,10 @@ export async function POST(req: Request) {
     const row = [customerId, createdAt, customerName, contactPerson, phone, email, address, customerType, status, notes];
 
     if (rowNumber) {
-      const beforeResponse = await sheets.spreadsheets.values.get({
-        spreadsheetId: SHEET_ID,
-        range: `${CUSTOMERS_SHEET}!A${rowNumber}:J${rowNumber}`,
-      }).catch(() => ({ data: { values: [[]] } }));
+      const beforeResponse = await sheets.spreadsheets.values.get({ spreadsheetId: SHEET_ID, range: `${CUSTOMERS_SHEET}!A${rowNumber}:J${rowNumber}` }).catch(() => ({ data: { values: [[]] } }));
       const before = beforeResponse.data.values?.[0] || [];
 
-      await sheets.spreadsheets.values.update({
-        spreadsheetId: SHEET_ID,
-        range: `${CUSTOMERS_SHEET}!A${rowNumber}:J${rowNumber}`,
-        valueInputOption: "USER_ENTERED",
-        requestBody: { values: [row] },
-      });
+      await sheets.spreadsheets.values.update({ spreadsheetId: SHEET_ID, range: `${CUSTOMERS_SHEET}!A${rowNumber}:J${rowNumber}`, valueInputOption: "USER_ENTERED", requestBody: { values: [row] } });
 
       await appendAuditLog(sheets, {
         action: "UPDATE_CUSTOMER",
@@ -195,13 +248,7 @@ export async function POST(req: Request) {
       return NextResponse.json({ ok: true, mode: "updated", customerId });
     }
 
-    await sheets.spreadsheets.values.append({
-      spreadsheetId: SHEET_ID,
-      range: `${CUSTOMERS_SHEET}!A:J`,
-      valueInputOption: "USER_ENTERED",
-      insertDataOption: "INSERT_ROWS",
-      requestBody: { values: [row] },
-    });
+    await sheets.spreadsheets.values.append({ spreadsheetId: SHEET_ID, range: `${CUSTOMERS_SHEET}!A:J`, valueInputOption: "USER_ENTERED", insertDataOption: "INSERT_ROWS", requestBody: { values: [row] } });
 
     await appendAuditLog(sheets, {
       action: "CREATE_CUSTOMER",
