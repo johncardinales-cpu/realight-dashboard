@@ -2,6 +2,19 @@
 
 import { FormEvent, useEffect, useMemo, useState } from "react";
 
+type PurchaseRow = {
+  saleDate: string;
+  salesRefNo: string;
+  description: string;
+  specification: string;
+  qty: number;
+  grandTotalPhp: number;
+  amountPaidPhp: number;
+  balancePhp: number;
+  paymentStatus: string;
+  saleStatus: string;
+};
+
 type CustomerRow = {
   rowNumber: number;
   customerId: string;
@@ -14,6 +27,12 @@ type CustomerRow = {
   customerType: string;
   status: string;
   notes: string;
+  totalOrders?: number;
+  totalPurchasedPhp?: number;
+  totalPaidPhp?: number;
+  outstandingBalancePhp?: number;
+  lastPurchaseDate?: string;
+  purchases?: PurchaseRow[];
 };
 
 const emptyForm = {
@@ -33,12 +52,17 @@ const emptyForm = {
 const customerTypes = ["Retail", "Dealer", "Contractor", "Corporate", "Government", "Installer", "Other"];
 const statuses = ["Active", "Inactive", "Watchlist"];
 
+function money(value: number | undefined) {
+  return `₱${(Number(value) || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+}
+
 export default function CustomersPage() {
   const [rows, setRows] = useState<CustomerRow[]>([]);
   const [form, setForm] = useState(emptyForm);
   const [search, setSearch] = useState("");
   const [message, setMessage] = useState("Loading customers...");
   const [saving, setSaving] = useState(false);
+  const [expandedCustomerId, setExpandedCustomerId] = useState("");
 
   async function loadRows() {
     setMessage("Loading customers...");
@@ -60,13 +84,16 @@ export default function CustomersPage() {
   const filteredRows = useMemo(() => {
     const query = search.trim().toLowerCase();
     return rows.filter((row) => {
-      const text = `${row.customerName} ${row.contactPerson} ${row.phone} ${row.email} ${row.address} ${row.customerType} ${row.status}`.toLowerCase();
+      const purchaseText = (row.purchases || []).map((sale) => `${sale.salesRefNo} ${sale.description} ${sale.specification} ${sale.paymentStatus} ${sale.saleStatus}`).join(" ");
+      const text = `${row.customerName} ${row.contactPerson} ${row.phone} ${row.email} ${row.address} ${row.customerType} ${row.status} ${purchaseText}`.toLowerCase();
       return !query || text.includes(query);
     });
   }, [rows, search]);
 
   const activeCount = rows.filter((row) => row.status === "Active").length;
   const dealerCount = rows.filter((row) => row.customerType === "Dealer").length;
+  const totalReceivables = rows.reduce((sum, row) => sum + (Number(row.outstandingBalancePhp) || 0), 0);
+  const totalPurchased = rows.reduce((sum, row) => sum + (Number(row.totalPurchasedPhp) || 0), 0);
 
   function updateField<K extends keyof typeof emptyForm>(key: K, value: (typeof emptyForm)[K]) {
     setForm((prev) => ({ ...prev, [key]: value }));
@@ -121,21 +148,23 @@ export default function CustomersPage() {
         <p className="text-xs font-bold uppercase tracking-[0.35em] text-emerald-600">Customer Records</p>
         <h1 className="mt-2 text-3xl font-bold tracking-tight text-slate-950">Customers</h1>
         <p className="mt-2 max-w-4xl text-sm leading-6 text-slate-600">
-          Add and maintain customer records for sales, payment follow-up, outstanding balances, dealer tracking, and future customer history reports.
+          Add and maintain customer records. Purchases and orders are automatically shown under each customer by matching Sales customer name.
         </p>
         {message ? <p className="mt-4 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-semibold text-slate-700">{message}</p> : null}
       </div>
 
-      <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-5">
         <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm"><p className="text-sm font-semibold text-slate-500">Total Customers</p><p className="mt-2 text-3xl font-bold text-slate-950">{rows.length}</p></div>
         <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm"><p className="text-sm font-semibold text-slate-500">Active Customers</p><p className="mt-2 text-3xl font-bold text-slate-950">{activeCount}</p></div>
         <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm"><p className="text-sm font-semibold text-slate-500">Dealers</p><p className="mt-2 text-3xl font-bold text-slate-950">{dealerCount}</p></div>
+        <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm"><p className="text-sm font-semibold text-slate-500">Total Purchased</p><p className="mt-2 text-2xl font-bold text-slate-950">{money(totalPurchased)}</p></div>
+        <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm"><p className="text-sm font-semibold text-slate-500">Receivables</p><p className="mt-2 text-2xl font-bold text-rose-600">{money(totalReceivables)}</p></div>
       </div>
 
       <div className="grid gap-6 xl:grid-cols-[420px_minmax(0,1fr)]">
         <form onSubmit={saveCustomer} className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
           <h2 className="text-xl font-bold text-slate-950">{form.rowNumber ? "Update Customer" : "Add Customer"}</h2>
-          <p className="mt-2 text-sm leading-6 text-slate-600">Customer records help avoid repeated typing in sales and support future customer history reports.</p>
+          <p className="mt-2 text-sm leading-6 text-slate-600">Customer records support sales history, payment follow-up, warranty, repeat orders, and customer balances.</p>
 
           <div className="mt-5 space-y-4">
             <label className="block space-y-1"><span className="text-xs font-bold uppercase tracking-wide text-slate-600">Customer Name</span><input className="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm" value={form.customerName} onChange={(e) => updateField("customerName", e.target.value)} placeholder="Customer or company name" required /></label>
@@ -156,25 +185,55 @@ export default function CustomersPage() {
 
         <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
           <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-            <div><h2 className="text-xl font-bold text-slate-950">Customer List</h2><p className="mt-1 text-sm text-slate-600">Search by name, phone, email, address, or type.</p></div>
+            <div><h2 className="text-xl font-bold text-slate-950">Customer List & Order History</h2><p className="mt-1 text-sm text-slate-600">Expand a customer to view purchased items, payment status, and balance.</p></div>
             <button type="button" onClick={loadRows} className="rounded-xl border border-slate-300 px-4 py-2 text-sm font-bold text-slate-700">Refresh</button>
           </div>
-          <input className="mt-4 w-full rounded-2xl border border-slate-300 px-4 py-3 text-sm" value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search customer..." />
-          <div className="mt-4 overflow-x-auto rounded-2xl border border-slate-200">
-            <table className="min-w-full text-left text-sm">
-              <thead className="bg-slate-50 text-slate-500"><tr><th className="px-4 py-3 font-semibold">Customer</th><th className="px-4 py-3 font-semibold">Contact</th><th className="px-4 py-3 font-semibold">Type</th><th className="px-4 py-3 font-semibold">Status</th><th className="px-4 py-3 font-semibold">Notes</th><th className="px-4 py-3 font-semibold">Action</th></tr></thead>
-              <tbody>
-                {filteredRows.map((row) => <tr key={row.customerId || `${row.rowNumber}-${row.customerName}`} className="border-t border-slate-100 align-top"><td className="px-4 py-3"><p className="font-semibold text-slate-950">{row.customerName}</p><p className="mt-1 text-xs text-slate-500">{row.address || "No address"}</p></td><td className="px-4 py-3 text-slate-700"><p>{row.contactPerson || "-"}</p><p className="mt-1 text-xs text-slate-500">{row.phone || "No phone"}</p><p className="mt-1 text-xs text-slate-500">{row.email || "No email"}</p></td><td className="px-4 py-3 text-slate-700">{row.customerType}</td><td className="px-4 py-3"><span className={`rounded-full px-3 py-1 text-xs font-bold ${row.status === "Active" ? "bg-emerald-50 text-emerald-700" : row.status === "Watchlist" ? "bg-amber-50 text-amber-700" : "bg-slate-100 text-slate-600"}`}>{row.status}</span></td><td className="max-w-xs px-4 py-3 leading-6 text-slate-600">{row.notes || "-"}</td><td className="px-4 py-3"><button type="button" onClick={() => editRow(row)} className="rounded-xl border border-slate-300 px-3 py-2 text-xs font-bold text-slate-700">Edit</button></td></tr>)}
-                {!filteredRows.length ? <tr><td colSpan={6} className="px-4 py-10 text-center text-slate-500">No customers found.</td></tr> : null}
-              </tbody>
-            </table>
+          <input className="mt-4 w-full rounded-2xl border border-slate-300 px-4 py-3 text-sm" value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search customer, item, sale ref, phone, email..." />
+          <div className="mt-4 space-y-4">
+            {filteredRows.map((row) => {
+              const expanded = expandedCustomerId === row.customerId;
+              return (
+                <div key={row.customerId || `${row.rowNumber}-${row.customerName}`} className="rounded-2xl border border-slate-200 bg-white">
+                  <div className="grid gap-4 p-4 lg:grid-cols-[minmax(0,1fr)_360px]">
+                    <div>
+                      <div className="flex flex-wrap items-center gap-2"><p className="text-lg font-bold text-slate-950">{row.customerName}</p><span className={`rounded-full px-3 py-1 text-xs font-bold ${row.status === "Active" ? "bg-emerald-50 text-emerald-700" : row.status === "Watchlist" ? "bg-amber-50 text-amber-700" : "bg-slate-100 text-slate-600"}`}>{row.status}</span><span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-bold text-slate-700">{row.customerType}</span></div>
+                      <p className="mt-1 text-sm text-slate-600">{row.contactPerson || "No contact person"} · {row.phone || "No phone"} · {row.email || "No email"}</p>
+                      <p className="mt-1 text-xs text-slate-500">{row.address || "No address"}</p>
+                      <p className="mt-2 text-sm leading-6 text-slate-600">{row.notes || "No notes"}</p>
+                    </div>
+                    <div className="grid grid-cols-2 gap-2 text-sm">
+                      <div className="rounded-xl bg-slate-50 p-3"><p className="text-xs font-semibold text-slate-500">Orders</p><p className="mt-1 font-bold text-slate-950">{row.totalOrders || 0}</p></div>
+                      <div className="rounded-xl bg-slate-50 p-3"><p className="text-xs font-semibold text-slate-500">Last Purchase</p><p className="mt-1 font-bold text-slate-950">{row.lastPurchaseDate || "-"}</p></div>
+                      <div className="rounded-xl bg-slate-50 p-3"><p className="text-xs font-semibold text-slate-500">Purchased</p><p className="mt-1 font-bold text-slate-950">{money(row.totalPurchasedPhp)}</p></div>
+                      <div className="rounded-xl bg-rose-50 p-3"><p className="text-xs font-semibold text-rose-500">Balance</p><p className="mt-1 font-bold text-rose-700">{money(row.outstandingBalancePhp)}</p></div>
+                    </div>
+                  </div>
+                  <div className="flex flex-wrap gap-2 border-t border-slate-100 px-4 py-3"><button type="button" onClick={() => setExpandedCustomerId(expanded ? "" : row.customerId)} className="rounded-xl border border-slate-300 px-3 py-2 text-xs font-bold text-slate-700">{expanded ? "Hide Orders" : "View Orders"}</button><button type="button" onClick={() => editRow(row)} className="rounded-xl border border-slate-300 px-3 py-2 text-xs font-bold text-slate-700">Edit Customer</button></div>
+                  {expanded ? (
+                    <div className="border-t border-slate-100 p-4">
+                      <h3 className="mb-3 text-sm font-bold text-slate-950">Purchased Items / Orders</h3>
+                      <div className="overflow-x-auto rounded-xl border border-slate-200">
+                        <table className="min-w-full text-left text-xs">
+                          <thead className="bg-slate-50 text-slate-500"><tr><th className="px-3 py-2 font-semibold">Date</th><th className="px-3 py-2 font-semibold">Sale Ref</th><th className="px-3 py-2 font-semibold">Item</th><th className="px-3 py-2 font-semibold">Qty</th><th className="px-3 py-2 font-semibold">Grand Total</th><th className="px-3 py-2 font-semibold">Paid</th><th className="px-3 py-2 font-semibold">Balance</th><th className="px-3 py-2 font-semibold">Payment</th><th className="px-3 py-2 font-semibold">Sale</th></tr></thead>
+                          <tbody>
+                            {(row.purchases || []).map((sale, index) => <tr key={`${sale.salesRefNo}-${index}`} className="border-t border-slate-100"><td className="px-3 py-2 text-slate-700">{sale.saleDate}</td><td className="px-3 py-2 font-semibold text-slate-900">{sale.salesRefNo || "-"}</td><td className="px-3 py-2 text-slate-700">{sale.description}<p className="text-[11px] text-slate-500">{sale.specification}</p></td><td className="px-3 py-2 text-slate-700">{sale.qty}</td><td className="px-3 py-2 text-slate-700">{money(sale.grandTotalPhp)}</td><td className="px-3 py-2 text-slate-700">{money(sale.amountPaidPhp)}</td><td className="px-3 py-2 font-semibold text-rose-600">{money(sale.balancePhp)}</td><td className="px-3 py-2 text-slate-700">{sale.paymentStatus}</td><td className="px-3 py-2 text-slate-700">{sale.saleStatus}</td></tr>)}
+                            {!(row.purchases || []).length ? <tr><td colSpan={9} className="px-3 py-8 text-center text-slate-500">No purchases/orders found for this customer yet.</td></tr> : null}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  ) : null}
+                </div>
+              );
+            })}
+            {!filteredRows.length ? <div className="rounded-2xl border border-slate-200 p-10 text-center text-slate-500">No customers found.</div> : null}
           </div>
         </div>
       </div>
 
       <div className="rounded-3xl border border-amber-200 bg-amber-50 p-6 shadow-sm">
         <h2 className="text-xl font-bold text-amber-950">Next integration</h2>
-        <p className="mt-2 text-sm leading-6 text-amber-900">The next improvement is to connect this Customers list to the Sales page so customer names can auto-suggest and auto-fill contact/address details when creating a sale.</p>
+        <p className="mt-2 text-sm leading-6 text-amber-900">The next improvement is to connect this Customers list to the Sales page so customer names can auto-suggest and auto-fill contact/address details when creating a sale. For stronger matching, future Sales should save Customer ID, not only Customer Name.</p>
       </div>
     </section>
   );
