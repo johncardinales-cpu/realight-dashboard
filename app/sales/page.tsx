@@ -3,9 +3,10 @@
 import { useEffect, useMemo, useState } from "react";
 
 type PriceRow = { description: string; specification: string; costPricePhp: number; sellingPricePhp: number };
+type CustomerRow = { customerId: string; customerName: string; contactPerson?: string; phone?: string; email?: string; address?: string; status?: string; customerType?: string };
 type SaleLine = { productSearch?: string; description: string; specification: string; qty: number; unitPricePhp: number };
 type SavedSale = {
-  saleDate: string; salesRefNo: string; customerName: string; description: string; specification: string; qty: number; unitPricePhp: number;
+  saleDate: string; salesRefNo: string; customerName: string; customerId?: string; description: string; specification: string; qty: number; unitPricePhp: number;
   totalSalePhp: number; costPricePhp: number; totalCostPhp: number; grossProfitPhp: number; paymentStatus: string; salesperson: string; notes: string;
   groupRef: string; paymentMethod: string; amountPaidPhp: number; balancePhp: number; transactionRef: string; cashierName: string; saleStatus: string; confirmedAt: string;
   productSubtotalPhp?: number; taxRatePct?: number; taxAmountPhp?: number; grandTotalPhp?: number; deliveryFeePhp?: number; installationFeePhp?: number; otherChargePhp?: number; discountPhp?: number;
@@ -22,6 +23,7 @@ function money(value: number) { return `₱${(Number(value) || 0).toLocaleString
 function roundMoney(value: number) { return Math.round((Number(value) || 0) * 100) / 100; }
 function itemKey(description: string, specification: string) { return `${description.trim()}|||${specification.trim()}`; }
 function productLabel(row: PriceRow) { return `${row.description} | ${row.specification}`; }
+function customerLabel(row: CustomerRow) { return `${row.customerName}${row.phone ? ` | ${row.phone}` : ""}${row.customerType ? ` | ${row.customerType}` : ""}`; }
 
 function formatApiError(message: string): AlertState {
   const stockPrefix = "Insufficient confirmed stock.";
@@ -33,13 +35,7 @@ function formatApiError(message: string): AlertState {
 }
 
 function Field({ label, helper, children }: { label: string; helper?: string; children: React.ReactNode }) {
-  return (
-    <label className="block space-y-1">
-      <span className="block text-xs font-bold uppercase tracking-wide text-slate-600">{label}</span>
-      {children}
-      {helper ? <span className="block text-[11px] leading-4 text-slate-500">{helper}</span> : null}
-    </label>
-  );
+  return <label className="block space-y-1"><span className="block text-xs font-bold uppercase tracking-wide text-slate-600">{label}</span>{children}{helper ? <span className="block text-[11px] leading-4 text-slate-500">{helper}</span> : null}</label>;
 }
 
 function AlertBanner({ alert, onDismiss }: { alert: AlertState; onDismiss: () => void }) {
@@ -61,10 +57,13 @@ function StatusPill({ value, kind }: { value: string; kind: "sale" | "payment" }
 
 export default function SalesPage() {
   const [pricing, setPricing] = useState<PriceRow[]>([]);
+  const [customers, setCustomers] = useState<CustomerRow[]>([]);
   const [inventory, setInventory] = useState<InventoryRow[]>([]);
   const [rows, setRows] = useState<SavedSale[]>([]);
   const [saleDate, setSaleDate] = useState("");
   const [salesRefNo, setSalesRefNo] = useState("");
+  const [customerId, setCustomerId] = useState("");
+  const [customerSearch, setCustomerSearch] = useState("");
   const [customerName, setCustomerName] = useState("");
   const [paymentStatus, setPaymentStatus] = useState("Pending");
   const [paymentMethod, setPaymentMethod] = useState("");
@@ -84,13 +83,20 @@ export default function SalesPage() {
   const [saving, setSaving] = useState(false);
 
   async function loadAll() {
-    const [salesRes, pricingRes, inventoryRes] = await Promise.all([fetch("/api/sales", { cache: "no-store" }), fetch("/api/pricing-base", { cache: "no-store" }), fetch("/api/inventory", { cache: "no-store" })]);
+    const [salesRes, pricingRes, inventoryRes, customersRes] = await Promise.all([
+      fetch("/api/sales", { cache: "no-store" }),
+      fetch("/api/pricing-base", { cache: "no-store" }),
+      fetch("/api/inventory", { cache: "no-store" }),
+      fetch("/api/customers", { cache: "no-store" }),
+    ]);
     const salesData = await salesRes.json();
     const pricingData = await pricingRes.json();
     const inventoryData = await inventoryRes.json();
+    const customersData = await customersRes.json();
     setRows(Array.isArray(salesData) ? salesData : []);
     setPricing(Array.isArray(pricingData) ? pricingData : []);
     setInventory(Array.isArray(inventoryData) ? inventoryData : []);
+    setCustomers(Array.isArray(customersData) ? customersData : []);
   }
 
   useEffect(() => { loadAll().catch(console.error); }, []);
@@ -107,6 +113,7 @@ export default function SalesPage() {
   }, [inventory]);
 
   const productOptions = useMemo(() => pricing.map(productLabel), [pricing]);
+  const customerOptions = useMemo(() => customers.map(customerLabel), [customers]);
 
   function findProduct(value: string) {
     const query = value.trim().toLowerCase();
@@ -114,12 +121,28 @@ export default function SalesPage() {
     return pricing.find((row) => productLabel(row).toLowerCase() === query) || pricing.find((row) => productLabel(row).toLowerCase().includes(query)) || null;
   }
 
-  function selectProduct(index: number, value: string) {
-    const match = findProduct(value);
+  function findCustomer(value: string) {
+    const query = value.trim().toLowerCase();
+    if (!query) return null;
+    return customers.find((row) => customerLabel(row).toLowerCase() === query) || customers.find((row) => customerLabel(row).toLowerCase().includes(query) || row.customerName.toLowerCase().includes(query)) || null;
+  }
+
+  function selectCustomer(value: string) {
+    setCustomerSearch(value);
+    const match = findCustomer(value);
     if (!match) {
-      updateItem(index, { productSearch: value });
+      setCustomerId("");
+      setCustomerName(value);
       return;
     }
+    setCustomerId(match.customerId || "");
+    setCustomerName(match.customerName || value);
+    setCustomerSearch(customerLabel(match));
+  }
+
+  function selectProduct(index: number, value: string) {
+    const match = findProduct(value);
+    if (!match) { updateItem(index, { productSearch: value }); return; }
     updateItem(index, { productSearch: productLabel(match), description: match.description, specification: match.specification, unitPricePhp: match.sellingPricePhp || 0 });
   }
 
@@ -168,7 +191,7 @@ export default function SalesPage() {
   const balancePhp = Math.max(totals.grandTotal - (Number(amountPaidPhp) || 0), 0);
 
   function resetForm() {
-    setSaleDate(""); setSalesRefNo(""); setCustomerName(""); setPaymentStatus("Pending"); setPaymentMethod(""); setAmountPaidPhp(0); setDeliveryFeePhp(0); setInstallationFeePhp(0); setOtherChargePhp(0); setDiscountPhp(0); setTaxRatePct(0); setTransactionRef(""); setCashierName(""); setSaleStatus("Draft"); setSalesperson(""); setNotes(""); setItems([{ ...emptyLine }]);
+    setSaleDate(""); setSalesRefNo(""); setCustomerId(""); setCustomerSearch(""); setCustomerName(""); setPaymentStatus("Pending"); setPaymentMethod(""); setAmountPaidPhp(0); setDeliveryFeePhp(0); setInstallationFeePhp(0); setOtherChargePhp(0); setDiscountPhp(0); setTaxRatePct(0); setTransactionRef(""); setCashierName(""); setSaleStatus("Draft"); setSalesperson(""); setNotes(""); setItems([{ ...emptyLine }]);
   }
 
   async function onSubmit(e: React.FormEvent) {
@@ -180,7 +203,7 @@ export default function SalesPage() {
       if (!cleanItems.length) { setAlert({ type: "warning", title: "No valid product line", message: "Add at least one product with description, specification, and quantity before saving." }); return; }
       const clientStockIssue = validateClientStock(cleanItems);
       if (clientStockIssue) { setAlert({ type: "warning", title: "Sale cannot be confirmed", message: "The requested quantity is higher than the stock currently available for confirmed sales.", detail: clientStockIssue }); return; }
-      const res = await fetch("/api/sales", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ saleDate, salesRefNo, customerName, paymentStatus, paymentMethod, amountPaidPhp, deliveryFeePhp, installationFeePhp, otherChargePhp, discountPhp, taxRatePct, taxAmountPhp: totals.tax, transactionRef, cashierName, saleStatus, salesperson, notes, items: cleanItems }) });
+      const res = await fetch("/api/sales", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ saleDate, salesRefNo, customerId, customerName, paymentStatus, paymentMethod, amountPaidPhp, deliveryFeePhp, installationFeePhp, otherChargePhp, discountPhp, taxRatePct, taxAmountPhp: totals.tax, transactionRef, cashierName, saleStatus, salesperson, notes, items: cleanItems }) });
       const data = await res.json();
       if (!res.ok) throw new Error(data?.error || "Failed to save sale");
       setAlert({ type: "success", title: "Sale saved successfully", message: `The sale was recorded with ${data?.lines || 0} line(s). Grand total: ${money(data?.grandTotalPhp || totals.grandTotal)}.` });
@@ -199,20 +222,18 @@ export default function SalesPage() {
   return (
     <section className="space-y-6">
       {alert ? <WarningModal alert={alert} onClose={() => setAlert(null)} /> : null}
-      <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
-        <h1 className="text-3xl font-semibold text-slate-900">Sales</h1>
-        <p className="mt-1 text-sm text-slate-600">Create customer sales, add delivery/installation charges, calculate tax, record payment, and save. Inventory deducts only after confirmation.</p>
-        {alert ? <AlertBanner alert={alert} onDismiss={() => setAlert(null)} /> : null}
-      </div>
+      <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm"><h1 className="text-3xl font-semibold text-slate-900">Sales</h1><p className="mt-1 text-sm text-slate-600">Create customer sales, add delivery/installation charges, calculate tax, record payment, and save. Inventory deducts only after confirmation.</p>{alert ? <AlertBanner alert={alert} onDismiss={() => setAlert(null)} /> : null}</div>
 
       <form onSubmit={onSubmit} className="space-y-5 rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
         <div className="rounded-2xl border border-slate-200 p-4">
           <h2 className="mb-1 text-lg font-bold text-slate-900">Sale Information</h2>
-          <p className="mb-4 text-xs text-slate-500">Use this section to identify the customer and sales reference. This reference can later connect related expenses.</p>
+          <p className="mb-4 text-xs text-slate-500">Select an existing customer to save Customer ID. New names can still be typed manually.</p>
+          <datalist id="customer-options">{customerOptions.map((option) => <option key={option} value={option} />)}</datalist>
           <div className="grid gap-4 md:grid-cols-3">
             <Field label="Sale Date" helper="Date the customer order is created."><input className={inputClass} type="date" value={saleDate} onChange={(e) => setSaleDate(e.target.value)} /></Field>
             <Field label="Sales Ref No." helper="Unique sale reference, used for payments and linked expenses."><input className={inputClass} placeholder="Example: SALE-001" value={salesRefNo} onChange={(e) => setSalesRefNo(e.target.value)} /></Field>
-            <Field label="Customer Name" helper="Customer or company name."><input className={inputClass} placeholder="Customer Name" value={customerName} onChange={(e) => setCustomerName(e.target.value)} /></Field>
+            <Field label="Customer Search" helper={customerId ? `Linked Customer ID: ${customerId}` : "Start typing to select saved customer."}><input list="customer-options" className={inputClass} placeholder="Search or type customer" value={customerSearch || customerName} onChange={(e) => selectCustomer(e.target.value)} onBlur={(e) => selectCustomer(e.target.value)} /></Field>
+            <Field label="Customer Name" helper="Auto-filled from customer record, still editable."><input className={inputClass} placeholder="Customer Name" value={customerName} onChange={(e) => { setCustomerName(e.target.value); setCustomerId(""); setCustomerSearch(e.target.value); }} /></Field>
             <Field label="Payment Status" helper="Pending, Partial, or Paid."><select className={inputClass} value={paymentStatus} onChange={(e) => setPaymentStatus(e.target.value)}>{paymentStatusOptions.map((status) => <option key={status} value={status}>{status}</option>)}</select></Field>
             <Field label="Salesperson" helper="Person who handled the sale."><input className={inputClass} placeholder="Salesperson" value={salesperson} onChange={(e) => setSalesperson(e.target.value)} /></Field>
             <Field label="Notes" helper="Optional internal remarks."><input className={inputClass} placeholder="Notes" value={notes} onChange={(e) => setNotes(e.target.value)} /></Field>
@@ -226,16 +247,7 @@ export default function SalesPage() {
           <div className="space-y-3">
             {items.map((item, index) => {
               const availableStock = stockForLine(item);
-              return (
-                <div key={index} className="grid gap-3 rounded-2xl border border-slate-200 bg-white p-4 md:grid-cols-6">
-                  <Field label="Product Search" helper="Type letters to search product."><input list="product-options" className={inputClass} placeholder="Start typing product..." value={item.productSearch || ""} onChange={(e) => selectProduct(index, e.target.value)} onBlur={(e) => selectProduct(index, e.target.value)} /></Field>
-                  <Field label="Description" helper="Auto-filled product description."><input className={inputClass} placeholder="Description" value={item.description} onChange={(e) => updateItem(index, { description: e.target.value })} /></Field>
-                  <Field label="Specification" helper="Auto-filled model/specification."><input className={inputClass} placeholder="Specification" value={item.specification} onChange={(e) => updateItem(index, { specification: e.target.value })} /></Field>
-                  <Field label="Qty" helper="Quantity to sell."><input className={inputClass} type="number" min="1" placeholder="Qty" value={item.qty} onChange={(e) => updateItem(index, { qty: Number(e.target.value) })} /></Field>
-                  <Field label="Unit Price" helper="Auto-filled but editable."><input className={inputClass} type="number" step="0.01" placeholder="Unit Price" value={item.unitPricePhp} onChange={(e) => updateItem(index, { unitPricePhp: Number(e.target.value) })} /></Field>
-                  <div className="flex items-end gap-2"><div className="pb-1 text-sm text-slate-700"><p>Line: <span className="font-semibold">{money((Number(item.qty) || 0) * (Number(item.unitPricePhp) || 0))}</span></p><p className="mt-1 text-xs font-semibold text-slate-500">{availableStock === null ? "Stock: select valid item" : `Available: ${availableStock}`}</p></div><button type="button" onClick={() => removeLine(index)} className="rounded-lg border border-slate-300 px-3 py-2 text-xs font-medium text-slate-700">Remove</button></div>
-                </div>
-              );
+              return <div key={index} className="grid gap-3 rounded-2xl border border-slate-200 bg-white p-4 md:grid-cols-6"><Field label="Product Search" helper="Type letters to search product."><input list="product-options" className={inputClass} placeholder="Start typing product..." value={item.productSearch || ""} onChange={(e) => selectProduct(index, e.target.value)} onBlur={(e) => selectProduct(index, e.target.value)} /></Field><Field label="Description" helper="Auto-filled product description."><input className={inputClass} placeholder="Description" value={item.description} onChange={(e) => updateItem(index, { description: e.target.value })} /></Field><Field label="Specification" helper="Auto-filled model/specification."><input className={inputClass} placeholder="Specification" value={item.specification} onChange={(e) => updateItem(index, { specification: e.target.value })} /></Field><Field label="Qty" helper="Quantity to sell."><input className={inputClass} type="number" min="1" placeholder="Qty" value={item.qty} onChange={(e) => updateItem(index, { qty: Number(e.target.value) })} /></Field><Field label="Unit Price" helper="Auto-filled but editable."><input className={inputClass} type="number" step="0.01" placeholder="Unit Price" value={item.unitPricePhp} onChange={(e) => updateItem(index, { unitPricePhp: Number(e.target.value) })} /></Field><div className="flex items-end gap-2"><div className="pb-1 text-sm text-slate-700"><p>Line: <span className="font-semibold">{money((Number(item.qty) || 0) * (Number(item.unitPricePhp) || 0))}</span></p><p className="mt-1 text-xs font-semibold text-slate-500">{availableStock === null ? "Stock: select valid item" : `Available: ${availableStock}`}</p></div><button type="button" onClick={() => removeLine(index)} className="rounded-lg border border-slate-300 px-3 py-2 text-xs font-medium text-slate-700">Remove</button></div></div>;
             })}
           </div>
           <button type="button" onClick={addLine} className="mt-3 rounded-xl border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700">Add Product Line</button>
@@ -258,34 +270,13 @@ export default function SalesPage() {
             <Field label="Tax Amount" helper="Calculated automatically."><input className={readOnlyClass} value={money(totals.tax)} readOnly /></Field>
             <Field label="Balance" helper="Grand total minus paid."><input className={readOnlyClass} value={money(balancePhp)} readOnly /></Field>
           </div>
-          <div className="mt-4 grid gap-2 text-sm text-slate-700 md:grid-cols-6">
-            <p>Product Subtotal: <span className="font-semibold">{money(totals.subtotal)}</span></p>
-            <p>Charges: <span className="font-semibold">{money(totals.charges)}</span></p>
-            <p>Discount: <span className="font-semibold">{money(discountPhp)}</span></p>
-            <p>Taxable Base: <span className="font-semibold">{money(totals.taxableBase)}</span></p>
-            <p>Tax: <span className="font-semibold">{money(totals.tax)}</span></p>
-            <p>Grand Total: <span className="font-semibold">{money(totals.grandTotal)}</span></p>
-          </div>
+          <div className="mt-4 grid gap-2 text-sm text-slate-700 md:grid-cols-6"><p>Product Subtotal: <span className="font-semibold">{money(totals.subtotal)}</span></p><p>Charges: <span className="font-semibold">{money(totals.charges)}</span></p><p>Discount: <span className="font-semibold">{money(discountPhp)}</span></p><p>Taxable Base: <span className="font-semibold">{money(totals.taxableBase)}</span></p><p>Tax: <span className="font-semibold">{money(totals.tax)}</span></p><p>Grand Total: <span className="font-semibold">{money(totals.grandTotal)}</span></p></div>
         </div>
 
-        <div className="flex gap-3">
-          <button type="submit" disabled={saving} className="rounded-xl bg-emerald-600 px-5 py-3 text-sm font-bold text-white disabled:opacity-60">{saving ? "Saving..." : "Save Sale"}</button>
-          <button type="button" onClick={resetForm} className="rounded-xl border border-slate-300 px-5 py-3 text-sm font-bold text-slate-700">Clear</button>
-        </div>
+        <div className="flex gap-3"><button type="submit" disabled={saving} className="rounded-xl bg-emerald-600 px-5 py-3 text-sm font-bold text-white disabled:opacity-60">{saving ? "Saving..." : "Save Sale"}</button><button type="button" onClick={resetForm} className="rounded-xl border border-slate-300 px-5 py-3 text-sm font-bold text-slate-700">Clear</button></div>
       </form>
 
-      <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
-        <h2 className="mb-4 text-xl font-semibold text-slate-900">Sales Ledger</h2>
-        <div className="overflow-x-auto rounded-2xl border border-slate-200">
-          <table className="w-full text-sm">
-            <thead className="bg-slate-100 text-slate-700"><tr>{["Date","Sales Ref","Customer","Description","Specification","Qty","Unit Price","Subtotal","Delivery","Install","Other","Discount","Tax","Grand Total","Cost Price","Gross Profit","Payment Status","Method","Paid","Balance","Sale Status"].map((head) => <th key={head} className="whitespace-nowrap px-4 py-3 text-left font-medium">{head}</th>)}</tr></thead>
-            <tbody>
-              {rows.map((row, index) => <tr key={`${row.groupRef}-${index}`} className="border-t border-slate-100"><td className="px-4 py-3 text-slate-700">{row.saleDate}</td><td className="px-4 py-3 text-slate-700">{row.salesRefNo}</td><td className="px-4 py-3 text-slate-700">{row.customerName}</td><td className="px-4 py-3 text-slate-700">{row.description}</td><td className="px-4 py-3 text-slate-700">{row.specification}</td><td className="px-4 py-3 text-slate-700">{row.qty}</td><td className="px-4 py-3 text-slate-700">{money(row.unitPricePhp)}</td><td className="px-4 py-3 text-slate-700">{money(row.productSubtotalPhp ?? row.totalSalePhp)}</td><td className="px-4 py-3 text-slate-700">{money(row.deliveryFeePhp ?? 0)}</td><td className="px-4 py-3 text-slate-700">{money(row.installationFeePhp ?? 0)}</td><td className="px-4 py-3 text-slate-700">{money(row.otherChargePhp ?? 0)}</td><td className="px-4 py-3 text-slate-700">{money(row.discountPhp ?? 0)}</td><td className="px-4 py-3 text-slate-700">{money(row.taxAmountPhp ?? 0)}</td><td className="px-4 py-3 text-slate-700">{money(row.grandTotalPhp ?? row.totalSalePhp)}</td><td className="px-4 py-3 text-slate-700">{money(row.costPricePhp)}</td><td className="px-4 py-3 text-slate-700">{money(row.grossProfitPhp)}</td><td className="px-4 py-3 text-slate-700"><StatusPill value={row.paymentStatus} kind="payment" /></td><td className="px-4 py-3 text-slate-700">{row.paymentMethod}</td><td className="px-4 py-3 text-slate-700">{money(row.amountPaidPhp)}</td><td className="px-4 py-3 text-slate-700">{money(row.balancePhp)}</td><td className="px-4 py-3 text-slate-700"><StatusPill value={row.saleStatus} kind="sale" /></td></tr>)}
-              {!rows.length && <tr><td colSpan={21} className="px-4 py-8 text-center text-slate-500">No sales recorded yet.</td></tr>}
-            </tbody>
-          </table>
-        </div>
-      </div>
+      <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm"><h2 className="mb-4 text-xl font-semibold text-slate-900">Sales Ledger</h2><div className="overflow-x-auto rounded-2xl border border-slate-200"><table className="w-full text-sm"><thead className="bg-slate-100 text-slate-700"><tr>{["Date","Sales Ref","Customer","Description","Specification","Qty","Unit Price","Subtotal","Delivery","Install","Other","Discount","Tax","Grand Total","Cost Price","Gross Profit","Payment Status","Method","Paid","Balance","Sale Status"].map((head) => <th key={head} className="whitespace-nowrap px-4 py-3 text-left font-medium">{head}</th>)}</tr></thead><tbody>{rows.map((row, index) => <tr key={`${row.groupRef}-${index}`} className="border-t border-slate-100"><td className="px-4 py-3 text-slate-700">{row.saleDate}</td><td className="px-4 py-3 text-slate-700">{row.salesRefNo}</td><td className="px-4 py-3 text-slate-700">{row.customerName}</td><td className="px-4 py-3 text-slate-700">{row.description}</td><td className="px-4 py-3 text-slate-700">{row.specification}</td><td className="px-4 py-3 text-slate-700">{row.qty}</td><td className="px-4 py-3 text-slate-700">{money(row.unitPricePhp)}</td><td className="px-4 py-3 text-slate-700">{money(row.productSubtotalPhp ?? row.totalSalePhp)}</td><td className="px-4 py-3 text-slate-700">{money(row.deliveryFeePhp ?? 0)}</td><td className="px-4 py-3 text-slate-700">{money(row.installationFeePhp ?? 0)}</td><td className="px-4 py-3 text-slate-700">{money(row.otherChargePhp ?? 0)}</td><td className="px-4 py-3 text-slate-700">{money(row.discountPhp ?? 0)}</td><td className="px-4 py-3 text-slate-700">{money(row.taxAmountPhp ?? 0)}</td><td className="px-4 py-3 text-slate-700">{money(row.grandTotalPhp ?? row.totalSalePhp)}</td><td className="px-4 py-3 text-slate-700">{money(row.costPricePhp)}</td><td className="px-4 py-3 text-slate-700">{money(row.grossProfitPhp)}</td><td className="px-4 py-3 text-slate-700"><StatusPill value={row.paymentStatus} kind="payment" /></td><td className="px-4 py-3 text-slate-700">{row.paymentMethod}</td><td className="px-4 py-3 text-slate-700">{money(row.amountPaidPhp)}</td><td className="px-4 py-3 text-slate-700">{money(row.balancePhp)}</td><td className="px-4 py-3 text-slate-700"><StatusPill value={row.saleStatus} kind="sale" /></td></tr>)}{!rows.length && <tr><td colSpan={21} className="px-4 py-8 text-center text-slate-500">No sales recorded yet.</td></tr>}</tbody></table></div></div>
     </section>
   );
 }
