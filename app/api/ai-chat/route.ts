@@ -110,9 +110,6 @@ export async function POST(request: Request) {
       body: JSON.stringify({
         model: process.env.OPENAI_MODEL || "gpt-4.1-mini",
         input,
-        reasoning: {
-          effort: (process.env.OPENAI_REASONING_EFFORT || "medium") as "none" | "low" | "medium" | "high" | "xhigh",
-        },
         text: {
           verbosity: "medium",
         },
