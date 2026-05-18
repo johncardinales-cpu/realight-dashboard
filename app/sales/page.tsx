@@ -130,11 +130,7 @@ export default function SalesPage() {
   function selectCustomer(value: string) {
     setCustomerSearch(value);
     const match = findCustomer(value);
-    if (!match) {
-      setCustomerId("");
-      setCustomerName(value);
-      return;
-    }
+    if (!match) { setCustomerId(""); setCustomerName(value); return; }
     setCustomerId(match.customerId || "");
     setCustomerName(match.customerName || value);
     setCustomerSearch(customerLabel(match));
@@ -146,10 +142,7 @@ export default function SalesPage() {
     updateItem(index, { productSearch: productLabel(match), description: match.description, specification: match.specification, unitPricePhp: match.sellingPricePhp || 0 });
   }
 
-  function stockForLine(item: SaleLine) {
-    if (!item.description || !item.specification) return null;
-    return stockByKey.get(itemKey(item.description, item.specification)) ?? null;
-  }
+  function stockForLine(item: SaleLine) { if (!item.description || !item.specification) return null; return stockByKey.get(itemKey(item.description, item.specification)) ?? null; }
 
   function validateClientStock(cleanItems: SaleLine[]) {
     if (saleStatus.toLowerCase() !== "confirmed") return "";
@@ -195,9 +188,7 @@ export default function SalesPage() {
   }
 
   async function onSubmit(e: React.FormEvent) {
-    e.preventDefault();
-    setSaving(true);
-    setAlert(null);
+    e.preventDefault(); setSaving(true); setAlert(null);
     try {
       const cleanItems = items.filter((item) => item.description && item.specification && Number(item.qty) > 0);
       if (!cleanItems.length) { setAlert({ type: "warning", title: "No valid product line", message: "Add at least one product with description, specification, and quantity before saving." }); return; }
@@ -207,13 +198,9 @@ export default function SalesPage() {
       const data = await res.json();
       if (!res.ok) throw new Error(data?.error || "Failed to save sale");
       setAlert({ type: "success", title: "Sale saved successfully", message: `The sale was recorded with ${data?.lines || 0} line(s). Grand total: ${money(data?.grandTotalPhp || totals.grandTotal)}.` });
-      resetForm();
-      await loadAll();
-    } catch (error: any) {
-      setAlert(formatApiError(error?.message || "Failed to save sale."));
-    } finally {
-      setSaving(false);
-    }
+      resetForm(); await loadAll();
+    } catch (error: any) { setAlert(formatApiError(error?.message || "Failed to save sale.")); }
+    finally { setSaving(false); }
   }
 
   const inputClass = "w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm outline-none focus:border-emerald-400 focus:ring-4 focus:ring-emerald-50";
@@ -222,32 +209,32 @@ export default function SalesPage() {
   return (
     <section className="space-y-6">
       {alert ? <WarningModal alert={alert} onClose={() => setAlert(null)} /> : null}
-      <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm"><h1 className="text-3xl font-semibold text-slate-900">Sales</h1><p className="mt-1 text-sm text-slate-600">Create customer sales, add delivery/installation charges, calculate tax, record payment, and save. Inventory deducts only after confirmation.</p>{alert ? <AlertBanner alert={alert} onDismiss={() => setAlert(null)} /> : null}</div>
+      <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm"><h1 className="text-3xl font-semibold text-slate-900">Sales</h1><p className="mt-1 text-sm text-slate-600">Create customer sales, add charges, record payment, and save. Inventory deducts only after confirmation.</p>{alert ? <AlertBanner alert={alert} onDismiss={() => setAlert(null)} /> : null}</div>
 
       <form onSubmit={onSubmit} className="space-y-5 rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
         <div className="rounded-2xl border border-slate-200 p-4">
           <h2 className="mb-1 text-lg font-bold text-slate-900">Sale Information</h2>
-          <p className="mb-4 text-xs text-slate-500">Select an existing customer to save Customer ID. New names can still be typed manually.</p>
+          <p className="mb-4 text-xs text-slate-500">Select an existing customer or type a new customer name.</p>
           <datalist id="customer-options">{customerOptions.map((option) => <option key={option} value={option} />)}</datalist>
           <div className="grid gap-4 md:grid-cols-3">
-            <Field label="Sale Date" helper="Date the customer order is created."><input className={inputClass} type="date" value={saleDate} onChange={(e) => setSaleDate(e.target.value)} /></Field>
-            <Field label="Sales Ref No." helper="Unique sale reference, used for payments and linked expenses."><input className={inputClass} placeholder="Example: SALE-001" value={salesRefNo} onChange={(e) => setSalesRefNo(e.target.value)} /></Field>
-            <Field label="Customer Search" helper={customerId ? `Linked Customer ID: ${customerId}` : "Start typing to select saved customer."}><input list="customer-options" className={inputClass} placeholder="Search or type customer" value={customerSearch || customerName} onChange={(e) => selectCustomer(e.target.value)} onBlur={(e) => selectCustomer(e.target.value)} /></Field>
-            <Field label="Customer Name" helper="Auto-filled from customer record, still editable."><input className={inputClass} placeholder="Customer Name" value={customerName} onChange={(e) => { setCustomerName(e.target.value); setCustomerId(""); setCustomerSearch(e.target.value); }} /></Field>
-            <Field label="Payment Status" helper="Pending, Partial, or Paid."><select className={inputClass} value={paymentStatus} onChange={(e) => setPaymentStatus(e.target.value)}>{paymentStatusOptions.map((status) => <option key={status} value={status}>{status}</option>)}</select></Field>
-            <Field label="Salesperson" helper="Person who handled the sale."><input className={inputClass} placeholder="Salesperson" value={salesperson} onChange={(e) => setSalesperson(e.target.value)} /></Field>
-            <Field label="Notes" helper="Optional internal remarks."><input className={inputClass} placeholder="Notes" value={notes} onChange={(e) => setNotes(e.target.value)} /></Field>
+            <Field label="Sale Date"><input className={inputClass} type="date" value={saleDate} onChange={(e) => setSaleDate(e.target.value)} /></Field>
+            <Field label="Sales Ref No."><input className={inputClass} placeholder="Example: SALE-001" value={salesRefNo} onChange={(e) => setSalesRefNo(e.target.value)} /></Field>
+            <Field label="Customer Search" helper={customerId ? `Linked ID: ${customerId}` : undefined}><input list="customer-options" className={inputClass} placeholder="Search customer" value={customerSearch || customerName} onChange={(e) => selectCustomer(e.target.value)} onBlur={(e) => selectCustomer(e.target.value)} /></Field>
+            <Field label="Customer Name"><input className={inputClass} placeholder="Customer Name" value={customerName} onChange={(e) => { setCustomerName(e.target.value); setCustomerId(""); setCustomerSearch(e.target.value); }} /></Field>
+            <Field label="Payment Status" helper="Pending, Partial, or Paid"><select className={inputClass} value={paymentStatus} onChange={(e) => setPaymentStatus(e.target.value)}>{paymentStatusOptions.map((status) => <option key={status} value={status}>{status}</option>)}</select></Field>
+            <Field label="Salesperson"><input className={inputClass} placeholder="Enter salesperson" value={salesperson} onChange={(e) => setSalesperson(e.target.value)} /></Field>
+            <Field label="Notes"><input className={inputClass} placeholder="Optional notes" value={notes} onChange={(e) => setNotes(e.target.value)} /></Field>
           </div>
         </div>
 
         <div className="rounded-2xl border border-blue-100 bg-blue-50/30 p-4">
           <h2 className="mb-1 text-lg font-bold text-slate-900">Product Lines</h2>
-          <p className="mb-4 text-xs text-slate-500">Start typing a product name/model in Product Search. Select a matching item to auto-fill Description, Specification, and Unit Price from Pricing Base.</p>
+          <p className="mb-4 text-xs text-slate-500">Add products and quantity. Prices auto-fill from Pricing.</p>
           <datalist id="product-options">{productOptions.map((option) => <option key={option} value={option} />)}</datalist>
           <div className="space-y-3">
             {items.map((item, index) => {
               const availableStock = stockForLine(item);
-              return <div key={index} className="grid gap-3 rounded-2xl border border-slate-200 bg-white p-4 md:grid-cols-6"><Field label="Product Search" helper="Type letters to search product."><input list="product-options" className={inputClass} placeholder="Start typing product..." value={item.productSearch || ""} onChange={(e) => selectProduct(index, e.target.value)} onBlur={(e) => selectProduct(index, e.target.value)} /></Field><Field label="Description" helper="Auto-filled product description."><input className={inputClass} placeholder="Description" value={item.description} onChange={(e) => updateItem(index, { description: e.target.value })} /></Field><Field label="Specification" helper="Auto-filled model/specification."><input className={inputClass} placeholder="Specification" value={item.specification} onChange={(e) => updateItem(index, { specification: e.target.value })} /></Field><Field label="Qty" helper="Quantity to sell."><input className={inputClass} type="number" min="1" placeholder="Qty" value={item.qty} onChange={(e) => updateItem(index, { qty: Number(e.target.value) })} /></Field><Field label="Unit Price" helper="Auto-filled but editable."><input className={inputClass} type="number" step="0.01" placeholder="Unit Price" value={item.unitPricePhp} onChange={(e) => updateItem(index, { unitPricePhp: Number(e.target.value) })} /></Field><div className="flex items-end gap-2"><div className="pb-1 text-sm text-slate-700"><p>Line: <span className="font-semibold">{money((Number(item.qty) || 0) * (Number(item.unitPricePhp) || 0))}</span></p><p className="mt-1 text-xs font-semibold text-slate-500">{availableStock === null ? "Stock: select valid item" : `Available: ${availableStock}`}</p></div><button type="button" onClick={() => removeLine(index)} className="rounded-lg border border-slate-300 px-3 py-2 text-xs font-medium text-slate-700">Remove</button></div></div>;
+              return <div key={index} className="grid gap-3 rounded-2xl border border-slate-200 bg-white p-4 md:grid-cols-6"><Field label="Product Search"><input list="product-options" className={inputClass} placeholder="Search product" value={item.productSearch || ""} onChange={(e) => selectProduct(index, e.target.value)} onBlur={(e) => selectProduct(index, e.target.value)} /></Field><Field label="Description"><input className={inputClass} placeholder="Description" value={item.description} onChange={(e) => updateItem(index, { description: e.target.value })} /></Field><Field label="Specification"><input className={inputClass} placeholder="Specification" value={item.specification} onChange={(e) => updateItem(index, { specification: e.target.value })} /></Field><Field label="Qty"><input className={inputClass} type="number" min="1" placeholder="Qty" value={item.qty} onChange={(e) => updateItem(index, { qty: Number(e.target.value) })} /></Field><Field label="Unit Price"><input className={inputClass} type="number" step="0.01" placeholder="Unit Price" value={item.unitPricePhp} onChange={(e) => updateItem(index, { unitPricePhp: Number(e.target.value) })} /></Field><div className="flex items-end gap-2"><div className="pb-1 text-sm text-slate-700"><p>Line: <span className="font-semibold">{money((Number(item.qty) || 0) * (Number(item.unitPricePhp) || 0))}</span></p><p className="mt-1 text-xs font-semibold text-slate-500">{availableStock === null ? "Select item" : `Available: ${availableStock}`}</p></div><button type="button" onClick={() => removeLine(index)} className="rounded-lg border border-slate-300 px-3 py-2 text-xs font-medium text-slate-700">Remove</button></div></div>;
             })}
           </div>
           <button type="button" onClick={addLine} className="mt-3 rounded-xl border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700">Add Product Line</button>
@@ -255,22 +242,22 @@ export default function SalesPage() {
 
         <div className="rounded-2xl border border-emerald-100 bg-emerald-50/40 p-4">
           <h2 className="mb-1 text-lg font-bold text-slate-900">Cashiering and Charges</h2>
-          <p className="mb-4 text-xs text-slate-600">Customer-billed delivery and installation belong here. Company-paid delivery or installer cost belongs in Expenses and can be linked to this Sales Ref No.</p>
+          <p className="mb-4 text-xs text-slate-600">Enter payment, charges, discount, and tax.</p>
           <div className="grid gap-4 md:grid-cols-4">
-            <Field label="Payment Method" helper="How customer pays."><select className={inputClass} value={paymentMethod} onChange={(e) => setPaymentMethod(e.target.value)}>{paymentMethodOptions.map((method) => <option key={method || "blank"} value={method}>{method || "Payment Method"}</option>)}</select></Field>
-            <Field label="Delivery Fee" helper="Charge billed to customer for delivery."><input className={inputClass} type="number" step="0.01" min="0" value={deliveryFeePhp} onChange={(e) => setDeliveryFeePhp(Number(e.target.value))} /></Field>
-            <Field label="Installation Fee" helper="Charge billed to customer for installation."><input className={inputClass} type="number" step="0.01" min="0" value={installationFeePhp} onChange={(e) => setInstallationFeePhp(Number(e.target.value))} /></Field>
-            <Field label="Other Charge" helper="Other customer-billed add-on."><input className={inputClass} type="number" step="0.01" min="0" value={otherChargePhp} onChange={(e) => setOtherChargePhp(Number(e.target.value))} /></Field>
-            <Field label="Discount" helper="Discount reduces customer bill."><input className={inputClass} type="number" step="0.01" min="0" value={discountPhp} onChange={(e) => setDiscountPhp(Number(e.target.value))} /></Field>
-            <Field label="Tax Rate (%)" helper="Tax applied after charges and discount."><input className={inputClass} type="number" step="0.01" min="0" value={taxRatePct} onChange={(e) => setTaxRatePct(Number(e.target.value))} /></Field>
-            <Field label="Amount Paid" helper="Payment collected now."><input className={inputClass} type="number" step="0.01" min="0" value={amountPaidPhp} onChange={(e) => setAmountPaidPhp(Number(e.target.value))} /></Field>
-            <Field label="Sale Status" helper="Confirmed deducts inventory."><select className={inputClass} value={saleStatus} onChange={(e) => setSaleStatus(e.target.value)}>{saleStatusOptions.map((status) => <option key={status} value={status}>{status}</option>)}</select></Field>
-            <Field label="Transaction Ref" helper="Receipt, bank, or wallet ref."><input className={inputClass} placeholder="Transaction / Receipt Ref" value={transactionRef} onChange={(e) => setTransactionRef(e.target.value)} /></Field>
-            <Field label="Cashier Name" helper="Staff who received payment."><input className={inputClass} placeholder="Cashier Name" value={cashierName} onChange={(e) => setCashierName(e.target.value)} /></Field>
-            <Field label="Tax Amount" helper="Calculated automatically."><input className={readOnlyClass} value={money(totals.tax)} readOnly /></Field>
-            <Field label="Balance" helper="Grand total minus paid."><input className={readOnlyClass} value={money(balancePhp)} readOnly /></Field>
+            <Field label="Payment Method"><select className={inputClass} value={paymentMethod} onChange={(e) => setPaymentMethod(e.target.value)}>{paymentMethodOptions.map((method) => <option key={method || "blank"} value={method}>{method || "Payment Method"}</option>)}</select></Field>
+            <Field label="Delivery Fee"><input className={inputClass} type="number" step="0.01" min="0" value={deliveryFeePhp} onChange={(e) => setDeliveryFeePhp(Number(e.target.value))} /></Field>
+            <Field label="Installation Fee"><input className={inputClass} type="number" step="0.01" min="0" value={installationFeePhp} onChange={(e) => setInstallationFeePhp(Number(e.target.value))} /></Field>
+            <Field label="Other Charge"><input className={inputClass} type="number" step="0.01" min="0" value={otherChargePhp} onChange={(e) => setOtherChargePhp(Number(e.target.value))} /></Field>
+            <Field label="Discount"><input className={inputClass} type="number" step="0.01" min="0" value={discountPhp} onChange={(e) => setDiscountPhp(Number(e.target.value))} /></Field>
+            <Field label="Tax Rate (%)"><input className={inputClass} type="number" step="0.01" min="0" value={taxRatePct} onChange={(e) => setTaxRatePct(Number(e.target.value))} /></Field>
+            <Field label="Amount Paid"><input className={inputClass} type="number" step="0.01" min="0" value={amountPaidPhp} onChange={(e) => setAmountPaidPhp(Number(e.target.value))} /></Field>
+            <Field label="Sale Status" helper="Confirmed deducts inventory"><select className={inputClass} value={saleStatus} onChange={(e) => setSaleStatus(e.target.value)}>{saleStatusOptions.map((status) => <option key={status} value={status}>{status}</option>)}</select></Field>
+            <Field label="Transaction Ref"><input className={inputClass} placeholder="Receipt / bank / wallet ref" value={transactionRef} onChange={(e) => setTransactionRef(e.target.value)} /></Field>
+            <Field label="Cashier Name"><input className={inputClass} placeholder="Enter cashier name" value={cashierName} onChange={(e) => setCashierName(e.target.value)} /></Field>
+            <Field label="Tax Amount"><input className={readOnlyClass} value={money(totals.tax)} readOnly /></Field>
+            <Field label="Balance"><input className={readOnlyClass} value={money(balancePhp)} readOnly /></Field>
           </div>
-          <div className="mt-4 grid gap-2 text-sm text-slate-700 md:grid-cols-6"><p>Product Subtotal: <span className="font-semibold">{money(totals.subtotal)}</span></p><p>Charges: <span className="font-semibold">{money(totals.charges)}</span></p><p>Discount: <span className="font-semibold">{money(discountPhp)}</span></p><p>Taxable Base: <span className="font-semibold">{money(totals.taxableBase)}</span></p><p>Tax: <span className="font-semibold">{money(totals.tax)}</span></p><p>Grand Total: <span className="font-semibold">{money(totals.grandTotal)}</span></p></div>
+          <div className="mt-4 grid gap-2 rounded-2xl border border-emerald-100 bg-white/75 p-3 text-sm text-slate-700 md:grid-cols-6"><p>Product Subtotal: <span className="font-semibold">{money(totals.subtotal)}</span></p><p>Charges: <span className="font-semibold">{money(totals.charges)}</span></p><p>Discount: <span className="font-semibold">{money(discountPhp)}</span></p><p>Taxable Base: <span className="font-semibold">{money(totals.taxableBase)}</span></p><p>Tax: <span className="font-semibold">{money(totals.tax)}</span></p><p>Grand Total: <span className="font-semibold">{money(totals.grandTotal)}</span></p></div>
         </div>
 
         <div className="flex gap-3"><button type="submit" disabled={saving} className="rounded-xl bg-emerald-600 px-5 py-3 text-sm font-bold text-white disabled:opacity-60">{saving ? "Saving..." : "Save Sale"}</button><button type="button" onClick={resetForm} className="rounded-xl border border-slate-300 px-5 py-3 text-sm font-bold text-slate-700">Clear</button></div>
