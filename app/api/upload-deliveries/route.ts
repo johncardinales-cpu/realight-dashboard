@@ -45,6 +45,14 @@ function itemId(description: string, specification: string) {
   return `ITEM-${source.slice(0, 32)}`;
 }
 
+function normalizeImportedStatus(value: unknown) {
+  const status = required(value).toLowerCase();
+  if (status === "damaged" || status === "defective" || status === "damage") return "Damaged";
+  if (status === "cancelled" || status === "canceled") return "Cancelled";
+  if (status === "received") return "Received";
+  return "Incoming";
+}
+
 function inferCategory(description: string) {
   const text = description.toLowerCase();
   if (text.includes("panel")) return "Solar Panel";
@@ -60,12 +68,7 @@ function inferCategory(description: string) {
 
 async function ensurePricingSheet(sheets: any) {
   const headers = ["Item ID", "Description", "Specification", "Category", "Unit", "Cost Price USD", "FX Rate", "Cost Price PHP", "Selling Price PHP", "Dealer Price PHP", "Minimum Price PHP", "Gross Margin", "Status", "Notes"];
-  await sheets.spreadsheets.values.update({
-    spreadsheetId: SHEET_ID,
-    range: `${PRICING_SHEET}!A1:N1`,
-    valueInputOption: "USER_ENTERED",
-    requestBody: { values: [headers] },
-  }).catch(async () => {
+  await sheets.spreadsheets.values.update({ spreadsheetId: SHEET_ID, range: `${PRICING_SHEET}!A1:N1`, valueInputOption: "USER_ENTERED", requestBody: { values: [headers] } }).catch(async () => {
     await sheets.spreadsheets.batchUpdate({ spreadsheetId: SHEET_ID, requestBody: { requests: [{ addSheet: { properties: { title: PRICING_SHEET } } }] } });
     await sheets.spreadsheets.values.update({ spreadsheetId: SHEET_ID, range: `${PRICING_SHEET}!A1:N1`, valueInputOption: "USER_ENTERED", requestBody: { values: [headers] } });
   });
@@ -110,53 +113,15 @@ async function upsertPricingFromDeliveries(sheets: any, rows: DeliveryRow[]) {
       const dealerPricePhp = toNumber(old[9]);
       const minimumPricePhp = toNumber(old[10]);
       const grossMargin = sellingPricePhp ? ((sellingPricePhp - costPhp) / sellingPricePhp) : 0;
-      updateRequests.push({
-        range: `${PRICING_SHEET}!A${found.rowNumber}:N${found.rowNumber}`,
-        values: [[
-          old[0] || itemId(description, specification),
-          description,
-          specification,
-          old[3] || inferCategory(description),
-          old[4] || "pc",
-          costUsd || toNumber(old[5]),
-          toNumber(old[6]) || DEFAULT_FX_RATE,
-          costUsd ? costPhp : toNumber(old[7]),
-          sellingPricePhp,
-          dealerPricePhp,
-          minimumPricePhp,
-          grossMargin,
-          old[12] || "Active",
-          `${old[13] || ""}${old[13] ? " | " : ""}${notes}`,
-        ]],
-      });
+      updateRequests.push({ range: `${PRICING_SHEET}!A${found.rowNumber}:N${found.rowNumber}`, values: [[old[0] || itemId(description, specification), description, specification, old[3] || inferCategory(description), old[4] || "pc", costUsd || toNumber(old[5]), toNumber(old[6]) || DEFAULT_FX_RATE, costUsd ? costPhp : toNumber(old[7]), sellingPricePhp, dealerPricePhp, minimumPricePhp, grossMargin, old[12] || "Active", `${old[13] || ""}${old[13] ? " | " : ""}${notes}`]] });
       return;
     }
 
-    appendValues.push([
-      itemId(description, specification),
-      description,
-      specification,
-      inferCategory(description),
-      "pc",
-      costUsd,
-      DEFAULT_FX_RATE,
-      costPhp,
-      "",
-      "",
-      "",
-      "",
-      "Active",
-      notes,
-    ]);
+    appendValues.push([itemId(description, specification), description, specification, inferCategory(description), "pc", costUsd, DEFAULT_FX_RATE, costPhp, "", "", "", "", "Active", notes]);
   });
 
-  if (updateRequests.length) {
-    await sheets.spreadsheets.values.batchUpdate({ spreadsheetId: SHEET_ID, requestBody: { valueInputOption: "USER_ENTERED", data: updateRequests } });
-  }
-
-  if (appendValues.length) {
-    await sheets.spreadsheets.values.append({ spreadsheetId: SHEET_ID, range: `${PRICING_SHEET}!A:N`, valueInputOption: "USER_ENTERED", insertDataOption: "INSERT_ROWS", requestBody: { values: appendValues } });
-  }
+  if (updateRequests.length) await sheets.spreadsheets.values.batchUpdate({ spreadsheetId: SHEET_ID, requestBody: { valueInputOption: "USER_ENTERED", data: updateRequests } });
+  if (appendValues.length) await sheets.spreadsheets.values.append({ spreadsheetId: SHEET_ID, range: `${PRICING_SHEET}!A:N`, valueInputOption: "USER_ENTERED", insertDataOption: "INSERT_ROWS", requestBody: { values: appendValues } });
 
   return { created: appendValues.length, updated: updateRequests.length };
 }
@@ -165,10 +130,7 @@ export async function POST(req: Request) {
   try {
     const body = await req.json();
     const rows = Array.isArray(body?.rows) ? body.rows as DeliveryRow[] : [];
-
-    if (!rows.length) {
-      return NextResponse.json({ error: "No rows provided" }, { status: 400 });
-    }
+    if (!rows.length) return NextResponse.json({ error: "No rows provided" }, { status: 400 });
 
     const client = await auth.getClient();
     const sheets = google.sheets({ version: "v4", auth: client as any });
@@ -181,26 +143,15 @@ export async function POST(req: Request) {
       const description = required(row.description);
       const specification = required(row.specification);
       const qtyAdded = required(row.qtyAdded);
-      const status = required(row.status || "Incoming");
-
-      if (!uploadDate || !supplier || !description || !specification || !qtyAdded || !status) {
-        throw new Error("One or more rows are missing required fields");
-      }
-
+      const status = normalizeImportedStatus(row.status);
+      if (!uploadDate || !supplier || !description || !specification || !qtyAdded || !status) throw new Error("One or more rows are missing required fields");
       return [uploadDate, arrivalDate, supplier, batchReference, description, specification, qtyAdded, row.unitPriceUsd ?? "", row.invoiceValid ?? "", status, row.notes ?? "", new Date().toISOString()];
     });
 
-    await sheets.spreadsheets.values.append({
-      spreadsheetId: SHEET_ID,
-      range: `${DELIVERIES_SHEET}!A:L`,
-      valueInputOption: "USER_ENTERED",
-      insertDataOption: "INSERT_ROWS",
-      requestBody: { values },
-    });
-
+    await sheets.spreadsheets.values.append({ spreadsheetId: SHEET_ID, range: `${DELIVERIES_SHEET}!A:L`, valueInputOption: "USER_ENTERED", insertDataOption: "INSERT_ROWS", requestBody: { values } });
     const pricing = await upsertPricingFromDeliveries(sheets, rows);
 
-    return NextResponse.json({ ok: true, imported: values.length, pricing });
+    return NextResponse.json({ ok: true, imported: values.length, pricing, deliveryStatus: "Imported rows default to Incoming unless explicitly marked Received, Damaged, or Cancelled." });
   } catch (error: any) {
     console.error("UPLOAD DELIVERIES API ERROR:", error);
     return NextResponse.json({ error: error?.message || String(error) || "Failed to upload deliveries" }, { status: 500 });
