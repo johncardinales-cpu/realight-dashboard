@@ -84,96 +84,43 @@ export default function SalesPage() {
 
   async function loadAll() {
     const [salesRes, pricingRes, inventoryRes, customersRes] = await Promise.all([
-      fetch("/api/sales", { cache: "no-store" }),
-      fetch("/api/pricing-base", { cache: "no-store" }),
-      fetch("/api/inventory", { cache: "no-store" }),
-      fetch("/api/customers", { cache: "no-store" }),
+      fetch("/api/sales", { cache: "no-store" }), fetch("/api/pricing-base", { cache: "no-store" }), fetch("/api/inventory", { cache: "no-store" }), fetch("/api/customers", { cache: "no-store" }),
     ]);
-    const salesData = await salesRes.json();
-    const pricingData = await pricingRes.json();
-    const inventoryData = await inventoryRes.json();
-    const customersData = await customersRes.json();
-    setRows(Array.isArray(salesData) ? salesData : []);
-    setPricing(Array.isArray(pricingData) ? pricingData : []);
-    setInventory(Array.isArray(inventoryData) ? inventoryData : []);
-    setCustomers(Array.isArray(customersData) ? customersData : []);
+    const salesData = await salesRes.json(); const pricingData = await pricingRes.json(); const inventoryData = await inventoryRes.json(); const customersData = await customersRes.json();
+    setRows(Array.isArray(salesData) ? salesData : []); setPricing(Array.isArray(pricingData) ? pricingData : []); setInventory(Array.isArray(inventoryData) ? inventoryData : []); setCustomers(Array.isArray(customersData) ? customersData : []);
   }
 
   useEffect(() => { loadAll().catch(console.error); }, []);
 
   const stockByKey = useMemo(() => {
     const map = new Map<string, number>();
-    inventory.forEach((row) => {
-      const description = String(row["Description"] || "").trim();
-      const specification = String(row["Specification"] || "").trim();
-      if (!description && !specification) return;
-      map.set(itemKey(description, specification), Number(row["Sellable Qty"] || 0) || 0);
-    });
+    inventory.forEach((row) => { const description = String(row["Description"] || "").trim(); const specification = String(row["Specification"] || "").trim(); if (!description && !specification) return; map.set(itemKey(description, specification), Number(row["Sellable Qty"] || 0) || 0); });
     return map;
   }, [inventory]);
 
   const productOptions = useMemo(() => pricing.map(productLabel), [pricing]);
   const customerOptions = useMemo(() => customers.map(customerLabel), [customers]);
 
-  function findProduct(value: string) {
-    const query = value.trim().toLowerCase();
-    if (!query) return null;
-    return pricing.find((row) => productLabel(row).toLowerCase() === query) || pricing.find((row) => productLabel(row).toLowerCase().includes(query)) || null;
-  }
-
-  function findCustomer(value: string) {
-    const query = value.trim().toLowerCase();
-    if (!query) return null;
-    return customers.find((row) => customerLabel(row).toLowerCase() === query) || customers.find((row) => customerLabel(row).toLowerCase().includes(query) || row.customerName.toLowerCase().includes(query)) || null;
-  }
-
-  function selectCustomer(value: string) {
-    setCustomerSearch(value);
-    const match = findCustomer(value);
-    if (!match) { setCustomerId(""); setCustomerName(value); return; }
-    setCustomerId(match.customerId || "");
-    setCustomerName(match.customerName || value);
-    setCustomerSearch(customerLabel(match));
-  }
-
-  function selectProduct(index: number, value: string) {
-    const match = findProduct(value);
-    if (!match) { updateItem(index, { productSearch: value }); return; }
-    updateItem(index, { productSearch: productLabel(match), description: match.description, specification: match.specification, unitPricePhp: match.sellingPricePhp || 0 });
-  }
-
+  function findProduct(value: string) { const query = value.trim().toLowerCase(); if (!query) return null; return pricing.find((row) => productLabel(row).toLowerCase() === query) || pricing.find((row) => productLabel(row).toLowerCase().includes(query)) || null; }
+  function findCustomer(value: string) { const query = value.trim().toLowerCase(); if (!query) return null; return customers.find((row) => customerLabel(row).toLowerCase() === query) || customers.find((row) => customerLabel(row).toLowerCase().includes(query) || row.customerName.toLowerCase().includes(query)) || null; }
+  function selectCustomer(value: string) { setCustomerSearch(value); const match = findCustomer(value); if (!match) { setCustomerId(""); setCustomerName(value); return; } setCustomerId(match.customerId || ""); setCustomerName(match.customerName || value); setCustomerSearch(customerLabel(match)); }
+  function selectProduct(index: number, value: string) { const match = findProduct(value); if (!match) { updateItem(index, { productSearch: value }); return; } updateItem(index, { productSearch: productLabel(match), description: match.description, specification: match.specification, unitPricePhp: match.sellingPricePhp || 0 }); }
   function stockForLine(item: SaleLine) { if (!item.description || !item.specification) return null; return stockByKey.get(itemKey(item.description, item.specification)) ?? null; }
-
-  function validateClientStock(cleanItems: SaleLine[]) {
-    if (saleStatus.toLowerCase() !== "confirmed") return "";
-    const requested = new Map<string, { description: string; specification: string; qty: number }>();
-    cleanItems.forEach((item) => {
-      const key = itemKey(item.description, item.specification);
-      const current = requested.get(key);
-      requested.set(key, { description: item.description, specification: item.specification, qty: (current?.qty || 0) + (Number(item.qty) || 0) });
-    });
-    const issues: string[] = [];
-    requested.forEach(({ description, specification, qty }, key) => {
-      const available = stockByKey.get(key);
-      if (available !== undefined && qty > available) issues.push(`${description} / ${specification}: requested ${qty}, available ${available}`);
-    });
-    return issues.join("; ");
-  }
-
   function updateItem(index: number, patch: Partial<SaleLine>) { setItems((prev) => prev.map((item, i) => i === index ? { ...item, ...patch } : item)); }
   function addLine() { setItems((prev) => [...prev, { ...emptyLine }]); }
   function removeLine(index: number) { setItems((prev) => prev.length === 1 ? prev : prev.filter((_, i) => i !== index)); }
 
+  function validateClientStock(cleanItems: SaleLine[]) {
+    if (saleStatus.toLowerCase() !== "confirmed") return "";
+    const requested = new Map<string, { description: string; specification: string; qty: number }>();
+    cleanItems.forEach((item) => { const key = itemKey(item.description, item.specification); const current = requested.get(key); requested.set(key, { description: item.description, specification: item.specification, qty: (current?.qty || 0) + (Number(item.qty) || 0) }); });
+    const issues: string[] = [];
+    requested.forEach(({ description, specification, qty }, key) => { const available = stockByKey.get(key); if (available !== undefined && qty > available) issues.push(`${description} / ${specification}: requested ${qty}, available ${available}`); });
+    return issues.join("; ");
+  }
+
   const totals = useMemo(() => {
-    const base = items.reduce((acc, item) => {
-      const matched = pricing.find((row) => row.description === item.description && row.specification === item.specification);
-      const qty = Number(item.qty) || 0;
-      const unit = Number(item.unitPricePhp) || 0;
-      const cost = Number(matched?.costPricePhp) || 0;
-      acc.subtotal += qty * unit;
-      acc.cost += qty * cost;
-      return acc;
-    }, { subtotal: 0, cost: 0 });
+    const base = items.reduce((acc, item) => { const matched = pricing.find((row) => row.description === item.description && row.specification === item.specification); const qty = Number(item.qty) || 0; const unit = Number(item.unitPricePhp) || 0; const cost = Number(matched?.costPricePhp) || 0; acc.subtotal += qty * unit; acc.cost += qty * cost; return acc; }, { subtotal: 0, cost: 0 });
     const charges = roundMoney((Number(deliveryFeePhp) || 0) + (Number(installationFeePhp) || 0) + (Number(otherChargePhp) || 0));
     const taxableBase = roundMoney(Math.max(base.subtotal + charges - (Number(discountPhp) || 0), 0));
     const tax = roundMoney(taxableBase * ((Number(taxRatePct) || 0) / 100));
@@ -181,7 +128,10 @@ export default function SalesPage() {
     return { subtotal: roundMoney(base.subtotal), charges, taxableBase, tax, grandTotal, cost: roundMoney(base.cost), profit: roundMoney(grandTotal - base.cost) };
   }, [items, pricing, taxRatePct, deliveryFeePhp, installationFeePhp, otherChargePhp, discountPhp]);
 
-  const balancePhp = Math.max(totals.grandTotal - (Number(amountPaidPhp) || 0), 0);
+  const tenderedAmountPhp = Number(amountPaidPhp) || 0;
+  const collectedAmountPhp = Math.min(tenderedAmountPhp, totals.grandTotal);
+  const balancePhp = Math.max(totals.grandTotal - tenderedAmountPhp, 0);
+  const changeDuePhp = Math.max(tenderedAmountPhp - totals.grandTotal, 0);
 
   function resetForm() {
     setSaleDate(""); setSalesRefNo(""); setCustomerId(""); setCustomerSearch(""); setCustomerName(""); setPaymentStatus("Pending"); setPaymentMethod(""); setAmountPaidPhp(0); setDeliveryFeePhp(0); setInstallationFeePhp(0); setOtherChargePhp(0); setDiscountPhp(0); setTaxRatePct(0); setTransactionRef(""); setCashierName(""); setSaleStatus("Draft"); setSalesperson(""); setNotes(""); setItems([{ ...emptyLine }]);
@@ -197,7 +147,7 @@ export default function SalesPage() {
       const res = await fetch("/api/sales", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ saleDate, salesRefNo, customerId, customerName, paymentStatus, paymentMethod, amountPaidPhp, deliveryFeePhp, installationFeePhp, otherChargePhp, discountPhp, taxRatePct, taxAmountPhp: totals.tax, transactionRef, cashierName, saleStatus, salesperson, notes, items: cleanItems }) });
       const data = await res.json();
       if (!res.ok) throw new Error(data?.error || "Failed to save sale");
-      setAlert({ type: "success", title: "Sale saved successfully", message: `The sale was recorded with ${data?.lines || 0} line(s). Grand total: ${money(data?.grandTotalPhp || totals.grandTotal)}.` });
+      setAlert({ type: "success", title: "Sale saved successfully", message: `Grand total: ${money(data?.grandTotalPhp || totals.grandTotal)}. Collected: ${money(data?.amountPaidPhp ?? collectedAmountPhp)}. Change due: ${money(data?.changeDuePhp ?? changeDuePhp)}.` });
       resetForm(); await loadAll();
     } catch (error: any) { setAlert(formatApiError(error?.message || "Failed to save sale.")); }
     finally { setSaving(false); }
@@ -205,6 +155,7 @@ export default function SalesPage() {
 
   const inputClass = "w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm outline-none focus:border-emerald-400 focus:ring-4 focus:ring-emerald-50";
   const readOnlyClass = "w-full rounded-xl border border-slate-300 bg-slate-50 px-3 py-2 text-sm font-semibold text-slate-800";
+  const changeClass = changeDuePhp > 0 ? "w-full rounded-xl border border-emerald-300 bg-emerald-50 px-3 py-2 text-sm font-bold text-emerald-800" : readOnlyClass;
 
   return (
     <section className="space-y-6">
@@ -213,8 +164,7 @@ export default function SalesPage() {
 
       <form onSubmit={onSubmit} className="space-y-5 rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
         <div className="rounded-2xl border border-slate-200 p-4">
-          <h2 className="mb-1 text-lg font-bold text-slate-900">Sale Information</h2>
-          <p className="mb-4 text-xs text-slate-500">Select an existing customer or type a new customer name.</p>
+          <h2 className="mb-1 text-lg font-bold text-slate-900">Sale Information</h2><p className="mb-4 text-xs text-slate-500">Select an existing customer or type a new customer name.</p>
           <datalist id="customer-options">{customerOptions.map((option) => <option key={option} value={option} />)}</datalist>
           <div className="grid gap-4 md:grid-cols-3">
             <Field label="Sale Date"><input className={inputClass} type="date" value={saleDate} onChange={(e) => setSaleDate(e.target.value)} /></Field>
@@ -228,21 +178,14 @@ export default function SalesPage() {
         </div>
 
         <div className="rounded-2xl border border-blue-100 bg-blue-50/30 p-4">
-          <h2 className="mb-1 text-lg font-bold text-slate-900">Product Lines</h2>
-          <p className="mb-4 text-xs text-slate-500">Add products and quantity. Prices auto-fill from Pricing.</p>
+          <h2 className="mb-1 text-lg font-bold text-slate-900">Product Lines</h2><p className="mb-4 text-xs text-slate-500">Add products and quantity. Prices auto-fill from Pricing.</p>
           <datalist id="product-options">{productOptions.map((option) => <option key={option} value={option} />)}</datalist>
-          <div className="space-y-3">
-            {items.map((item, index) => {
-              const availableStock = stockForLine(item);
-              return <div key={index} className="grid gap-3 rounded-2xl border border-slate-200 bg-white p-4 md:grid-cols-6"><Field label="Product Search"><input list="product-options" className={inputClass} placeholder="Search product" value={item.productSearch || ""} onChange={(e) => selectProduct(index, e.target.value)} onBlur={(e) => selectProduct(index, e.target.value)} /></Field><Field label="Description"><input className={inputClass} placeholder="Description" value={item.description} onChange={(e) => updateItem(index, { description: e.target.value })} /></Field><Field label="Specification"><input className={inputClass} placeholder="Specification" value={item.specification} onChange={(e) => updateItem(index, { specification: e.target.value })} /></Field><Field label="Qty"><input className={inputClass} type="number" min="1" placeholder="Qty" value={item.qty} onChange={(e) => updateItem(index, { qty: Number(e.target.value) })} /></Field><Field label="Unit Price"><input className={inputClass} type="number" step="0.01" placeholder="Unit Price" value={item.unitPricePhp} onChange={(e) => updateItem(index, { unitPricePhp: Number(e.target.value) })} /></Field><div className="flex items-end gap-2"><div className="pb-1 text-sm text-slate-700"><p>Line: <span className="font-semibold">{money((Number(item.qty) || 0) * (Number(item.unitPricePhp) || 0))}</span></p><p className="mt-1 text-xs font-semibold text-slate-500">{availableStock === null ? "Select item" : `Available: ${availableStock}`}</p></div><button type="button" onClick={() => removeLine(index)} className="rounded-lg border border-slate-300 px-3 py-2 text-xs font-medium text-slate-700">Remove</button></div></div>;
-            })}
-          </div>
+          <div className="space-y-3">{items.map((item, index) => { const availableStock = stockForLine(item); return <div key={index} className="grid gap-3 rounded-2xl border border-slate-200 bg-white p-4 md:grid-cols-6"><Field label="Product Search"><input list="product-options" className={inputClass} placeholder="Search product" value={item.productSearch || ""} onChange={(e) => selectProduct(index, e.target.value)} onBlur={(e) => selectProduct(index, e.target.value)} /></Field><Field label="Description"><input className={inputClass} placeholder="Description" value={item.description} onChange={(e) => updateItem(index, { description: e.target.value })} /></Field><Field label="Specification"><input className={inputClass} placeholder="Specification" value={item.specification} onChange={(e) => updateItem(index, { specification: e.target.value })} /></Field><Field label="Qty"><input className={inputClass} type="number" min="1" placeholder="Qty" value={item.qty} onChange={(e) => updateItem(index, { qty: Number(e.target.value) })} /></Field><Field label="Unit Price"><input className={inputClass} type="number" step="0.01" placeholder="Unit Price" value={item.unitPricePhp} onChange={(e) => updateItem(index, { unitPricePhp: Number(e.target.value) })} /></Field><div className="flex items-end gap-2"><div className="pb-1 text-sm text-slate-700"><p>Line: <span className="font-semibold">{money((Number(item.qty) || 0) * (Number(item.unitPricePhp) || 0))}</span></p><p className="mt-1 text-xs font-semibold text-slate-500">{availableStock === null ? "Select item" : `Available: ${availableStock}`}</p></div><button type="button" onClick={() => removeLine(index)} className="rounded-lg border border-slate-300 px-3 py-2 text-xs font-medium text-slate-700">Remove</button></div></div>; })}</div>
           <button type="button" onClick={addLine} className="mt-3 rounded-xl border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700">Add Product Line</button>
         </div>
 
         <div className="rounded-2xl border border-emerald-100 bg-emerald-50/40 p-4">
-          <h2 className="mb-1 text-lg font-bold text-slate-900">Cashiering and Charges</h2>
-          <p className="mb-4 text-xs text-slate-600">Enter payment, charges, discount, and tax.</p>
+          <h2 className="mb-1 text-lg font-bold text-slate-900">Cashiering and Charges</h2><p className="mb-4 text-xs text-slate-600">Enter payment, charges, discount, and tax. Change due is shown when tendered amount is higher than grand total.</p>
           <div className="grid gap-4 md:grid-cols-4">
             <Field label="Payment Method"><select className={inputClass} value={paymentMethod} onChange={(e) => setPaymentMethod(e.target.value)}>{paymentMethodOptions.map((method) => <option key={method || "blank"} value={method}>{method || "Payment Method"}</option>)}</select></Field>
             <Field label="Delivery Fee"><input className={inputClass} type="number" step="0.01" min="0" value={deliveryFeePhp} onChange={(e) => setDeliveryFeePhp(Number(e.target.value))} /></Field>
@@ -250,14 +193,15 @@ export default function SalesPage() {
             <Field label="Other Charge"><input className={inputClass} type="number" step="0.01" min="0" value={otherChargePhp} onChange={(e) => setOtherChargePhp(Number(e.target.value))} /></Field>
             <Field label="Discount"><input className={inputClass} type="number" step="0.01" min="0" value={discountPhp} onChange={(e) => setDiscountPhp(Number(e.target.value))} /></Field>
             <Field label="Tax Rate (%)"><input className={inputClass} type="number" step="0.01" min="0" value={taxRatePct} onChange={(e) => setTaxRatePct(Number(e.target.value))} /></Field>
-            <Field label="Amount Paid"><input className={inputClass} type="number" step="0.01" min="0" value={amountPaidPhp} onChange={(e) => setAmountPaidPhp(Number(e.target.value))} /></Field>
+            <Field label="Amount Tendered / Paid" helper={changeDuePhp > 0 ? `Collected amount: ${money(collectedAmountPhp)}` : undefined}><input className={inputClass} type="number" step="0.01" min="0" value={amountPaidPhp} onChange={(e) => setAmountPaidPhp(Number(e.target.value))} /></Field>
             <Field label="Sale Status" helper="Confirmed deducts inventory"><select className={inputClass} value={saleStatus} onChange={(e) => setSaleStatus(e.target.value)}>{saleStatusOptions.map((status) => <option key={status} value={status}>{status}</option>)}</select></Field>
             <Field label="Transaction Ref"><input className={inputClass} placeholder="Receipt / bank / wallet ref" value={transactionRef} onChange={(e) => setTransactionRef(e.target.value)} /></Field>
             <Field label="Cashier Name"><input className={inputClass} placeholder="Enter cashier name" value={cashierName} onChange={(e) => setCashierName(e.target.value)} /></Field>
             <Field label="Tax Amount"><input className={readOnlyClass} value={money(totals.tax)} readOnly /></Field>
             <Field label="Balance"><input className={readOnlyClass} value={money(balancePhp)} readOnly /></Field>
+            <Field label="Change Due"><input className={changeClass} value={money(changeDuePhp)} readOnly /></Field>
           </div>
-          <div className="mt-4 grid gap-2 rounded-2xl border border-emerald-100 bg-white/75 p-3 text-sm text-slate-700 md:grid-cols-6"><p>Product Subtotal: <span className="font-semibold">{money(totals.subtotal)}</span></p><p>Charges: <span className="font-semibold">{money(totals.charges)}</span></p><p>Discount: <span className="font-semibold">{money(discountPhp)}</span></p><p>Taxable Base: <span className="font-semibold">{money(totals.taxableBase)}</span></p><p>Tax: <span className="font-semibold">{money(totals.tax)}</span></p><p>Grand Total: <span className="font-semibold">{money(totals.grandTotal)}</span></p></div>
+          <div className="mt-4 grid gap-2 rounded-2xl border border-emerald-100 bg-white/75 p-3 text-sm text-slate-700 md:grid-cols-7"><p>Product Subtotal: <span className="font-semibold">{money(totals.subtotal)}</span></p><p>Charges: <span className="font-semibold">{money(totals.charges)}</span></p><p>Discount: <span className="font-semibold">{money(discountPhp)}</span></p><p>Taxable Base: <span className="font-semibold">{money(totals.taxableBase)}</span></p><p>Tax: <span className="font-semibold">{money(totals.tax)}</span></p><p>Grand Total: <span className="font-semibold">{money(totals.grandTotal)}</span></p><p>Change: <span className="font-semibold">{money(changeDuePhp)}</span></p></div>
         </div>
 
         <div className="flex gap-3"><button type="submit" disabled={saving} className="rounded-xl bg-emerald-600 px-5 py-3 text-sm font-bold text-white disabled:opacity-60">{saving ? "Saving..." : "Save Sale"}</button><button type="button" onClick={resetForm} className="rounded-xl border border-slate-300 px-5 py-3 text-sm font-bold text-slate-700">Clear</button></div>
