@@ -4,13 +4,13 @@ import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 
 type MovementRow = Record<string, string>;
-type DeliveryStatus = "Incoming" | "In Transit" | "Ready" | "Received" | "Available";
+type DeliveryStatus = "Incoming" | "Available" | "Damaged" | "Cancelled";
 
 type ApiError = {
   error?: unknown;
 };
 
-const statusOptions: DeliveryStatus[] = ["Incoming", "In Transit", "Received", "Available"];
+const statusOptions: DeliveryStatus[] = ["Incoming", "Available", "Damaged", "Cancelled"];
 const LOW_CONFIDENCE_DAYS = 1000000000000;
 
 function cn(...classes: string[]) {
@@ -65,23 +65,23 @@ function relativeEta(value: string) {
 
 function normalizeStatus(row: MovementRow): DeliveryStatus {
   const status = String(row.Status || "").trim().toLowerCase();
-  if (status === "received" || status === "available") return status === "available" ? "Available" : "Received";
-  if (status === "in transit") return "In Transit";
-  if (status === "ready" || status === "ready to receive") return "Ready";
+  if (["available", "received", "ready", "ready to receive"].includes(status)) return "Available";
+  if (["damage", "damaged", "defective"].includes(status)) return "Damaged";
+  if (["cancel", "cancelled", "canceled"].includes(status)) return "Cancelled";
   return "Incoming";
 }
 
 function statusStyle(status: DeliveryStatus) {
-  if (status === "Received" || status === "Available") return "bg-emerald-50 text-emerald-700";
-  if (status === "Ready") return "bg-amber-50 text-amber-700";
-  if (status === "In Transit") return "bg-blue-50 text-blue-700";
+  if (status === "Available") return "bg-emerald-50 text-emerald-700";
+  if (status === "Damaged") return "bg-rose-50 text-rose-700";
+  if (status === "Cancelled") return "bg-slate-100 text-slate-600";
   return "bg-sky-50 text-sky-700";
 }
 
 function statusDot(status: DeliveryStatus) {
-  if (status === "Received" || status === "Available") return "bg-emerald-500";
-  if (status === "Ready") return "bg-amber-500";
-  if (status === "In Transit") return "bg-blue-500";
+  if (status === "Available") return "bg-emerald-500";
+  if (status === "Damaged") return "bg-rose-500";
+  if (status === "Cancelled") return "bg-slate-400";
   return "bg-sky-500";
 }
 
@@ -139,10 +139,10 @@ export default function IncomingDeliveriesPage() {
 
   const summary = useMemo(() => {
     const suppliers = new Set(rows.map((row) => String(row.Supplier || "").trim()).filter(Boolean));
-    const incomingToday = rows.filter((row) => relativeEta(String(row["Arrival Date"] || row["Upload Date"] || "")) === "Today").length;
-    const inTransit = rows.filter((row) => normalizeStatus(row) === "In Transit").length;
-    const ready = rows.filter((row) => ["Received", "Available", "Ready"].includes(normalizeStatus(row))).length;
-    return { suppliers: suppliers.size, incomingToday, inTransit, ready };
+    const incoming = rows.filter((row) => normalizeStatus(row) === "Incoming").length;
+    const available = rows.filter((row) => normalizeStatus(row) === "Available").length;
+    const attention = rows.filter((row) => ["Damaged", "Cancelled"].includes(normalizeStatus(row))).length;
+    return { suppliers: suppliers.size, incoming, available, attention };
   }, [rows]);
 
   const arrivals = useMemo(() => {
@@ -187,16 +187,16 @@ export default function IncomingDeliveriesPage() {
         <div className="flex items-start gap-5"><div className="flex h-16 w-16 shrink-0 items-center justify-center rounded-full bg-emerald-50 text-emerald-600"><Icon type="truck" /></div><div><h1 className="text-4xl font-bold tracking-tight text-slate-950">Incoming Deliveries</h1><p className="mt-2 max-w-3xl text-base text-slate-500">Track expected arrivals, receiving status, and supplier shipments.</p>{message ? <p className="mt-3 text-sm font-semibold text-emerald-700">{message}</p> : null}</div></div>
       </div>
 
-      <div className="grid grid-cols-1 gap-5 md:grid-cols-2 xl:grid-cols-4"><KpiCard title="Incoming Today" value={summary.incomingToday.toLocaleString()} subtitle="Deliveries expected" tone="bg-emerald-50 text-emerald-600" icon="calendar" /><KpiCard title="In Transit" value={summary.inTransit.toLocaleString()} subtitle="Shipments on the way" tone="bg-blue-50 text-blue-600" icon="truck" /><KpiCard title="Ready to Receive" value={summary.ready.toLocaleString()} subtitle="Awaiting receiving" tone="bg-amber-50 text-amber-600" icon="box" /><KpiCard title="Suppliers" value={summary.suppliers.toLocaleString()} subtitle="Active suppliers" tone="bg-violet-50 text-violet-600" icon="users" /></div>
+      <div className="grid grid-cols-1 gap-5 md:grid-cols-2 xl:grid-cols-4"><KpiCard title="Incoming / Pending" value={summary.incoming.toLocaleString()} subtitle="Awaiting receiving" tone="bg-sky-50 text-sky-600" icon="calendar" /><KpiCard title="Available / Received" value={summary.available.toLocaleString()} subtitle="Ready for sale" tone="bg-emerald-50 text-emerald-600" icon="truck" /><KpiCard title="Needs Attention" value={summary.attention.toLocaleString()} subtitle="Damaged or cancelled" tone="bg-rose-50 text-rose-600" icon="box" /><KpiCard title="Suppliers" value={summary.suppliers.toLocaleString()} subtitle="Active suppliers" tone="bg-violet-50 text-violet-600" icon="users" /></div>
 
       <div className="grid grid-cols-1 gap-6 xl:grid-cols-[minmax(0,1fr)_320px]">
         <div className="overflow-hidden rounded-[1.75rem] border border-slate-200/80 bg-white shadow-[0_16px_40px_rgba(15,23,42,0.05)]">
           <div className="flex flex-col gap-4 border-b border-slate-100 p-4 lg:flex-row lg:items-center lg:justify-between"><div className="flex flex-1 flex-col gap-3 lg:flex-row lg:items-center"><div className="flex w-full max-w-sm items-center gap-3 rounded-2xl border border-slate-200 bg-white px-4 py-3"><span className="text-slate-400"><Icon type="search" /></span><input type="text" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search deliveries, suppliers, or items..." className="w-full bg-transparent text-sm text-slate-700 outline-none placeholder:text-slate-400" /></div><select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)} className="rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-700 outline-none">{filters.map((value) => <option key={value} value={value}>{value === "All" ? "All Statuses" : value}</option>)}</select></div><div className="flex items-center gap-3"><Link href="/add-delivery" className="rounded-2xl bg-emerald-600 px-5 py-3 text-sm font-semibold text-white shadow-sm shadow-emerald-600/20">+ Add Delivery</Link><Link href="/upload-deliveries" className="inline-flex items-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-700"><Icon type="upload" />Import CSV</Link></div></div>
 
-          <div className="max-h-[760px] overflow-auto"><table className="min-w-full text-left text-sm"><thead className="sticky top-0 z-10 border-b border-slate-100 bg-slate-50/95 text-slate-500 backdrop-blur"><tr><th className="px-5 py-4 font-semibold">ETA</th><th className="px-5 py-4 font-semibold">Supplier</th><th className="px-5 py-4 font-semibold">Item</th><th className="px-5 py-4 font-semibold">Qty</th><th className="px-5 py-4 font-semibold">Batch / Ref</th><th className="px-5 py-4 font-semibold">Status</th><th className="px-5 py-4 text-right font-semibold">Action</th></tr></thead><tbody>{visibleRows.map((row, index) => { const rowNumber = String(row["_rowNumber"] || index); const currentStatus = normalizeStatus(row); const arrival = String(row["Arrival Date"] || row["Upload Date"] || ""); return <tr key={rowNumber} className="border-b border-slate-100 last:border-b-0"><td className="px-5 py-4"><div className="flex items-start gap-3"><span className="mt-0.5 text-slate-400"><Icon type="calendar" /></span><div><p className="font-semibold text-slate-900">{formatDate(arrival)}</p><p className="mt-1 text-xs font-medium text-slate-500">{relativeEta(arrival)}</p></div></div></td><td className="px-5 py-4"><p className="max-w-[170px] font-semibold text-slate-900">{row.Supplier || "—"}</p></td><td className="px-5 py-4"><p className="font-semibold text-slate-900">{row.Description || "—"}</p><p className="mt-1 text-xs font-medium text-slate-500">{row.Specification || ""}</p></td><td className="px-5 py-4 font-semibold text-slate-900">{toNumber(row["Qty Added"]).toLocaleString()}</td><td className="px-5 py-4"><p className="max-w-[150px] font-medium text-slate-600">{row["Batch / Reference"] || "—"}</p></td><td className="px-5 py-4"><StatusBadge status={currentStatus} /></td><td className="px-5 py-4 text-right"><select defaultValue="" disabled={loadingId === rowNumber} onChange={(event) => { void updateStatus(row, event.target.value); event.currentTarget.value = ""; }} className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-700 outline-none disabled:opacity-50"><option value="" disabled>{loadingId === rowNumber ? "Updating..." : "•••"}</option>{statusOptions.map((option) => <option key={option} value={option}>{option}</option>)}</select></td></tr>; })}{!visibleRows.length && <tr><td colSpan={7} className="px-5 py-12 text-center text-slate-500">No delivery records found.</td></tr>}</tbody></table></div><div className="flex items-center justify-between border-t border-slate-100 px-5 py-4 text-sm font-medium text-slate-500"><span>Showing all {filteredRows.length} deliveries</span><span className="rounded-xl border border-emerald-100 bg-emerald-50 px-3 py-1 text-emerald-700">All</span></div>
+          <div className="max-h-[760px] overflow-auto"><table className="min-w-full text-left text-sm"><thead className="sticky top-0 z-10 border-b border-slate-100 bg-slate-50/95 text-slate-500 backdrop-blur"><tr><th className="px-5 py-4 font-semibold">ETA</th><th className="px-5 py-4 font-semibold">Supplier</th><th className="px-5 py-4 font-semibold">Item</th><th className="px-5 py-4 font-semibold">Qty</th><th className="px-5 py-4 font-semibold">Batch / Ref</th><th className="px-5 py-4 font-semibold">Status</th><th className="px-5 py-4 text-right font-semibold">Action</th></tr></thead><tbody>{visibleRows.map((row, index) => { const rowNumber = String(row["_rowNumber"] || index); const currentStatus = normalizeStatus(row); const arrival = String(row["Arrival Date"] || row["Upload Date"] || ""); return <tr key={rowNumber} className="border-b border-slate-100 last:border-b-0"><td className="px-5 py-4"><div className="flex items-start gap-3"><span className="mt-0.5 text-slate-400"><Icon type="calendar" /></span><div><p className="font-semibold text-slate-900">{formatDate(arrival)}</p><p className="mt-1 text-xs font-medium text-slate-500">{relativeEta(arrival)}</p></div></div></td><td className="px-5 py-4"><p className="max-w-[170px] font-semibold text-slate-900">{row.Supplier || "—"}</p></td><td className="px-5 py-4"><p className="font-semibold text-slate-900">{row.Description || "—"}</p><p className="mt-1 text-xs font-medium text-slate-500">{row.Specification || ""}</p></td><td className="px-5 py-4 font-semibold text-slate-900">{toNumber(row["Qty Added"]).toLocaleString()}</td><td className="px-5 py-4"><p className="max-w-[150px] font-medium text-slate-600">{row["Batch / Reference"] || "—"}</p></td><td className="px-5 py-4"><StatusBadge status={currentStatus} /></td><td className="px-5 py-4 text-right"><select defaultValue="" disabled={loadingId === rowNumber} onChange={(event) => { void updateStatus(row, event.target.value); event.currentTarget.value = ""; }} className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-700 outline-none disabled:opacity-50"><option value="" disabled>{loadingId === rowNumber ? "Updating..." : "Set status"}</option>{statusOptions.map((option) => <option key={option} value={option}>{option}</option>)}</select></td></tr>; })}{!visibleRows.length && <tr><td colSpan={7} className="px-5 py-12 text-center text-slate-500">No delivery records found.</td></tr>}</tbody></table></div><div className="flex items-center justify-between border-t border-slate-100 px-5 py-4 text-sm font-medium text-slate-500"><span>Showing {filteredRows.length} deliveries</span><span className="rounded-xl border border-emerald-100 bg-emerald-50 px-3 py-1 text-emerald-700">{statusFilter === "All" ? "All" : statusFilter}</span></div>
         </div>
 
-        <aside className="space-y-5"><div className="rounded-[1.75rem] border border-slate-200/80 bg-white p-5 shadow-[0_16px_40px_rgba(15,23,42,0.05)]"><div className="mb-5 flex items-center gap-3"><span className="text-slate-500"><Icon type="calendar" /></span><h2 className="text-lg font-bold text-slate-950">Upcoming Arrivals</h2></div><div className="space-y-4">{arrivals.map((item) => <div key={item.label} className="flex items-center justify-between border-b border-slate-100 pb-4 last:border-0 last:pb-0"><div><p className="font-semibold text-slate-900">{item.label}</p><p className="mt-1 text-xs font-medium text-slate-500">{item.date}</p></div><div className="text-right"><p className="text-2xl font-bold text-slate-950">{item.count}</p><p className="text-xs text-slate-500">Deliveries</p></div></div>)}</div></div><div className="rounded-[1.75rem] border border-slate-200/80 bg-white p-5 shadow-[0_16px_40px_rgba(15,23,42,0.05)]"><div className="mb-5 flex items-center gap-3"><span className="text-slate-500"><Icon type="note" /></span><h2 className="text-lg font-bold text-slate-950">Delivery Notes</h2></div><div className="flex gap-3"><span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-emerald-50 text-emerald-600"><Icon type="check" /></span><div><p className="font-semibold text-slate-900">All deliveries are up to date.</p><p className="mt-1 text-sm text-slate-500">No delays or issues reported.</p></div></div></div></aside>
+        <aside className="space-y-5"><div className="rounded-[1.75rem] border border-slate-200/80 bg-white p-5 shadow-[0_16px_40px_rgba(15,23,42,0.05)]"><div className="mb-5 flex items-center gap-3"><span className="text-slate-500"><Icon type="calendar" /></span><h2 className="text-lg font-bold text-slate-950">Upcoming Arrivals</h2></div><div className="space-y-4">{arrivals.map((item) => <div key={item.label} className="flex items-center justify-between border-b border-slate-100 pb-4 last:border-0 last:pb-0"><div><p className="font-semibold text-slate-900">{item.label}</p><p className="mt-1 text-xs font-medium text-slate-500">{item.date}</p></div><div className="text-right"><p className="text-2xl font-bold text-slate-950">{item.count}</p><p className="text-xs text-slate-500">Deliveries</p></div></div>)}</div></div><div className="rounded-[1.75rem] border border-slate-200/80 bg-white p-5 shadow-[0_16px_40px_rgba(15,23,42,0.05)]"><div className="mb-5 flex items-center gap-3"><span className="text-slate-500"><Icon type="note" /></span><h2 className="text-lg font-bold text-slate-950">Delivery Notes</h2></div><div className="flex gap-3"><span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-emerald-50 text-emerald-600"><Icon type="check" /></span><div><p className="font-semibold text-slate-900">Receive stock before selling.</p><p className="mt-1 text-sm text-slate-500">Supplier uploads should stay Incoming until marked Available.</p></div></div></div></aside>
       </div>
     </section>
   );
