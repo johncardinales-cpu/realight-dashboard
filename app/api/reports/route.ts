@@ -10,7 +10,7 @@ const SUPPLIER_COSTS_SHEET = "Supplier_Invoice_Costs";
 const auth = new google.auth.GoogleAuth({
   credentials: {
     client_email: process.env.GOOGLE_CLIENT_EMAIL as string,
-    private_key: process.env.GOOGLE_PRIVATE_KEY?.replace(/\\n/g, "\n"),
+    private_key: process.env.GOOGLE_PRIVATE_KEY?.replace(/\n/g, "\n"),
   },
   scopes: ["https://www.googleapis.com/auth/spreadsheets"],
 });
@@ -104,14 +104,16 @@ function buildSaleSummaries(salesRows: string[][], paymentRows: string[][]) {
     const otherChargePhp = toNumber(row[31]);
     const discountPhp = toNumber(row[32]);
     const grossProfitPhp = toNumber(row[10]);
-    const initialPaidPhp = toNumber(row[16]);
+    const appliedPaidPhp = toNumber(row[16]);
+    const tenderedPhp = toNumber(row[34] || row[16]);
+    const changeDuePhp = toNumber(row[35]);
     const paymentMethod = safeText(row[15]) || "Unspecified";
     const saleStatus = safeText(row[20]) || "Draft";
     if (!key || !saleDate || !customerName || grandTotalPhp <= 0) return;
     const current = map.get(key) || {
       key, saleId, saleDate, salesRefNo, groupRef, customerId, customerName,
       productSubtotalPhp: 0, deliveryFeePhp: 0, installationFeePhp: 0, otherChargePhp: 0, discountPhp: 0, taxAmountPhp: 0,
-      totalSalePhp: 0, grossProfitPhp: 0, initialPaidPhp: 0, initialPaymentMethod: paymentMethod, saleStatus,
+      totalSalePhp: 0, grossProfitPhp: 0, initialPaidPhp: 0, initialTenderedPhp: 0, initialChangeDuePhp: 0, initialPaymentMethod: paymentMethod, saleStatus,
       linkedExpensesPhp: 0,
     };
     current.productSubtotalPhp += productSubtotalPhp;
@@ -122,7 +124,9 @@ function buildSaleSummaries(salesRows: string[][], paymentRows: string[][]) {
     current.taxAmountPhp += taxAmountPhp;
     current.totalSalePhp += grandTotalPhp;
     current.grossProfitPhp += grossProfitPhp;
-    current.initialPaidPhp += initialPaidPhp;
+    current.initialPaidPhp += appliedPaidPhp;
+    current.initialTenderedPhp += tenderedPhp;
+    current.initialChangeDuePhp += changeDuePhp;
     current.saleStatus = saleStatus;
     if (!current.saleId && saleId) current.saleId = saleId;
     if (!current.customerId && customerId) current.customerId = customerId;
@@ -131,8 +135,11 @@ function buildSaleSummaries(salesRows: string[][], paymentRows: string[][]) {
   return Array.from(map.values()).map((sale) => {
     const followUpPaidPhp = paymentLedger.byKey.get(sale.saleId) || paymentLedger.byKey.get(sale.groupRef) || paymentLedger.byKey.get(sale.salesRefNo) || paymentLedger.byKey.get(sale.key) || 0;
     const totalPaidPhp = sale.initialPaidPhp + followUpPaidPhp;
+    const totalTenderedPhp = sale.initialTenderedPhp + followUpPaidPhp;
+    const changeDuePhp = sale.initialChangeDuePhp;
+    const netCollectionPhp = totalTenderedPhp - changeDuePhp;
     const balancePhp = Math.max(sale.totalSalePhp - totalPaidPhp, 0);
-    return { ...sale, followUpPaidPhp, totalPaidPhp, balancePhp, paymentStatus: getPaymentStatus(totalPaidPhp, sale.totalSalePhp), netProfitPhp: sale.grossProfitPhp - sale.linkedExpensesPhp };
+    return { ...sale, followUpPaidPhp, totalPaidPhp, totalTenderedPhp, changeDuePhp, netCollectionPhp, balancePhp, paymentStatus: getPaymentStatus(totalPaidPhp, sale.totalSalePhp), netProfitPhp: sale.grossProfitPhp - sale.linkedExpensesPhp };
   });
 }
 
@@ -191,10 +198,10 @@ function summarizeByCategory(entries: Array<{ category: string; amount: number }
 
 function summarizeDaily(periodSales: any[], periodExpenses: any[], initialCollections: any[], followUpCollections: any[]) {
   const days = new Map<string, any>();
-  const ensure = (date: string) => { if (!days.has(date)) days.set(date, { date, sales: 0, productSubtotal: 0, deliveryFee: 0, installationFee: 0, otherCharge: 0, discount: 0, tax: 0, collections: 0, expenses: 0, linkedExpenses: 0, grossProfit: 0, netProfit: 0, receivables: 0 }); return days.get(date); };
+  const ensure = (date: string) => { if (!days.has(date)) days.set(date, { date, sales: 0, productSubtotal: 0, deliveryFee: 0, installationFee: 0, otherCharge: 0, discount: 0, tax: 0, collections: 0, cashReceived: 0, changeGiven: 0, expenses: 0, linkedExpenses: 0, grossProfit: 0, netProfit: 0, receivables: 0 }); return days.get(date); };
   periodSales.forEach((sale) => { const item = ensure(sale.saleDate); item.sales += sale.totalSalePhp; item.productSubtotal += sale.productSubtotalPhp; item.deliveryFee += sale.deliveryFeePhp; item.installationFee += sale.installationFeePhp; item.otherCharge += sale.otherChargePhp; item.discount += sale.discountPhp; item.tax += sale.taxAmountPhp; item.grossProfit += sale.grossProfitPhp; item.linkedExpenses += sale.linkedExpensesPhp || 0; item.receivables += sale.balancePhp; });
   periodExpenses.forEach((expense) => { const item = ensure(expense.date); item.expenses += expense.amount; });
-  [...initialCollections, ...followUpCollections].forEach((entry) => { const item = ensure(entry.date); item.collections += entry.amount; });
+  [...initialCollections, ...followUpCollections].forEach((entry) => { const item = ensure(entry.date); item.collections += entry.amount; item.cashReceived += entry.tenderedAmount ?? entry.amount; item.changeGiven += entry.changeDue ?? 0; });
   return Array.from(days.values()).map((item) => ({ ...item, netProfit: item.grossProfit - item.expenses })).sort((a, b) => a.date.localeCompare(b.date));
 }
 
@@ -226,7 +233,7 @@ export async function GET(req: Request) {
     const client = await auth.getClient();
     const sheets = google.sheets({ version: "v4", auth: client as any });
     const [salesRows, paymentRows, expenseRows, supplierRows] = await Promise.all([
-      readRange(sheets, `${SALES_SHEET}!A:AH`), readRange(sheets, `${PAYMENTS_SHEET}!A:L`), readRange(sheets, `${EXPENSES_SHEET}!A:Z`), readRange(sheets, `${SUPPLIER_COSTS_SHEET}!A:L`),
+      readRange(sheets, `${SALES_SHEET}!A:AJ`), readRange(sheets, `${PAYMENTS_SHEET}!A:L`), readRange(sheets, `${EXPENSES_SHEET}!A:Z`), readRange(sheets, `${SUPPLIER_COSTS_SHEET}!A:L`),
     ]);
     const allExpenses = [...parseExpenseRows(expenseRows), ...parseSupplierRows(supplierRows)];
     const saleSummaries = attachLinkedExpenses(buildSaleSummaries(salesRows, paymentRows), allExpenses);
@@ -235,8 +242,8 @@ export async function GET(req: Request) {
     const linkedExpensesTotal = periodSales.reduce((sum, sale) => sum + (sale.linkedExpensesPhp || 0), 0);
     const unlinkedExpenses = periodExpenses.filter((expense) => !safeText(expense.relatedSalesRefNo));
     const periodExpenseTotal = periodExpenses.reduce((sum, expense) => sum + expense.amount, 0);
-    const initialCollections = periodSales.filter((sale) => sale.initialPaidPhp > 0).map((sale) => ({ date: sale.saleDate, method: sale.initialPaymentMethod || "Unspecified", amount: sale.initialPaidPhp }));
-    const followUpCollections = paymentRows.slice(1).filter((row) => inRange(row[0], period.startDate, period.endDate)).map((row) => ({ date: normalizeDate(row[0]), method: safeText(row[4]) || "Unspecified", amount: toNumber(row[5]) })).filter((row) => row.amount > 0);
+    const initialCollections = periodSales.filter((sale) => sale.initialPaidPhp > 0 || sale.initialTenderedPhp > 0).map((sale) => ({ date: sale.saleDate, method: sale.initialPaymentMethod || "Unspecified", amount: sale.initialPaidPhp, tenderedAmount: sale.initialTenderedPhp || sale.initialPaidPhp, changeDue: sale.initialChangeDuePhp || 0 }));
+    const followUpCollections = paymentRows.slice(1).filter((row) => inRange(row[0], period.startDate, period.endDate)).map((row) => ({ date: normalizeDate(row[0]), method: safeText(row[4]) || "Unspecified", amount: toNumber(row[5]), tenderedAmount: toNumber(row[5]), changeDue: 0 })).filter((row) => row.amount > 0);
     const productSubtotal = periodSales.reduce((sum, sale) => sum + sale.productSubtotalPhp, 0);
     const deliveryFee = periodSales.reduce((sum, sale) => sum + sale.deliveryFeePhp, 0);
     const installationFee = periodSales.reduce((sum, sale) => sum + sale.installationFeePhp, 0);
@@ -249,6 +256,8 @@ export async function GET(req: Request) {
     const initialCollectionsTotal = initialCollections.reduce((sum, entry) => sum + entry.amount, 0);
     const followUpCollectionsTotal = followUpCollections.reduce((sum, entry) => sum + entry.amount, 0);
     const collections = initialCollectionsTotal + followUpCollectionsTotal;
+    const cashReceived = [...initialCollections, ...followUpCollections].reduce((sum, entry) => sum + (entry.tenderedAmount ?? entry.amount), 0);
+    const changeGiven = [...initialCollections, ...followUpCollections].reduce((sum, entry) => sum + (entry.changeDue || 0), 0);
     const endingReceivables = saleSummaries.reduce((sum, sale) => sum + sale.balancePhp, 0);
     const newReceivables = periodSales.reduce((sum, sale) => sum + sale.balancePhp, 0);
     const paymentStatusCounts = periodSales.reduce((acc: Record<string, number>, sale) => { acc[sale.paymentStatus] = (acc[sale.paymentStatus] || 0) + 1; return acc; }, {});
@@ -258,17 +267,18 @@ export async function GET(req: Request) {
       summary: {
         productSubtotalPhp: productSubtotal, deliveryFeePhp: deliveryFee, installationFeePhp: installationFee, otherChargePhp: otherCharge, discountPhp: discount, taxAmountPhp: tax, grandTotalPhp: totalSales,
         totalSalesToday: totalSales, confirmedSalesToday: confirmedSales, grossProfitToday: grossProfit, expensesToday: periodExpenseTotal, linkedExpensesToday: linkedExpensesTotal, unlinkedExpensesToday: unlinkedExpenses.reduce((sum, e) => sum + e.amount, 0), netProfitToday: grossProfit - periodExpenseTotal,
-        initialCollectionsToday: initialCollectionsTotal, followUpCollectionsToday: followUpCollectionsTotal, collectionsToday: collections, newReceivablesToday: newReceivables, endingReceivables, dailySaleCount: periodSales.length, paymentStatusCounts,
+        initialCollectionsToday: initialCollectionsTotal, followUpCollectionsToday: followUpCollectionsTotal, collectionsToday: collections, cashReceivedToday: cashReceived, changeGivenToday: changeGiven, netCashAfterChangeToday: cashReceived - changeGiven, newReceivablesToday: newReceivables, endingReceivables, dailySaleCount: periodSales.length, paymentStatusCounts,
       },
       accountingBreakdown: { productSubtotalPhp: productSubtotal, deliveryFeePhp: deliveryFee, installationFeePhp: installationFee, otherChargePhp: otherCharge, discountPhp: discount, taxAmountPhp: tax, grandTotalPhp: totalSales, grossProfitPhp: grossProfit, linkedExpensesPhp: linkedExpensesTotal, totalExpensesPhp: periodExpenseTotal, netProfitPhp: grossProfit - periodExpenseTotal },
       collectionsByMethod: summarizeMethodBreakdown([...initialCollections, ...followUpCollections]),
+      cashByMethod: summarizeMethodBreakdown([...initialCollections, ...followUpCollections].map((entry) => ({ method: entry.method, amount: entry.tenderedAmount ?? entry.amount }))),
       expensesByCategory: summarizeByCategory(periodExpenses),
       dailyTrend: summarizeDaily(periodSales, periodExpenses, initialCollections, followUpCollections),
       productMovement: summarizeProductMovement(salesRows, period.startDate, period.endDate),
-      dailySales: periodSales.map((sale) => ({ saleDate: sale.saleDate, salesRefNo: sale.salesRefNo, customerName: sale.customerName, customerId: sale.customerId, productSubtotalPhp: sale.productSubtotalPhp, deliveryFeePhp: sale.deliveryFeePhp, installationFeePhp: sale.installationFeePhp, otherChargePhp: sale.otherChargePhp, discountPhp: sale.discountPhp, taxAmountPhp: sale.taxAmountPhp, totalSalePhp: sale.totalSalePhp, grandTotalPhp: sale.totalSalePhp, totalPaidPhp: sale.totalPaidPhp, balancePhp: sale.balancePhp, grossProfitPhp: sale.grossProfitPhp, linkedExpensesPhp: sale.linkedExpensesPhp || 0, netProfitPhp: sale.netProfitPhp, paymentStatus: sale.paymentStatus, saleStatus: sale.saleStatus })),
+      dailySales: periodSales.map((sale) => ({ saleDate: sale.saleDate, salesRefNo: sale.salesRefNo, customerName: sale.customerName, customerId: sale.customerId, productSubtotalPhp: sale.productSubtotalPhp, deliveryFeePhp: sale.deliveryFeePhp, installationFeePhp: sale.installationFeePhp, otherChargePhp: sale.otherChargePhp, discountPhp: sale.discountPhp, taxAmountPhp: sale.taxAmountPhp, totalSalePhp: sale.totalSalePhp, grandTotalPhp: sale.totalSalePhp, totalPaidPhp: sale.totalPaidPhp, tenderedAmountPhp: sale.totalTenderedPhp, changeDuePhp: sale.changeDuePhp, netCollectionPhp: sale.netCollectionPhp, balancePhp: sale.balancePhp, grossProfitPhp: sale.grossProfitPhp, linkedExpensesPhp: sale.linkedExpensesPhp || 0, netProfitPhp: sale.netProfitPhp, paymentStatus: sale.paymentStatus, saleStatus: sale.saleStatus })),
       dailyExpenses: periodExpenses,
       linkedExpenses: periodExpenses.filter((expense) => safeText(expense.relatedSalesRefNo)),
-      openReceivables: saleSummaries.filter((sale) => sale.balancePhp > 0).sort((a, b) => b.balancePhp - a.balancePhp).map((sale) => ({ saleDate: sale.saleDate, salesRefNo: sale.salesRefNo, customerName: sale.customerName, totalSalePhp: sale.totalSalePhp, totalPaidPhp: sale.totalPaidPhp, balancePhp: sale.balancePhp, paymentStatus: sale.paymentStatus, saleStatus: sale.saleStatus })),
+      openReceivables: saleSummaries.filter((sale) => sale.balancePhp > 0).sort((a, b) => b.balancePhp - a.balancePhp).map((sale) => ({ saleDate: sale.saleDate, salesRefNo: sale.salesRefNo, customerName: sale.customerName, totalSalePhp: sale.totalSalePhp, totalPaidPhp: sale.totalPaidPhp, tenderedAmountPhp: sale.totalTenderedPhp, changeDuePhp: sale.changeDuePhp, balancePhp: sale.balancePhp, paymentStatus: sale.paymentStatus, saleStatus: sale.saleStatus })),
     });
   } catch (error: any) {
     console.error("REPORTS API ERROR:", error);
