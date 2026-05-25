@@ -9,7 +9,7 @@ const AUDIT_LOG_SHEET = "Audit_Log";
 const auth = new google.auth.GoogleAuth({
   credentials: {
     client_email: process.env.GOOGLE_CLIENT_EMAIL as string,
-    private_key: process.env.GOOGLE_PRIVATE_KEY?.replace(/\\n/g, "\n"),
+    private_key: process.env.GOOGLE_PRIVATE_KEY?.replace(/\n/g, "\n"),
   },
   scopes: ["https://www.googleapis.com/auth/spreadsheets"],
 });
@@ -49,6 +49,14 @@ function columnLetter(index: number) {
 
 function saleKey(salesRefNo: string, groupRef: string) {
   return safeText(groupRef) || safeText(salesRefNo);
+}
+
+function paymentStatusFromAmounts(paid: number, total: number) {
+  const paidAmount = toNumber(paid);
+  const totalAmount = toNumber(total);
+  if (totalAmount > 0 && paidAmount >= totalAmount) return "Paid";
+  if (paidAmount > 0) return "Partial";
+  return "Pending";
 }
 
 function isValidSalesRow(row: string[]) {
@@ -168,7 +176,7 @@ function summarizeTarget(targetRows: Array<{ row: string[]; rowNumber: number }>
   const paid = targetRows.reduce((sum, item) => sum + toNumber(item.row[16]), 0);
   const balance = targetRows.reduce((sum, item) => sum + toNumber(item.row[17]), 0);
   const saleStatus = safeText(first[20]) || "Draft";
-  const paymentStatus = safeText(first[11]) || (balance <= 0 ? "Paid" : paid > 0 ? "Partial" : "Pending");
+  const paymentStatus = safeText(first[11]) || paymentStatusFromAmounts(paid, totalSale);
   const saleId = safeText(first[22]);
   const salesRefNo = safeText(first[1]);
   const groupRef = safeText(first[14]);
@@ -229,7 +237,6 @@ export async function PATCH(req: Request) {
 
     const target = summarizeTarget(targetRows);
     const normalizedSaleStatus = target.saleStatus.toLowerCase();
-    const normalizedPaymentStatus = target.paymentStatus.toLowerCase();
 
     if (action === "undo" || action === "unconfirm") {
       if (normalizedSaleStatus !== "confirmed") {
@@ -270,8 +277,8 @@ export async function PATCH(req: Request) {
       return NextResponse.json({ error: "Cancelled sales cannot be confirmed" }, { status: 400 });
     }
 
-    if (normalizedPaymentStatus === "pending" && target.paid <= 0) {
-      return NextResponse.json({ error: "Pending/unpaid sales cannot be confirmed. Record a payment first." }, { status: 400 });
+    if (target.paid <= 0) {
+      return NextResponse.json({ error: "Unpaid sales cannot be confirmed. Record a payment first." }, { status: 400 });
     }
 
     const stockError = await validateStock(sheets, salesRows, target);
@@ -280,7 +287,9 @@ export async function PATCH(req: Request) {
     }
 
     const confirmedAt = new Date().toISOString();
+    const finalPaymentStatus = paymentStatusFromAmounts(target.paid, target.totalSale);
     const updateData = targetRows.flatMap(({ rowNumber }) => [
+      { range: `${SALES_SHEET}!L${rowNumber}`, values: [[finalPaymentStatus]] },
       { range: `${SALES_SHEET}!U${rowNumber}:V${rowNumber}`, values: [["Confirmed", confirmedAt]] },
     ]);
 
@@ -295,15 +304,15 @@ export async function PATCH(req: Request) {
       recordRef: target.salesRefNo || target.groupRef,
       actor,
       summary: `Confirmed sale ${target.salesRefNo || target.groupRef} with ${targetRows.length} line(s)` ,
-      before: { saleStatus: target.saleStatus, paymentStatus: target.paymentStatus, balance: target.balance },
-      after: { saleStatus: "Confirmed", confirmedAt, paymentStatus: target.paymentStatus, balance: target.balance },
+      before: { saleStatus: target.saleStatus, paymentStatus: target.paymentStatus, balance: target.balance, paid: target.paid, totalSale: target.totalSale },
+      after: { saleStatus: "Confirmed", confirmedAt, paymentStatus: finalPaymentStatus, balance: target.balance, paid: target.paid, totalSale: target.totalSale },
     });
 
     return NextResponse.json({
       ok: true,
-      message: "Sale confirmed successfully",
+      message: `Sale confirmed successfully. Payment status set to ${finalPaymentStatus}.`,
       confirmedAt,
-      sale: { ...target, saleStatus: "Confirmed", confirmedAt },
+      sale: { ...target, saleStatus: "Confirmed", confirmedAt, paymentStatus: finalPaymentStatus },
     });
   } catch (error: any) {
     console.error("CONFIRM SALE ERROR:", error);
