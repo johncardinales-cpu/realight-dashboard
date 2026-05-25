@@ -10,7 +10,7 @@ const AUDIT_LOG_SHEET = "Audit_Log";
 const auth = new google.auth.GoogleAuth({
   credentials: {
     client_email: process.env.GOOGLE_CLIENT_EMAIL as string,
-    private_key: process.env.GOOGLE_PRIVATE_KEY?.replace(/\\n/g, "\n"),
+    private_key: process.env.GOOGLE_PRIVATE_KEY?.replace(/\n/g, "\n"),
   },
   scopes: ["https://www.googleapis.com/auth/spreadsheets"],
 });
@@ -23,7 +23,7 @@ const SALES_HEADERS = [
   "Cashier Name","Sale Status","Confirmed At","Sale ID","Sale Item ID","Created At",
   "Product Subtotal (PHP)","Tax Rate (%)","Tax Amount (PHP)","Grand Total (PHP)",
   "Delivery Fee (PHP)","Installation Fee (PHP)","Other Charge (PHP)","Discount (PHP)",
-  "Customer ID",
+  "Customer ID","Tendered Amount (PHP)","Change Due (PHP)",
 ];
 
 const AUDIT_HEADERS = ["Audit ID","Created At","Module","Action","Record ID","Record Ref","Actor","Summary","Before JSON","After JSON"];
@@ -85,7 +85,7 @@ async function getAvailableStockMap(sheets: any) {
 }
 
 async function getConfirmedSoldMap(sheets: any) {
-  const response = await sheets.spreadsheets.values.get({ spreadsheetId: SHEET_ID, range: `${SALES_SHEET}!A:AH` });
+  const response = await sheets.spreadsheets.values.get({ spreadsheetId: SHEET_ID, range: `${SALES_SHEET}!A:AJ` });
   const rows = (response.data.values || []) as string[][];
   const map = new Map<string, number>();
   rows.slice(1).filter(isValidSalesRow).forEach((row: string[]) => {
@@ -114,11 +114,11 @@ export async function GET() {
   try {
     const client = await auth.getClient(); const sheets = google.sheets({ version: "v4", auth: client as any });
     await ensureSheetExists(sheets, SALES_SHEET, SALES_HEADERS); await ensureSheetExists(sheets, AUDIT_LOG_SHEET, AUDIT_HEADERS);
-    const response = await sheets.spreadsheets.values.get({ spreadsheetId: SHEET_ID, range: `${SALES_SHEET}!A:AH` });
+    const response = await sheets.spreadsheets.values.get({ spreadsheetId: SHEET_ID, range: `${SALES_SHEET}!A:AJ` });
     const rows = (response.data.values || []) as string[][];
     const data = rows.slice(1).filter(isValidSalesRow);
     const items = data.map((row: string[], index: number) => ({
-      rowNumber: index + 2, saleDate: String(row[0] || ""), salesRefNo: String(row[1] || ""), customerName: String(row[2] || ""), description: String(row[3] || ""), specification: String(row[4] || ""), qty: toNumber(row[5]), unitPricePhp: toNumber(row[6]), totalSalePhp: toNumber(row[7]), costPricePhp: toNumber(row[8]), totalCostPhp: toNumber(row[9]), grossProfitPhp: toNumber(row[10]), paymentStatus: String(row[11] || "Pending"), salesperson: String(row[12] || ""), notes: String(row[13] || ""), groupRef: String(row[14] || ""), paymentMethod: String(row[15] || ""), amountPaidPhp: toNumber(row[16]), balancePhp: toNumber(row[17]), transactionRef: String(row[18] || ""), cashierName: String(row[19] || ""), saleStatus: String(row[20] || "Draft"), confirmedAt: String(row[21] || ""), saleId: String(row[22] || ""), saleItemId: String(row[23] || ""), createdAt: String(row[24] || ""), productSubtotalPhp: toNumber(row[25] || row[7]), taxRatePct: toNumber(row[26]), taxAmountPhp: toNumber(row[27]), grandTotalPhp: toNumber(row[28] || row[7]), deliveryFeePhp: toNumber(row[29]), installationFeePhp: toNumber(row[30]), otherChargePhp: toNumber(row[31]), discountPhp: toNumber(row[32]), customerId: String(row[33] || "")
+      rowNumber: index + 2, saleDate: String(row[0] || ""), salesRefNo: String(row[1] || ""), customerName: String(row[2] || ""), description: String(row[3] || ""), specification: String(row[4] || ""), qty: toNumber(row[5]), unitPricePhp: toNumber(row[6]), totalSalePhp: toNumber(row[7]), costPricePhp: toNumber(row[8]), totalCostPhp: toNumber(row[9]), grossProfitPhp: toNumber(row[10]), paymentStatus: String(row[11] || "Pending"), salesperson: String(row[12] || ""), notes: String(row[13] || ""), groupRef: String(row[14] || ""), paymentMethod: String(row[15] || ""), amountPaidPhp: toNumber(row[16]), balancePhp: toNumber(row[17]), transactionRef: String(row[18] || ""), cashierName: String(row[19] || ""), saleStatus: String(row[20] || "Draft"), confirmedAt: String(row[21] || ""), saleId: String(row[22] || ""), saleItemId: String(row[23] || ""), createdAt: String(row[24] || ""), productSubtotalPhp: toNumber(row[25] || row[7]), taxRatePct: toNumber(row[26]), taxAmountPhp: toNumber(row[27]), grandTotalPhp: toNumber(row[28] || row[7]), deliveryFeePhp: toNumber(row[29]), installationFeePhp: toNumber(row[30]), otherChargePhp: toNumber(row[31]), discountPhp: toNumber(row[32]), customerId: String(row[33] || ""), tenderedAmountPhp: toNumber(row[34] || row[16]), changeDuePhp: toNumber(row[35])
     }));
     return NextResponse.json(items);
   } catch (error: any) { console.error("SALES GET ERROR:", error); return NextResponse.json({ error: error?.message || String(error) || "Failed to load sales" }, { status: 500 }); }
@@ -155,12 +155,12 @@ export async function POST(req: Request) {
     const pricingMap = await getPricingMap(sheets); const saleId = makeId("SALE");
     const rowsToAppend = validItems.map((item: any, index: number) => {
       const description = String(item?.description || "").trim(); const specification = String(item?.specification || "").trim(); const qty = toNumber(item?.qty); const unitPricePhp = toNumber(item?.unitPricePhp); const key = itemKey(description, specification); const costPricePhp = pricingMap.get(key) || 0;
-      const lineProductSubtotalPhp = roundMoney(qty * unitPricePhp); const lineShare = productSubtotalPhp > 0 ? lineProductSubtotalPhp / productSubtotalPhp : 0; const lineDeliveryFeePhp = roundMoney(deliveryFeePhp * lineShare); const lineInstallationFeePhp = roundMoney(installationFeePhp * lineShare); const lineOtherChargePhp = roundMoney(otherChargePhp * lineShare); const lineDiscountPhp = roundMoney(discountPhp * lineShare); const lineTaxableBasePhp = roundMoney(Math.max(lineProductSubtotalPhp + lineDeliveryFeePhp + lineInstallationFeePhp + lineOtherChargePhp - lineDiscountPhp, 0)); const lineTaxAmountPhp = roundMoney(taxAmountPhp * lineShare); const lineGrandTotalPhp = roundMoney(lineTaxableBasePhp + lineTaxAmountPhp); const totalCostPhp = roundMoney(qty * costPricePhp); const grossProfitPhp = roundMoney(lineGrandTotalPhp - totalCostPhp); const lineAmountPaidPhp = transactionTotal > 0 ? roundMoney(amountPaidPhp * (lineGrandTotalPhp / transactionTotal)) : 0; const lineBalancePhp = roundMoney(Math.max(lineGrandTotalPhp - lineAmountPaidPhp, 0)); const saleItemId = `${saleId}_ITEM_${String(index + 1).padStart(3, "0")}`;
-      return [saleDate, salesRefNo, customerName, description, specification, qty, unitPricePhp, lineGrandTotalPhp, costPricePhp, totalCostPhp, grossProfitPhp, paymentStatus, salesperson, notes, groupRef, paymentMethod, lineAmountPaidPhp, lineBalancePhp, transactionRef, cashierName, saleStatus, confirmedAt, saleId, saleItemId, createdAt, lineProductSubtotalPhp, taxRatePct, lineTaxAmountPhp, lineGrandTotalPhp, lineDeliveryFeePhp, lineInstallationFeePhp, lineOtherChargePhp, lineDiscountPhp, customerId];
+      const lineProductSubtotalPhp = roundMoney(qty * unitPricePhp); const lineShare = productSubtotalPhp > 0 ? lineProductSubtotalPhp / productSubtotalPhp : 0; const lineDeliveryFeePhp = roundMoney(deliveryFeePhp * lineShare); const lineInstallationFeePhp = roundMoney(installationFeePhp * lineShare); const lineOtherChargePhp = roundMoney(otherChargePhp * lineShare); const lineDiscountPhp = roundMoney(discountPhp * lineShare); const lineTaxableBasePhp = roundMoney(Math.max(lineProductSubtotalPhp + lineDeliveryFeePhp + lineInstallationFeePhp + lineOtherChargePhp - lineDiscountPhp, 0)); const lineTaxAmountPhp = roundMoney(taxAmountPhp * lineShare); const lineGrandTotalPhp = roundMoney(lineTaxableBasePhp + lineTaxAmountPhp); const totalCostPhp = roundMoney(qty * costPricePhp); const grossProfitPhp = roundMoney(lineGrandTotalPhp - totalCostPhp); const lineAmountPaidPhp = transactionTotal > 0 ? roundMoney(amountPaidPhp * (lineGrandTotalPhp / transactionTotal)) : 0; const lineTenderedAmountPhp = transactionTotal > 0 ? roundMoney(tenderedAmountPhp * (lineGrandTotalPhp / transactionTotal)) : tenderedAmountPhp; const lineChangeDuePhp = transactionTotal > 0 ? roundMoney(changeDuePhp * (lineGrandTotalPhp / transactionTotal)) : changeDuePhp; const lineBalancePhp = roundMoney(Math.max(lineGrandTotalPhp - lineAmountPaidPhp, 0)); const saleItemId = `${saleId}_ITEM_${String(index + 1).padStart(3, "0")}`;
+      return [saleDate, salesRefNo, customerName, description, specification, qty, unitPricePhp, lineGrandTotalPhp, costPricePhp, totalCostPhp, grossProfitPhp, paymentStatus, salesperson, notes, groupRef, paymentMethod, lineAmountPaidPhp, lineBalancePhp, transactionRef, cashierName, saleStatus, confirmedAt, saleId, saleItemId, createdAt, lineProductSubtotalPhp, taxRatePct, lineTaxAmountPhp, lineGrandTotalPhp, lineDeliveryFeePhp, lineInstallationFeePhp, lineOtherChargePhp, lineDiscountPhp, customerId, lineTenderedAmountPhp, lineChangeDuePhp];
     });
 
-    await sheets.spreadsheets.values.append({ spreadsheetId: SHEET_ID, range: `${SALES_SHEET}!A:AH`, valueInputOption: "USER_ENTERED", insertDataOption: "INSERT_ROWS", requestBody: { values: rowsToAppend } });
-    await appendAuditLog(sheets, { module: "Sales", action: "CREATE_SALE", recordId: saleId, recordRef: salesRefNo || groupRef, actor: cashierName || salesperson || "System", summary: `Created sale with ${rowsToAppend.length} line(s), subtotal ${productSubtotalPhp}, delivery ${deliveryFeePhp}, installation ${installationFeePhp}, tax ${taxAmountPhp}, grand total ${transactionTotal}, tendered ${tenderedAmountPhp}, change ${changeDuePhp}`, after: { saleId, salesRefNo, groupRef, customerId, customerName, productSubtotalPhp, deliveryFeePhp, installationFeePhp, otherChargePhp, discountPhp, taxRatePct, taxAmountPhp, transactionTotal, tenderedAmountPhp, amountPaidPhp, changeDuePhp, paymentStatus, saleStatus, itemCount: rowsToAppend.length } });
+    await sheets.spreadsheets.values.append({ spreadsheetId: SHEET_ID, range: `${SALES_SHEET}!A:AJ`, valueInputOption: "USER_ENTERED", insertDataOption: "INSERT_ROWS", requestBody: { values: rowsToAppend } });
+    await appendAuditLog(sheets, { module: "Sales", action: "CREATE_SALE", recordId: saleId, recordRef: salesRefNo || groupRef, actor: cashierName || salesperson || "System", summary: `Created sale with ${rowsToAppend.length} line(s), subtotal ${productSubtotalPhp}, delivery ${deliveryFeePhp}, installation ${installationFeePhp}, tax ${taxAmountPhp}, grand total ${transactionTotal}, tendered ${tenderedAmountPhp}, collected ${amountPaidPhp}, change ${changeDuePhp}`, after: { saleId, salesRefNo, groupRef, customerId, customerName, productSubtotalPhp, deliveryFeePhp, installationFeePhp, otherChargePhp, discountPhp, taxRatePct, taxAmountPhp, transactionTotal, tenderedAmountPhp, amountPaidPhp, changeDuePhp, paymentStatus, saleStatus, itemCount: rowsToAppend.length } });
     return NextResponse.json({ ok: true, lines: rowsToAppend.length, saleId, customerId, productSubtotalPhp, deliveryFeePhp, installationFeePhp, otherChargePhp, discountPhp, taxRatePct, taxAmountPhp, grandTotalPhp: transactionTotal, amountPaidPhp, tenderedAmountPhp, changeDuePhp });
   } catch (error: any) { console.error("SALES POST ERROR:", error); return NextResponse.json({ error: error?.message || String(error) || "Failed to save sale" }, { status: 500 }); }
 }
