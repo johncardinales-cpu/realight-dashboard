@@ -111,7 +111,6 @@ export default function SalesPage() {
   function removeLine(index: number) { setItems((prev) => prev.length === 1 ? prev : prev.filter((_, i) => i !== index)); }
 
   function validateClientStock(cleanItems: SaleLine[]) {
-    if (saleStatus.toLowerCase() !== "confirmed") return "";
     const requested = new Map<string, { description: string; specification: string; qty: number }>();
     cleanItems.forEach((item) => { const key = itemKey(item.description, item.specification); const current = requested.get(key); requested.set(key, { description: item.description, specification: item.specification, qty: (current?.qty || 0) + (Number(item.qty) || 0) }); });
     const issues: string[] = [];
