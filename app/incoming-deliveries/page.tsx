@@ -71,6 +71,10 @@ function normalizeStatus(row: MovementRow): DeliveryStatus {
   return "Incoming";
 }
 
+function getRowNumber(row: MovementRow, fallback: number | string) {
+  return String(row["_rowNumber"] || fallback).trim();
+}
+
 function statusStyle(status: DeliveryStatus) {
   if (status === "Available") return "bg-emerald-50 text-emerald-700";
   if (status === "Damaged") return "bg-rose-50 text-rose-700";
@@ -111,6 +115,8 @@ export default function IncomingDeliveriesPage() {
   const [search, setSearch] = useState("");
   const [message, setMessage] = useState("");
   const [loadingId, setLoadingId] = useState("");
+  const [selectedRows, setSelectedRows] = useState<Set<string>>(new Set());
+  const [bulkStatus, setBulkStatus] = useState<DeliveryStatus>("Available");
 
   async function loadRows() {
     const res = await fetch("/api/incoming-deliveries", { cache: "no-store" });
@@ -136,6 +142,9 @@ export default function IncomingDeliveriesPage() {
   }, [rows, search, statusFilter]);
 
   const visibleRows = filteredRows;
+  const visibleRowNumbers = useMemo(() => visibleRows.map((row, index) => getRowNumber(row, index)).filter(Boolean), [visibleRows]);
+  const selectedVisibleRows = useMemo(() => visibleRows.filter((row, index) => selectedRows.has(getRowNumber(row, index))), [visibleRows, selectedRows]);
+  const allVisibleSelected = visibleRowNumbers.length > 0 && visibleRowNumbers.every((rowNumber) => selectedRows.has(rowNumber));
 
   const summary = useMemo(() => {
     const suppliers = new Set(rows.map((row) => String(row.Supplier || "").trim()).filter(Boolean));
@@ -158,6 +167,30 @@ export default function IncomingDeliveriesPage() {
     return Array.from(groups.values()).slice(0, 4);
   }, [rows]);
 
+  function toggleRow(rowNumber: string) {
+    setSelectedRows((current) => {
+      const next = new Set(current);
+      if (next.has(rowNumber)) next.delete(rowNumber);
+      else next.add(rowNumber);
+      return next;
+    });
+  }
+
+  function toggleVisibleRows() {
+    setSelectedRows((current) => {
+      const next = new Set(current);
+      if (allVisibleSelected) visibleRowNumbers.forEach((rowNumber) => next.delete(rowNumber));
+      else visibleRowNumbers.forEach((rowNumber) => next.add(rowNumber));
+      return next;
+    });
+  }
+
+  async function postStatus(rowNumber: string, nextStatus: string) {
+    const res = await fetch("/api/incoming-deliveries/status", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ rowNumber, status: nextStatus }) });
+    const data: unknown = await res.json();
+    if (!res.ok) throw new Error(typeof data === "object" && data !== null && "error" in data ? String((data as ApiError).error) : "Failed to update status");
+  }
+
   async function updateStatus(row: MovementRow, nextStatus: string) {
     const rowNumber = String(row["_rowNumber"] || "").trim();
     if (!rowNumber) {
@@ -169,13 +202,40 @@ export default function IncomingDeliveriesPage() {
     setMessage("");
 
     try {
-      const res = await fetch("/api/incoming-deliveries/status", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ rowNumber, status: nextStatus }) });
-      const data: unknown = await res.json();
-      if (!res.ok) throw new Error(typeof data === "object" && data !== null && "error" in data ? String((data as ApiError).error) : "Failed to update status");
+      await postStatus(rowNumber, nextStatus);
       setMessage(`Status updated to ${nextStatus}.`);
+      setSelectedRows((current) => {
+        const next = new Set(current);
+        next.delete(rowNumber);
+        return next;
+      });
       await loadRows();
     } catch (error: unknown) {
       setMessage(getErrorMessage(error, "Failed to update status."));
+    } finally {
+      setLoadingId("");
+    }
+  }
+
+  async function updateSelectedRows() {
+    if (!selectedVisibleRows.length) {
+      setMessage("Select at least one visible delivery row first.");
+      return;
+    }
+
+    setLoadingId("bulk");
+    setMessage("");
+
+    try {
+      const rowNumbers = selectedVisibleRows.map((row, index) => getRowNumber(row, index)).filter(Boolean);
+      for (const rowNumber of rowNumbers) {
+        await postStatus(rowNumber, bulkStatus);
+      }
+      setMessage(`Updated ${rowNumbers.length} selected deliveries to ${bulkStatus}.`);
+      setSelectedRows(new Set());
+      await loadRows();
+    } catch (error: unknown) {
+      setMessage(getErrorMessage(error, "Failed to update selected deliveries."));
     } finally {
       setLoadingId("");
     }
@@ -193,7 +253,18 @@ export default function IncomingDeliveriesPage() {
         <div className="overflow-hidden rounded-[1.75rem] border border-slate-200/80 bg-white shadow-[0_16px_40px_rgba(15,23,42,0.05)]">
           <div className="flex flex-col gap-4 border-b border-slate-100 p-4 lg:flex-row lg:items-center lg:justify-between"><div className="flex flex-1 flex-col gap-3 lg:flex-row lg:items-center"><div className="flex w-full max-w-sm items-center gap-3 rounded-2xl border border-slate-200 bg-white px-4 py-3"><span className="text-slate-400"><Icon type="search" /></span><input type="text" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search deliveries, suppliers, or items..." className="w-full bg-transparent text-sm text-slate-700 outline-none placeholder:text-slate-400" /></div><select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)} className="rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-700 outline-none">{filters.map((value) => <option key={value} value={value}>{value === "All" ? "All Statuses" : value}</option>)}</select></div><div className="flex items-center gap-3"><Link href="/add-delivery" className="rounded-2xl bg-emerald-600 px-5 py-3 text-sm font-semibold text-white shadow-sm shadow-emerald-600/20">+ Add Delivery</Link><Link href="/upload-deliveries" className="inline-flex items-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-700"><Icon type="upload" />Import CSV</Link></div></div>
 
-          <div className="max-h-[760px] overflow-auto"><table className="min-w-full text-left text-sm"><thead className="sticky top-0 z-10 border-b border-slate-100 bg-slate-50/95 text-slate-500 backdrop-blur"><tr><th className="px-5 py-4 font-semibold">ETA</th><th className="px-5 py-4 font-semibold">Supplier</th><th className="px-5 py-4 font-semibold">Item</th><th className="px-5 py-4 font-semibold">Qty</th><th className="px-5 py-4 font-semibold">Batch / Ref</th><th className="px-5 py-4 font-semibold">Status</th><th className="px-5 py-4 text-right font-semibold">Action</th></tr></thead><tbody>{visibleRows.map((row, index) => { const rowNumber = String(row["_rowNumber"] || index); const currentStatus = normalizeStatus(row); const arrival = String(row["Arrival Date"] || row["Upload Date"] || ""); return <tr key={rowNumber} className="border-b border-slate-100 last:border-b-0"><td className="px-5 py-4"><div className="flex items-start gap-3"><span className="mt-0.5 text-slate-400"><Icon type="calendar" /></span><div><p className="font-semibold text-slate-900">{formatDate(arrival)}</p><p className="mt-1 text-xs font-medium text-slate-500">{relativeEta(arrival)}</p></div></div></td><td className="px-5 py-4"><p className="max-w-[170px] font-semibold text-slate-900">{row.Supplier || "—"}</p></td><td className="px-5 py-4"><p className="font-semibold text-slate-900">{row.Description || "—"}</p><p className="mt-1 text-xs font-medium text-slate-500">{row.Specification || ""}</p></td><td className="px-5 py-4 font-semibold text-slate-900">{toNumber(row["Qty Added"]).toLocaleString()}</td><td className="px-5 py-4"><p className="max-w-[150px] font-medium text-slate-600">{row["Batch / Reference"] || "—"}</p></td><td className="px-5 py-4"><StatusBadge status={currentStatus} /></td><td className="px-5 py-4 text-right"><select defaultValue="" disabled={loadingId === rowNumber} onChange={(event) => { void updateStatus(row, event.target.value); event.currentTarget.value = ""; }} className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-700 outline-none disabled:opacity-50"><option value="" disabled>{loadingId === rowNumber ? "Updating..." : "Set status"}</option>{statusOptions.map((option) => <option key={option} value={option}>{option}</option>)}</select></td></tr>; })}{!visibleRows.length && <tr><td colSpan={7} className="px-5 py-12 text-center text-slate-500">No delivery records found.</td></tr>}</tbody></table></div><div className="flex items-center justify-between border-t border-slate-100 px-5 py-4 text-sm font-medium text-slate-500"><span>Showing {filteredRows.length} deliveries</span><span className="rounded-xl border border-emerald-100 bg-emerald-50 px-3 py-1 text-emerald-700">{statusFilter === "All" ? "All" : statusFilter}</span></div>
+          <div className="flex flex-col gap-3 border-b border-slate-100 bg-slate-50/60 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+            <div className="text-sm font-semibold text-slate-600">{selectedVisibleRows.length ? `${selectedVisibleRows.length} selected` : "Select rows to update in batch"}</div>
+            <div className="flex flex-wrap items-center gap-2">
+              <select value={bulkStatus} onChange={(event) => setBulkStatus(event.target.value as DeliveryStatus)} className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-700 outline-none">
+                {statusOptions.map((option) => <option key={option} value={option}>{option}</option>)}
+              </select>
+              <button type="button" onClick={updateSelectedRows} disabled={!selectedVisibleRows.length || loadingId === "bulk"} className="rounded-xl bg-emerald-600 px-4 py-2 text-xs font-bold text-white shadow-sm disabled:cursor-not-allowed disabled:opacity-50">{loadingId === "bulk" ? "Updating..." : "Update Selected"}</button>
+              {selectedRows.size ? <button type="button" onClick={() => setSelectedRows(new Set())} className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-xs font-bold text-slate-600">Clear</button> : null}
+            </div>
+          </div>
+
+          <div className="max-h-[760px] overflow-auto"><table className="min-w-full text-left text-sm"><thead className="sticky top-0 z-10 border-b border-slate-100 bg-slate-50/95 text-slate-500 backdrop-blur"><tr><th className="px-5 py-4 font-semibold"><input type="checkbox" checked={allVisibleSelected} onChange={toggleVisibleRows} aria-label="Select all visible deliveries" /></th><th className="px-5 py-4 font-semibold">ETA</th><th className="px-5 py-4 font-semibold">Supplier</th><th className="px-5 py-4 font-semibold">Item</th><th className="px-5 py-4 font-semibold">Qty</th><th className="px-5 py-4 font-semibold">Batch / Ref</th><th className="px-5 py-4 font-semibold">Status</th><th className="px-5 py-4 text-right font-semibold">Action</th></tr></thead><tbody>{visibleRows.map((row, index) => { const rowNumber = getRowNumber(row, index); const currentStatus = normalizeStatus(row); const arrival = String(row["Arrival Date"] || row["Upload Date"] || ""); return <tr key={rowNumber} className="border-b border-slate-100 last:border-b-0"><td className="px-5 py-4"><input type="checkbox" checked={selectedRows.has(rowNumber)} onChange={() => toggleRow(rowNumber)} aria-label={`Select ${row.Description || "delivery"}`} /></td><td className="px-5 py-4"><div className="flex items-start gap-3"><span className="mt-0.5 text-slate-400"><Icon type="calendar" /></span><div><p className="font-semibold text-slate-900">{formatDate(arrival)}</p><p className="mt-1 text-xs font-medium text-slate-500">{relativeEta(arrival)}</p></div></div></td><td className="px-5 py-4"><p className="max-w-[170px] font-semibold text-slate-900">{row.Supplier || "—"}</p></td><td className="px-5 py-4"><p className="font-semibold text-slate-900">{row.Description || "—"}</p><p className="mt-1 text-xs font-medium text-slate-500">{row.Specification || ""}</p></td><td className="px-5 py-4 font-semibold text-slate-900">{toNumber(row["Qty Added"]).toLocaleString()}</td><td className="px-5 py-4"><p className="max-w-[150px] font-medium text-slate-600">{row["Batch / Reference"] || "—"}</p></td><td className="px-5 py-4"><StatusBadge status={currentStatus} /></td><td className="px-5 py-4 text-right"><select defaultValue="" disabled={loadingId === rowNumber || loadingId === "bulk"} onChange={(event) => { void updateStatus(row, event.target.value); event.currentTarget.value = ""; }} className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-700 outline-none disabled:opacity-50"><option value="" disabled>{loadingId === rowNumber ? "Updating..." : "Set status"}</option>{statusOptions.map((option) => <option key={option} value={option}>{option}</option>)}</select></td></tr>; })}{!visibleRows.length && <tr><td colSpan={8} className="px-5 py-12 text-center text-slate-500">No delivery records found.</td></tr>}</tbody></table></div><div className="flex items-center justify-between border-t border-slate-100 px-5 py-4 text-sm font-medium text-slate-500"><span>Showing {filteredRows.length} deliveries</span><span className="rounded-xl border border-emerald-100 bg-emerald-50 px-3 py-1 text-emerald-700">{statusFilter === "All" ? "All" : statusFilter}</span></div>
         </div>
 
         <aside className="space-y-5"><div className="rounded-[1.75rem] border border-slate-200/80 bg-white p-5 shadow-[0_16px_40px_rgba(15,23,42,0.05)]"><div className="mb-5 flex items-center gap-3"><span className="text-slate-500"><Icon type="calendar" /></span><h2 className="text-lg font-bold text-slate-950">Upcoming Arrivals</h2></div><div className="space-y-4">{arrivals.map((item) => <div key={item.label} className="flex items-center justify-between border-b border-slate-100 pb-4 last:border-0 last:pb-0"><div><p className="font-semibold text-slate-900">{item.label}</p><p className="mt-1 text-xs font-medium text-slate-500">{item.date}</p></div><div className="text-right"><p className="text-2xl font-bold text-slate-950">{item.count}</p><p className="text-xs text-slate-500">Deliveries</p></div></div>)}</div></div><div className="rounded-[1.75rem] border border-slate-200/80 bg-white p-5 shadow-[0_16px_40px_rgba(15,23,42,0.05)]"><div className="mb-5 flex items-center gap-3"><span className="text-slate-500"><Icon type="note" /></span><h2 className="text-lg font-bold text-slate-950">Delivery Notes</h2></div><div className="flex gap-3"><span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-emerald-50 text-emerald-600"><Icon type="check" /></span><div><p className="font-semibold text-slate-900">Receive stock before selling.</p><p className="mt-1 text-sm text-slate-500">Supplier uploads should stay Incoming until marked Available.</p></div></div></div></aside>
