@@ -23,14 +23,46 @@ type HistoryEvent = {
   createdAt: string;
 };
 
+type HistoryFilter = "all" | "supplier" | "customer" | "incoming" | "available" | "confirmed";
+
+const FILTERS: { key: HistoryFilter; label: string }[] = [
+  { key: "all", label: "All" },
+  { key: "supplier", label: "Supplier Imports" },
+  { key: "customer", label: "Customer Sales" },
+  { key: "incoming", label: "Incoming / Pending" },
+  { key: "available", label: "Available" },
+  { key: "confirmed", label: "Confirmed Sales" },
+];
+
 function money(value: number) {
   return `$${(Number(value) || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+}
+
+function normalize(value: unknown) {
+  return String(value || "").trim().toLowerCase();
+}
+
+function matchesFilter(row: HistoryEvent, filter: HistoryFilter) {
+  const type = normalize(row.type);
+  const source = normalize(row.source);
+  const status = normalize(row.status);
+  const hasSupplier = Boolean(row.supplier);
+  const hasCustomer = Boolean(row.customerName);
+
+  if (filter === "all") return true;
+  if (filter === "supplier") return hasSupplier || type.includes("supplier") || source.includes("supplier") || Number(row.qtyIn) > 0;
+  if (filter === "customer") return hasCustomer || type.includes("sale") || type.includes("customer") || source.includes("sale") || Number(row.qtyOut) > 0;
+  if (filter === "incoming") return status.includes("incoming") || status.includes("pending");
+  if (filter === "available") return status.includes("available");
+  if (filter === "confirmed") return status.includes("confirmed") || type.includes("confirmed sale") || type.includes("sale");
+  return true;
 }
 
 export default function InventoryHistoryPage() {
   const [rows, setRows] = useState<HistoryEvent[]>([]);
   const [message, setMessage] = useState("");
   const [query, setQuery] = useState("");
+  const [activeFilter, setActiveFilter] = useState<HistoryFilter>("all");
   const [loading, setLoading] = useState(false);
 
   async function loadRows() {
@@ -52,9 +84,19 @@ export default function InventoryHistoryPage() {
 
   const filteredRows = useMemo(() => {
     const needle = query.trim().toLowerCase();
-    if (!needle) return rows;
-    return rows.filter((row) => [row.date, row.type, row.reference, row.supplier, row.customerName, row.description, row.specification, row.status, row.notes].join(" ").toLowerCase().includes(needle));
-  }, [rows, query]);
+    return rows.filter((row) => {
+      if (!matchesFilter(row, activeFilter)) return false;
+      if (!needle) return true;
+      return [row.date, row.type, row.reference, row.supplier, row.customerName, row.description, row.specification, row.status, row.notes].join(" ").toLowerCase().includes(needle);
+    });
+  }, [rows, query, activeFilter]);
+
+  const filterCounts = useMemo(() => {
+    return FILTERS.reduce<Record<HistoryFilter, number>>((acc, filter) => {
+      acc[filter.key] = rows.filter((row) => matchesFilter(row, filter.key)).length;
+      return acc;
+    }, { all: 0, supplier: 0, customer: 0, incoming: 0, available: 0, confirmed: 0 });
+  }, [rows]);
 
   const summary = useMemo(() => {
     return rows.reduce((acc, row) => {
@@ -86,9 +128,30 @@ export default function InventoryHistoryPage() {
 
       <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
         <div className="mb-4 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-          <h2 className="text-xl font-semibold text-slate-900">Movement Ledger</h2>
+          <div>
+            <h2 className="text-xl font-semibold text-slate-900">Movement Ledger</h2>
+            <p className="mt-1 text-xs font-medium text-slate-500">Showing {filteredRows.length.toLocaleString()} of {rows.length.toLocaleString()} movements.</p>
+          </div>
           <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search product, supplier, ref, status..." className="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm outline-none focus:border-emerald-400 md:max-w-md" />
         </div>
+
+        <div className="mb-4 flex flex-wrap gap-2">
+          {FILTERS.map((filter) => {
+            const isActive = activeFilter === filter.key;
+            return (
+              <button
+                key={filter.key}
+                type="button"
+                onClick={() => setActiveFilter(filter.key)}
+                className={`rounded-full border px-4 py-2 text-xs font-bold transition ${isActive ? "border-emerald-500 bg-emerald-50 text-emerald-700" : "border-slate-200 bg-white text-slate-600 hover:border-slate-300 hover:bg-slate-50"}`}
+              >
+                {filter.label}
+                <span className="ml-2 rounded-full bg-slate-100 px-2 py-0.5 text-[11px] text-slate-600">{filterCounts[filter.key].toLocaleString()}</span>
+              </button>
+            );
+          })}
+        </div>
+
         <div className="overflow-x-auto rounded-2xl border border-slate-200">
           <table className="w-full text-sm">
             <thead className="bg-slate-100 text-slate-700">
@@ -111,7 +174,7 @@ export default function InventoryHistoryPage() {
                   <td className="min-w-[260px] px-4 py-3 text-slate-600">{row.notes}</td>
                 </tr>
               ))}
-              {!filteredRows.length && <tr><td colSpan={12} className="px-4 py-8 text-center text-slate-500">No inventory history found.</td></tr>}
+              {!filteredRows.length && <tr><td colSpan={12} className="px-4 py-8 text-center text-slate-500">No inventory history found for this filter.</td></tr>}
             </tbody>
           </table>
         </div>
