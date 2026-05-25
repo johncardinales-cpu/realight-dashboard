@@ -241,6 +241,7 @@ export default function ConfirmSalesPage() {
 
   const summaries = useMemo(() => summarizeSales(rows), [rows]);
   const reviewSales = summaries.filter((sale) => sale.saleStatus.toLowerCase() !== "cancelled");
+  const compactInputClass = "h-8 rounded-lg border border-slate-300 bg-white px-2 text-[11px] font-semibold text-slate-700 outline-none focus:border-emerald-400";
 
   return (
     <section className="space-y-6">
@@ -265,7 +266,7 @@ export default function ConfirmSalesPage() {
           <table className="w-full text-sm">
             <thead className="bg-slate-100 text-slate-700">
               <tr>
-                {["Date", "Sales Ref", "Customer", "Items", "Total", "Paid", "Balance", "Payment", "Sale", "Edit Payment", "Action"].map((head) => (
+                {["Date", "Sales Ref", "Customer", "Items", "Total", "Paid", "Balance", "Payment", "Sale", "Payment Edit", "Action"].map((head) => (
                   <th key={head} className="px-4 py-3 text-left font-medium whitespace-nowrap">{head}</th>
                 ))}
               </tr>
@@ -291,19 +292,24 @@ export default function ConfirmSalesPage() {
                     <td className="px-4 py-3"><StatusPill value={sale.paymentStatus} /></td>
                     <td className="px-4 py-3"><StatusPill value={sale.saleStatus} /></td>
                     <td className="px-4 py-3">
-                      <div className="grid min-w-[360px] gap-2 sm:grid-cols-2">
-                        <select value={edit.paymentStatus} onChange={(event) => updatePaymentEdit(sale, { paymentStatus: event.target.value, amountPaidPhp: event.target.value === "Paid" ? String(sale.totalSalePhp) : event.target.value === "Pending" ? "0" : edit.amountPaidPhp })} className="rounded-xl border border-slate-300 px-3 py-2 text-xs font-semibold text-slate-700">
-                          {paymentStatusOptions.map((status) => <option key={status} value={status}>{status}</option>)}
-                        </select>
-                        <input type="number" step="0.01" min="0" value={edit.amountPaidPhp} onChange={(event) => updatePaymentEdit(sale, { amountPaidPhp: event.target.value })} className="rounded-xl border border-slate-300 px-3 py-2 text-xs font-semibold text-slate-700" placeholder="Amount paid" />
-                        <select value={edit.paymentMethod} onChange={(event) => updatePaymentEdit(sale, { paymentMethod: event.target.value })} className="rounded-xl border border-slate-300 px-3 py-2 text-xs font-semibold text-slate-700">
-                          {paymentMethodOptions.map((method) => <option key={method || "blank"} value={method}>{method || "Payment Method"}</option>)}
-                        </select>
-                        <input value={edit.cashierName} onChange={(event) => updatePaymentEdit(sale, { cashierName: event.target.value })} className="rounded-xl border border-slate-300 px-3 py-2 text-xs font-semibold text-slate-700" placeholder="Cashier" />
-                        <input value={edit.transactionRef} onChange={(event) => updatePaymentEdit(sale, { transactionRef: event.target.value })} className="rounded-xl border border-slate-300 px-3 py-2 text-xs font-semibold text-slate-700 sm:col-span-2" placeholder="Receipt / transaction ref" />
-                        <button type="button" onClick={() => updateSalePayment(sale)} disabled={workingKey === `payment-${sale.key}`} className="rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-bold text-emerald-700 disabled:opacity-50 sm:col-span-2">
-                          {workingKey === `payment-${sale.key}` ? "Saving Payment..." : "Save Payment Changes"}
-                        </button>
+                      <div className="w-[300px] rounded-xl border border-slate-200 bg-slate-50/70 p-2">
+                        <div className="mb-1 flex items-center justify-between">
+                          <span className="text-[11px] font-bold text-slate-600">Edit Payment</span>
+                          <button type="button" onClick={() => updateSalePayment(sale)} disabled={workingKey === `payment-${sale.key}`} className="rounded-lg bg-emerald-600 px-2.5 py-1 text-[11px] font-bold text-white disabled:opacity-50">
+                            {workingKey === `payment-${sale.key}` ? "Saving..." : "Save"}
+                          </button>
+                        </div>
+                        <div className="grid grid-cols-2 gap-1.5">
+                          <select value={edit.paymentStatus} onChange={(event) => updatePaymentEdit(sale, { paymentStatus: event.target.value, amountPaidPhp: event.target.value === "Paid" ? String(sale.totalSalePhp) : event.target.value === "Pending" ? "0" : edit.amountPaidPhp })} className={compactInputClass}>
+                            {paymentStatusOptions.map((status) => <option key={status} value={status}>{status}</option>)}
+                          </select>
+                          <input type="number" step="0.01" min="0" value={edit.amountPaidPhp} onChange={(event) => updatePaymentEdit(sale, { amountPaidPhp: event.target.value })} className={compactInputClass} placeholder="Amount" />
+                          <select value={edit.paymentMethod} onChange={(event) => updatePaymentEdit(sale, { paymentMethod: event.target.value })} className={compactInputClass}>
+                            {paymentMethodOptions.map((method) => <option key={method || "blank"} value={method}>{method || "Method"}</option>)}
+                          </select>
+                          <input value={edit.cashierName} onChange={(event) => updatePaymentEdit(sale, { cashierName: event.target.value })} className={compactInputClass} placeholder="Cashier" />
+                          <input value={edit.transactionRef} onChange={(event) => updatePaymentEdit(sale, { transactionRef: event.target.value })} className={`${compactInputClass} col-span-2`} placeholder="Receipt / transaction ref" />
+                        </div>
                       </div>
                     </td>
                     <td className="px-4 py-3">
@@ -327,7 +333,7 @@ export default function ConfirmSalesPage() {
           </table>
         </div>
         <p className="mt-4 text-xs leading-6 text-slate-500">
-          Rule: confirming a sale marks it Paid and deducts inventory. Use Edit Payment to correct method, paid amount, cashier, or reference before confirming. Undo Confirm returns the sale to Draft but keeps the payment record for review.
+          Rule: confirming a sale marks it Paid and deducts inventory. Reports read paid amount, balance, payment method, and sale status from the Sales sheet, so saved payment changes are included in Reports.
         </p>
       </div>
     </section>
