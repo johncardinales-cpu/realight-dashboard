@@ -18,18 +18,22 @@ type ReportData = {
     initialCollectionsToday: number;
     followUpCollectionsToday: number;
     collectionsToday: number;
+    cashReceivedToday?: number;
+    changeGivenToday?: number;
+    netCashAfterChangeToday?: number;
     newReceivablesToday: number;
     endingReceivables: number;
     dailySaleCount: number;
     paymentStatusCounts: Record<string, number>;
   };
   collectionsByMethod: Array<{ method: string; amount: number }>;
+  cashByMethod?: Array<{ method: string; amount: number }>;
   expensesByCategory: Array<{ category: string; amount: number }>;
-  dailyTrend: Array<{ date: string; sales: number; collections: number; expenses: number; grossProfit: number; netProfit: number; receivables: number }>;
+  dailyTrend: Array<{ date: string; sales: number; collections: number; cashReceived?: number; changeGiven?: number; expenses: number; grossProfit: number; netProfit: number; receivables: number }>;
   productMovement: Array<{ description: string; specification: string; qty: number; confirmedQty: number; totalSalePhp: number; grossProfitPhp: number }>;
-  dailySales: Array<{ saleDate: string; salesRefNo: string; customerName: string; totalSalePhp: number; totalPaidPhp: number; balancePhp: number; grossProfitPhp: number; paymentStatus: string; saleStatus: string }>;
+  dailySales: Array<{ saleDate: string; salesRefNo: string; customerName: string; totalSalePhp: number; totalPaidPhp: number; tenderedAmountPhp?: number; changeDuePhp?: number; netCollectionPhp?: number; balancePhp: number; grossProfitPhp: number; paymentStatus: string; saleStatus: string }>;
   dailyExpenses: Array<{ date: string; category: string; description: string; amount: number; source: string }>;
-  openReceivables: Array<{ saleDate: string; salesRefNo: string; customerName: string; totalSalePhp: number; totalPaidPhp: number; balancePhp: number; paymentStatus: string; saleStatus: string }>;
+  openReceivables: Array<{ saleDate: string; salesRefNo: string; customerName: string; totalSalePhp: number; totalPaidPhp: number; tenderedAmountPhp?: number; changeDuePhp?: number; balancePhp: number; paymentStatus: string; saleStatus: string }>;
 };
 
 function money(value: number) {
@@ -119,7 +123,10 @@ export default function ReportsPage() {
       ["End Date", data.endDate],
       ["Sales", s.totalSalesToday],
       ["Confirmed Sales", s.confirmedSalesToday],
-      ["Collections", s.collectionsToday],
+      ["Collections / Applied Payment", s.collectionsToday],
+      ["Cash Received / Tendered", s.cashReceivedToday || s.collectionsToday],
+      ["Change Given", s.changeGivenToday || 0],
+      ["Net Cash After Change", s.netCashAfterChangeToday || s.collectionsToday],
       ["Initial Collections", s.initialCollectionsToday],
       ["Follow-up Collections", s.followUpCollectionsToday],
       ["Gross Profit", s.grossProfitToday],
@@ -134,15 +141,15 @@ export default function ReportsPage() {
   function exportSales() {
     if (!data) return;
     downloadCsv(`realights-${data.mode}-sales-${data.startDate}-to-${data.endDate}.csv`, [
-      ["Date", "Sales Ref", "Customer", "Total Sale", "Paid", "Balance", "Gross Profit", "Payment Status", "Sale Status"],
-      ...data.dailySales.map((sale) => [sale.saleDate, sale.salesRefNo, sale.customerName, sale.totalSalePhp, sale.totalPaidPhp, sale.balancePhp, sale.grossProfitPhp, sale.paymentStatus, sale.saleStatus]),
+      ["Date", "Sales Ref", "Customer", "Total Sale", "Paid / Applied", "Cash Received", "Change Given", "Net Cash After Change", "Balance", "Gross Profit", "Payment Status", "Sale Status"],
+      ...data.dailySales.map((sale) => [sale.saleDate, sale.salesRefNo, sale.customerName, sale.totalSalePhp, sale.totalPaidPhp, sale.tenderedAmountPhp || sale.totalPaidPhp, sale.changeDuePhp || 0, sale.netCollectionPhp || sale.totalPaidPhp, sale.balancePhp, sale.grossProfitPhp, sale.paymentStatus, sale.saleStatus]),
     ]);
   }
 
   function exportCollections() {
     if (!data) return;
     downloadCsv(`realights-${data.mode}-collections-${data.startDate}-to-${data.endDate}.csv`, [
-      ["Method", "Amount"],
+      ["Method", "Applied Collection"],
       ...data.collectionsByMethod.map((item) => [item.method, item.amount]),
     ]);
   }
@@ -150,8 +157,8 @@ export default function ReportsPage() {
   function exportReceivables() {
     if (!data) return;
     downloadCsv(`realights-open-receivables-${data.startDate}-to-${data.endDate}.csv`, [
-      ["Date", "Sales Ref", "Customer", "Total Sale", "Paid", "Balance", "Payment Status", "Sale Status"],
-      ...data.openReceivables.map((sale) => [sale.saleDate, sale.salesRefNo, sale.customerName, sale.totalSalePhp, sale.totalPaidPhp, sale.balancePhp, sale.paymentStatus, sale.saleStatus]),
+      ["Date", "Sales Ref", "Customer", "Total Sale", "Paid", "Cash Received", "Change Given", "Balance", "Payment Status", "Sale Status"],
+      ...data.openReceivables.map((sale) => [sale.saleDate, sale.salesRefNo, sale.customerName, sale.totalSalePhp, sale.totalPaidPhp, sale.tenderedAmountPhp || sale.totalPaidPhp, sale.changeDuePhp || 0, sale.balancePhp, sale.paymentStatus, sale.saleStatus]),
     ]);
   }
 
@@ -186,7 +193,7 @@ export default function ReportsPage() {
           <div>
             <h1 className="text-3xl font-semibold text-slate-900">Reports</h1>
             <p className="mt-1 text-sm text-slate-600">
-              Sales use Sale Date. Collections use Payment Date. Inventory will use Confirmed sales only.
+              Sales use Sale Date. Cash received, change given, and applied collections are separated for cashier audit.
             </p>
             {data ? <p className="mt-2 text-sm font-semibold text-slate-800">{periodTitle}</p> : null}
           </div>
@@ -219,7 +226,10 @@ export default function ReportsPage() {
         <>
           <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
             <StatCard label={`${titleForMode(data!.mode)} Sales`} value={money(summary.totalSalesToday)} helper={`${summary.dailySaleCount} sale transaction(s)`} />
-            <StatCard label={`${titleForMode(data!.mode)} Collections`} value={money(summary.collectionsToday)} helper="Initial + follow-up payments" />
+            <StatCard label={`${titleForMode(data!.mode)} Collections`} value={money(summary.collectionsToday)} helper="Applied to sales only" />
+            <StatCard label="Cash Received" value={money(summary.cashReceivedToday || summary.collectionsToday)} helper="Total tendered before change" />
+            <StatCard label="Change Given" value={money(summary.changeGivenToday || 0)} helper="Returned to customers" />
+            <StatCard label="Net Cash After Change" value={money(summary.netCashAfterChangeToday || summary.collectionsToday)} helper="Cash received minus change" />
             <StatCard label="Gross Profit" value={money(summary.grossProfitToday)} helper="Based on sale date" />
             <StatCard label="Net Profit" value={money(summary.netProfitToday)} helper="Gross profit minus expenses" />
             <StatCard label="Confirmed Sales" value={money(summary.confirmedSalesToday)} helper="Inventory-affecting sales" />
@@ -232,20 +242,22 @@ export default function ReportsPage() {
             <h2 className="mb-4 text-xl font-semibold text-slate-900">Daily Trend</h2>
             <div className="overflow-x-auto rounded-2xl border border-slate-200">
               <table className="w-full text-sm">
-                <thead className="bg-slate-100 text-slate-700"><tr>{["Date", "Sales", "Collections", "Expenses", "Gross Profit", "Net Profit", "Receivables"].map((h) => <th key={h} className="px-4 py-3 text-left font-medium whitespace-nowrap">{h}</th>)}</tr></thead>
+                <thead className="bg-slate-100 text-slate-700"><tr>{["Date", "Sales", "Collections", "Cash Received", "Change", "Expenses", "Gross Profit", "Net Profit", "Receivables"].map((h) => <th key={h} className="px-4 py-3 text-left font-medium whitespace-nowrap">{h}</th>)}</tr></thead>
                 <tbody>
                   {data.dailyTrend.map((row) => (
                     <tr key={row.date} className="border-t border-slate-100">
                       <td className="px-4 py-3 text-slate-700">{row.date}</td>
                       <td className="px-4 py-3 text-slate-700">{money(row.sales)}</td>
                       <td className="px-4 py-3 text-slate-700">{money(row.collections)}</td>
+                      <td className="px-4 py-3 text-slate-700">{money(row.cashReceived ?? row.collections)}</td>
+                      <td className="px-4 py-3 text-slate-700">{money(row.changeGiven || 0)}</td>
                       <td className="px-4 py-3 text-slate-700">{money(row.expenses)}</td>
                       <td className="px-4 py-3 text-slate-700">{money(row.grossProfit)}</td>
                       <td className="px-4 py-3 font-semibold text-slate-900">{money(row.netProfit)}</td>
                       <td className="px-4 py-3 text-slate-700">{money(row.receivables)}</td>
                     </tr>
                   ))}
-                  {!data.dailyTrend.length && <tr><td colSpan={7} className="px-4 py-8 text-center text-slate-500">No activity for this period.</td></tr>}
+                  {!data.dailyTrend.length && <tr><td colSpan={9} className="px-4 py-8 text-center text-slate-500">No activity for this period.</td></tr>}
                 </tbody>
               </table>
             </div>
@@ -254,6 +266,7 @@ export default function ReportsPage() {
           <div className="grid gap-6 xl:grid-cols-2">
             <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
               <h2 className="text-xl font-semibold text-slate-900">Collections Breakdown</h2>
+              <p className="mt-1 text-xs text-slate-500">Applied sale collection. Cash received and change are shown in Sales Detail.</p>
               <div className="mt-4 overflow-x-auto rounded-2xl border border-slate-200">
                 <table className="w-full text-sm"><thead className="bg-slate-100 text-slate-700"><tr><th className="px-4 py-3 text-left font-medium">Method</th><th className="px-4 py-3 text-left font-medium">Amount</th><th className="px-4 py-3 text-left font-medium">Share</th></tr></thead>
                   <tbody>{data.collectionsByMethod.map((item) => <tr key={item.method} className="border-t border-slate-100"><td className="px-4 py-3 text-slate-700">{item.method}</td><td className="px-4 py-3 font-semibold text-slate-900">{money(item.amount)}</td><td className="px-4 py-3 text-slate-700">{collectionMethodTotal ? `${((item.amount / collectionMethodTotal) * 100).toFixed(1)}%` : "0%"}</td></tr>)}{!data.collectionsByMethod.length && <tr><td colSpan={3} className="px-4 py-8 text-center text-slate-500">No collections for this period.</td></tr>}</tbody>
@@ -284,14 +297,14 @@ export default function ReportsPage() {
           <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
             <h2 className="mb-4 text-xl font-semibold text-slate-900">Sales Detail</h2>
             <div className="overflow-x-auto rounded-2xl border border-slate-200">
-              <table className="w-full text-sm"><thead className="bg-slate-100 text-slate-700"><tr>{["Date", "Sales Ref", "Customer", "Total Sale", "Paid", "Balance", "Gross Profit", "Payment", "Sale"].map((h) => <th key={h} className="px-4 py-3 text-left font-medium whitespace-nowrap">{h}</th>)}</tr></thead>
-                <tbody>{data.dailySales.map((sale) => <tr key={`${sale.salesRefNo}-${sale.customerName}`} className="border-t border-slate-100"><td className="px-4 py-3 text-slate-700">{sale.saleDate}</td><td className="px-4 py-3 text-slate-700">{sale.salesRefNo}</td><td className="px-4 py-3 text-slate-700">{sale.customerName}</td><td className="px-4 py-3 text-slate-700">{money(sale.totalSalePhp)}</td><td className="px-4 py-3 text-slate-700">{money(sale.totalPaidPhp)}</td><td className="px-4 py-3 font-semibold text-slate-900">{money(sale.balancePhp)}</td><td className="px-4 py-3 text-slate-700">{money(sale.grossProfitPhp)}</td><td className="px-4 py-3"><StatusPill value={sale.paymentStatus} /></td><td className="px-4 py-3"><StatusPill value={sale.saleStatus} /></td></tr>)}{!data.dailySales.length && <tr><td colSpan={9} className="px-4 py-8 text-center text-slate-500">No sales for this period.</td></tr>}</tbody>
+              <table className="w-full text-sm"><thead className="bg-slate-100 text-slate-700"><tr>{["Date", "Sales Ref", "Customer", "Total Sale", "Paid / Applied", "Cash Received", "Change", "Balance", "Gross Profit", "Payment", "Sale"].map((h) => <th key={h} className="px-4 py-3 text-left font-medium whitespace-nowrap">{h}</th>)}</tr></thead>
+                <tbody>{data.dailySales.map((sale) => <tr key={`${sale.salesRefNo}-${sale.customerName}`} className="border-t border-slate-100"><td className="px-4 py-3 text-slate-700">{sale.saleDate}</td><td className="px-4 py-3 text-slate-700">{sale.salesRefNo}</td><td className="px-4 py-3 text-slate-700">{sale.customerName}</td><td className="px-4 py-3 text-slate-700">{money(sale.totalSalePhp)}</td><td className="px-4 py-3 text-slate-700">{money(sale.totalPaidPhp)}</td><td className="px-4 py-3 font-semibold text-slate-900">{money(sale.tenderedAmountPhp ?? sale.totalPaidPhp)}</td><td className="px-4 py-3 text-rose-700">{money(sale.changeDuePhp || 0)}</td><td className="px-4 py-3 font-semibold text-slate-900">{money(sale.balancePhp)}</td><td className="px-4 py-3 text-slate-700">{money(sale.grossProfitPhp)}</td><td className="px-4 py-3"><StatusPill value={sale.paymentStatus} /></td><td className="px-4 py-3"><StatusPill value={sale.saleStatus} /></td></tr>)}{!data.dailySales.length && <tr><td colSpan={11} className="px-4 py-8 text-center text-slate-500">No sales for this period.</td></tr>}</tbody>
               </table>
             </div>
           </div>
 
           <div className="grid gap-6 xl:grid-cols-2">
-            <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm"><h2 className="mb-4 text-xl font-semibold text-slate-900">Open Receivables</h2><div className="overflow-x-auto rounded-2xl border border-slate-200"><table className="w-full text-sm"><thead className="bg-slate-100 text-slate-700"><tr>{["Date", "Sales Ref", "Customer", "Total", "Paid", "Balance", "Status"].map((h) => <th key={h} className="px-4 py-3 text-left font-medium whitespace-nowrap">{h}</th>)}</tr></thead><tbody>{data.openReceivables.slice(0, 20).map((sale) => <tr key={`${sale.salesRefNo}-${sale.customerName}`} className="border-t border-slate-100"><td className="px-4 py-3 text-slate-700">{sale.saleDate}</td><td className="px-4 py-3 text-slate-700">{sale.salesRefNo}</td><td className="px-4 py-3 text-slate-700">{sale.customerName}</td><td className="px-4 py-3 text-slate-700">{money(sale.totalSalePhp)}</td><td className="px-4 py-3 text-slate-700">{money(sale.totalPaidPhp)}</td><td className="px-4 py-3 font-semibold text-slate-900">{money(sale.balancePhp)}</td><td className="px-4 py-3"><StatusPill value={sale.paymentStatus} /></td></tr>)}{!data.openReceivables.length && <tr><td colSpan={7} className="px-4 py-8 text-center text-slate-500">No open receivables.</td></tr>}</tbody></table></div></div>
+            <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm"><h2 className="mb-4 text-xl font-semibold text-slate-900">Open Receivables</h2><div className="overflow-x-auto rounded-2xl border border-slate-200"><table className="w-full text-sm"><thead className="bg-slate-100 text-slate-700"><tr>{["Date", "Sales Ref", "Customer", "Total", "Paid", "Cash Received", "Change", "Balance", "Status"].map((h) => <th key={h} className="px-4 py-3 text-left font-medium whitespace-nowrap">{h}</th>)}</tr></thead><tbody>{data.openReceivables.slice(0, 20).map((sale) => <tr key={`${sale.salesRefNo}-${sale.customerName}`} className="border-t border-slate-100"><td className="px-4 py-3 text-slate-700">{sale.saleDate}</td><td className="px-4 py-3 text-slate-700">{sale.salesRefNo}</td><td className="px-4 py-3 text-slate-700">{sale.customerName}</td><td className="px-4 py-3 text-slate-700">{money(sale.totalSalePhp)}</td><td className="px-4 py-3 text-slate-700">{money(sale.totalPaidPhp)}</td><td className="px-4 py-3 text-slate-700">{money(sale.tenderedAmountPhp ?? sale.totalPaidPhp)}</td><td className="px-4 py-3 text-rose-700">{money(sale.changeDuePhp || 0)}</td><td className="px-4 py-3 font-semibold text-slate-900">{money(sale.balancePhp)}</td><td className="px-4 py-3"><StatusPill value={sale.paymentStatus} /></td></tr>)}{!data.openReceivables.length && <tr><td colSpan={9} className="px-4 py-8 text-center text-slate-500">No open receivables.</td></tr>}</tbody></table></div></div>
             <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm"><h2 className="mb-4 text-xl font-semibold text-slate-900">Expense Detail</h2><div className="overflow-x-auto rounded-2xl border border-slate-200"><table className="w-full text-sm"><thead className="bg-slate-100 text-slate-700"><tr>{["Date", "Category", "Description", "Amount", "Source"].map((h) => <th key={h} className="px-4 py-3 text-left font-medium whitespace-nowrap">{h}</th>)}</tr></thead><tbody>{data.dailyExpenses.map((expense, index) => <tr key={`${expense.source}-${index}`} className="border-t border-slate-100"><td className="px-4 py-3 text-slate-700">{expense.date}</td><td className="px-4 py-3 text-slate-700">{expense.category}</td><td className="px-4 py-3 text-slate-700">{expense.description}</td><td className="px-4 py-3 font-semibold text-slate-900">{money(expense.amount)}</td><td className="px-4 py-3 text-slate-700">{expense.source}</td></tr>)}{!data.dailyExpenses.length && <tr><td colSpan={5} className="px-4 py-8 text-center text-slate-500">No expenses for this period.</td></tr>}</tbody></table></div></div>
           </div>
         </>
