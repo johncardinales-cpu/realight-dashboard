@@ -10,7 +10,7 @@ const AUDIT_LOG_SHEET = "Audit_Log";
 const auth = new google.auth.GoogleAuth({
   credentials: {
     client_email: process.env.GOOGLE_CLIENT_EMAIL as string,
-    private_key: process.env.GOOGLE_PRIVATE_KEY?.replace(/\n/g, "\n"),
+    private_key: process.env.GOOGLE_PRIVATE_KEY?.replace(/\\n/g, "\n"),
   },
   scopes: ["https://www.googleapis.com/auth/spreadsheets"],
 });
@@ -33,6 +33,7 @@ function roundMoney(value: number) { return Math.round((Number(value) || 0) * 10
 function itemKey(description: string, specification: string) { return `${description.trim()}|||${specification.trim()}`; }
 function columnLetter(index: number) { let column = ""; let current = index; while (current > 0) { const remainder = (current - 1) % 26; column = String.fromCharCode(65 + remainder) + column; current = Math.floor((current - 1) / 26); } return column; }
 function makeId(prefix: string) { const stamp = new Date().toISOString().replace(/[-:.TZ]/g, "").slice(0, 14); const random = Math.random().toString(36).slice(2, 8).toUpperCase(); return `${prefix}_${stamp}_${random}`; }
+function normalizeDate(value: unknown) { const raw = String(value || "").trim(); if (!raw) return ""; if (/^\d{4}-\d{2}-\d{2}/.test(raw)) return raw.slice(0, 10); if (/^\d{1,2}\/\d{1,2}\/\d{2,4}$/.test(raw)) { const [month, day, yearRaw] = raw.split("/").map(Number); const year = yearRaw < 100 ? 2000 + yearRaw : yearRaw; return `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`; } if (/^\d+(\.\d+)?$/.test(raw)) { const serial = Number(raw); if (serial > 20000 && serial < 90000) return new Date(Math.floor(serial - 25569) * 86400 * 1000).toISOString().slice(0, 10); } const parsed = new Date(raw); return Number.isNaN(parsed.getTime()) ? raw : parsed.toISOString().slice(0, 10); }
 
 function isValidSalesRow(row: string[]) {
   const saleDate = String(row[0] || "").trim();
@@ -118,7 +119,7 @@ export async function GET() {
     const rows = (response.data.values || []) as string[][];
     const data = rows.slice(1).filter(isValidSalesRow);
     const items = data.map((row: string[], index: number) => ({
-      rowNumber: index + 2, saleDate: String(row[0] || ""), salesRefNo: String(row[1] || ""), customerName: String(row[2] || ""), description: String(row[3] || ""), specification: String(row[4] || ""), qty: toNumber(row[5]), unitPricePhp: toNumber(row[6]), totalSalePhp: toNumber(row[7]), costPricePhp: toNumber(row[8]), totalCostPhp: toNumber(row[9]), grossProfitPhp: toNumber(row[10]), paymentStatus: String(row[11] || "Pending"), salesperson: String(row[12] || ""), notes: String(row[13] || ""), groupRef: String(row[14] || ""), paymentMethod: String(row[15] || ""), amountPaidPhp: toNumber(row[16]), balancePhp: toNumber(row[17]), transactionRef: String(row[18] || ""), cashierName: String(row[19] || ""), saleStatus: String(row[20] || "Draft"), confirmedAt: String(row[21] || ""), saleId: String(row[22] || ""), saleItemId: String(row[23] || ""), createdAt: String(row[24] || ""), productSubtotalPhp: toNumber(row[25] || row[7]), taxRatePct: toNumber(row[26]), taxAmountPhp: toNumber(row[27]), grandTotalPhp: toNumber(row[28] || row[7]), deliveryFeePhp: toNumber(row[29]), installationFeePhp: toNumber(row[30]), otherChargePhp: toNumber(row[31]), discountPhp: toNumber(row[32]), customerId: String(row[33] || ""), tenderedAmountPhp: toNumber(row[34] || row[16]), changeDuePhp: toNumber(row[35])
+      rowNumber: index + 2, saleDate: normalizeDate(row[0]), salesRefNo: String(row[1] || ""), customerName: String(row[2] || ""), description: String(row[3] || ""), specification: String(row[4] || ""), qty: toNumber(row[5]), unitPricePhp: toNumber(row[6]), totalSalePhp: toNumber(row[7]), costPricePhp: toNumber(row[8]), totalCostPhp: toNumber(row[9]), grossProfitPhp: toNumber(row[10]), paymentStatus: String(row[11] || "Pending"), salesperson: String(row[12] || ""), notes: String(row[13] || ""), groupRef: String(row[14] || ""), paymentMethod: String(row[15] || ""), amountPaidPhp: toNumber(row[16]), balancePhp: toNumber(row[17]), transactionRef: String(row[18] || ""), cashierName: String(row[19] || ""), saleStatus: String(row[20] || "Draft"), confirmedAt: normalizeDate(row[21]), saleId: String(row[22] || ""), saleItemId: String(row[23] || ""), createdAt: normalizeDate(row[24]), productSubtotalPhp: toNumber(row[25] || row[7]), taxRatePct: toNumber(row[26]), taxAmountPhp: toNumber(row[27]), grandTotalPhp: toNumber(row[28] || row[7]), deliveryFeePhp: toNumber(row[29]), installationFeePhp: toNumber(row[30]), otherChargePhp: toNumber(row[31]), discountPhp: toNumber(row[32]), customerId: String(row[33] || ""), tenderedAmountPhp: toNumber(row[34] || row[16]), changeDuePhp: toNumber(row[35])
     }));
     return NextResponse.json(items);
   } catch (error: any) { console.error("SALES GET ERROR:", error); return NextResponse.json({ error: error?.message || String(error) || "Failed to load sales" }, { status: 500 }); }
