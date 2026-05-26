@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import AskRealightsAI from "@/components/ai/AskRealightsAI";
 
 type AgentDefinition = {
   id: string;
@@ -147,6 +148,8 @@ export default function AgentTestPanel() {
           <p className="mt-2 text-sm leading-6 text-slate-700">{testResponse.response}</p>
         </div>
       ) : null}
+
+      <AskRealightsAI />
     </div>
   );
 }
