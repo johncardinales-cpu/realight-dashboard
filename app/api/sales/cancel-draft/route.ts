@@ -3,6 +3,7 @@ import { google } from "googleapis";
 
 const SHEET_ID = process.env.GOOGLE_SHEET_ID as string;
 const SALES_SHEET = "Sales";
+const PAYMENTS_SHEET = "Payments";
 const AUDIT_LOG_SHEET = "Audit_Log";
 
 const auth = new google.auth.GoogleAuth({
@@ -13,8 +14,15 @@ const auth = new google.auth.GoogleAuth({
   scopes: ["https://www.googleapis.com/auth/spreadsheets"],
 });
 
+const PAYMENT_HEADERS = ["Payment Date","Sales Ref No.","Group Ref","Customer Name","Payment Method","Amount Paid (PHP)","Transaction Ref","Cashier Name","Notes","Created At","Payment ID","Sale ID","Payment Status","Voided At","Void Reason"];
+const AUDIT_HEADERS = ["Audit ID", "Created At", "Module", "Action", "Record ID", "Record Ref", "Actor", "Summary", "Before JSON", "After JSON"];
+
 function clean(value: unknown) {
   return String(value || "").trim();
+}
+
+function toNumber(value: unknown) {
+  return Number(String(value || "").replace(/[^0-9.-]/g, "")) || 0;
 }
 
 function makeId(prefix: string) {
@@ -23,36 +31,60 @@ function makeId(prefix: string) {
   return `${prefix}_${stamp}_${random}`;
 }
 
+function columnLetter(index: number) {
+  let column = "";
+  let current = index;
+  while (current > 0) {
+    const remainder = (current - 1) % 26;
+    column = String.fromCharCode(65 + remainder) + column;
+    current = Math.floor((current - 1) / 26);
+  }
+  return column;
+}
+
+function saleKey(salesRefNo: string, groupRef: string, saleId?: string) {
+  return clean(saleId) || clean(groupRef) || clean(salesRefNo);
+}
+
+function saleMatchKeys(row: string[]) {
+  return [saleKey(clean(row[1]), clean(row[14]), clean(row[22])), clean(row[22]), clean(row[14]), clean(row[1])].filter(Boolean);
+}
+
+function paymentMatchKeys(row: string[]) {
+  return [saleKey(clean(row[1]), clean(row[2]), clean(row[11])), clean(row[11]), clean(row[2]), clean(row[1])].filter(Boolean);
+}
+
+function isVoidedPayment(row: string[]) {
+  return ["voided", "cancelled", "canceled"].includes(clean(row[12]).toLowerCase());
+}
+
 async function sheetsClient() {
   const client = await auth.getClient();
   return google.sheets({ version: "v4", auth: client as any });
 }
 
+async function ensureSheetExists(sheets: any, title: string, headers: string[]) {
+  const meta = await sheets.spreadsheets.get({ spreadsheetId: SHEET_ID });
+  const found = (meta.data.sheets || []).find((s: any) => s.properties?.title === title);
+  if (!found) {
+    await sheets.spreadsheets.batchUpdate({ spreadsheetId: SHEET_ID, requestBody: { requests: [{ addSheet: { properties: { title } } }] } });
+  }
+  await sheets.spreadsheets.values.update({
+    spreadsheetId: SHEET_ID,
+    range: `${title}!A1:${columnLetter(headers.length)}1`,
+    valueInputOption: "USER_ENTERED",
+    requestBody: { values: [headers] },
+  });
+}
+
 async function appendAuditLog(sheets: any, row: string[]) {
+  await ensureSheetExists(sheets, AUDIT_LOG_SHEET, AUDIT_HEADERS);
   await sheets.spreadsheets.values.append({
     spreadsheetId: SHEET_ID,
     range: `${AUDIT_LOG_SHEET}!A:J`,
     valueInputOption: "USER_ENTERED",
     insertDataOption: "INSERT_ROWS",
     requestBody: { values: [row] },
-  }).catch(async () => {
-    await sheets.spreadsheets.batchUpdate({
-      spreadsheetId: SHEET_ID,
-      requestBody: { requests: [{ addSheet: { properties: { title: AUDIT_LOG_SHEET } } }] },
-    });
-    await sheets.spreadsheets.values.update({
-      spreadsheetId: SHEET_ID,
-      range: `${AUDIT_LOG_SHEET}!A1:J1`,
-      valueInputOption: "USER_ENTERED",
-      requestBody: { values: [["Audit ID", "Created At", "Module", "Action", "Record ID", "Record Ref", "Actor", "Summary", "Before JSON", "After JSON"]] },
-    });
-    await sheets.spreadsheets.values.append({
-      spreadsheetId: SHEET_ID,
-      range: `${AUDIT_LOG_SHEET}!A:J`,
-      valueInputOption: "USER_ENTERED",
-      insertDataOption: "INSERT_ROWS",
-      requestBody: { values: [row] },
-    });
   });
 }
 
@@ -63,20 +95,28 @@ export async function PATCH(req: Request) {
     const salesRefNo = clean(body?.salesRefNo);
     const groupRef = clean(body?.groupRef);
     const actor = clean(body?.actor || body?.cashierName || "Admin");
+    const reason = clean(body?.reason || "Cancelled unconfirmed sale");
 
     if (!saleId && !salesRefNo && !groupRef) {
       return NextResponse.json({ error: "Sale reference is required" }, { status: 400 });
     }
 
     const sheets = await sheetsClient();
-    const response = await sheets.spreadsheets.values.get({ spreadsheetId: SHEET_ID, range: `${SALES_SHEET}!A:AJ` });
-    const rows = (response.data.values || []) as string[][];
+    await ensureSheetExists(sheets, PAYMENTS_SHEET, PAYMENT_HEADERS);
+    await ensureSheetExists(sheets, AUDIT_LOG_SHEET, AUDIT_HEADERS);
+
+    const [salesResponse, paymentsResponse] = await Promise.all([
+      sheets.spreadsheets.values.get({ spreadsheetId: SHEET_ID, range: `${SALES_SHEET}!A:AJ` }),
+      sheets.spreadsheets.values.get({ spreadsheetId: SHEET_ID, range: `${PAYMENTS_SHEET}!A:O` }).catch(() => ({ data: { values: [] } })),
+    ]);
+
+    const rows = (salesResponse.data.values || []) as string[][];
+    const paymentRows = (paymentsResponse.data.values || []) as string[][];
+    const requestedKeys = [saleKey(salesRefNo, groupRef, saleId), saleId, groupRef, salesRefNo].filter(Boolean);
 
     const matches = rows.slice(1).map((row, index) => ({ row, rowNumber: index + 2 })).filter(({ row }) => {
-      if (saleId && clean(row[22]) === saleId) return true;
-      if (groupRef && clean(row[14]) === groupRef) return true;
-      if (salesRefNo && clean(row[1]) === salesRefNo) return true;
-      return false;
+      const keys = saleMatchKeys(row);
+      return requestedKeys.some((key) => keys.includes(key));
     });
 
     if (!matches.length) {
@@ -84,42 +124,63 @@ export async function PATCH(req: Request) {
     }
 
     if (matches.some(({ row }) => clean(row[20]).toLowerCase() === "confirmed")) {
-      return NextResponse.json({ error: "Confirmed sales cannot be cancelled here." }, { status: 400 });
+      return NextResponse.json({ error: "Confirmed sales must be undone first before cancelling/voiding." }, { status: 400 });
     }
 
     const first = matches[0].row;
     const recordRef = clean(first[1]) || clean(first[14]) || clean(first[22]) || salesRefNo || groupRef || saleId;
     const customerName = clean(first[2]);
-    const summary = `Cancelled draft sale ${recordRef}${customerName ? ` for ${customerName}` : ""}. No inventory deduction and no report impact.`;
-    const beforeJson = JSON.stringify({ salesRefNo: clean(first[1]), groupRef: clean(first[14]), saleId: clean(first[22]), customerName, saleStatus: clean(first[20]) || "Draft", paymentStatus: clean(first[11]) || "Pending", lineCount: matches.length });
+    const targetKey = saleKey(clean(first[1]), clean(first[14]), clean(first[22])) || recordRef;
+    const targetKeys = [targetKey, clean(first[22]), clean(first[14]), clean(first[1])].filter(Boolean);
     const stamp = new Date().toISOString();
+
+    const linkedPayments = paymentRows.slice(1).map((row, index) => ({ row, rowNumber: index + 2 })).filter(({ row }) => {
+      if (isVoidedPayment(row)) return false;
+      const keys = paymentMatchKeys(row);
+      return targetKeys.some((key) => keys.includes(key));
+    });
 
     await sheets.spreadsheets.values.batchUpdate({
       spreadsheetId: SHEET_ID,
       requestBody: {
         valueInputOption: "USER_ENTERED",
-        data: matches.flatMap(({ rowNumber }) => [
-          { range: `${SALES_SHEET}!L${rowNumber}`, values: [["Cancelled"]] },
-          { range: `${SALES_SHEET}!U${rowNumber}:V${rowNumber}`, values: [["Cancelled", stamp]] },
-        ]),
+        data: [
+          ...matches.flatMap(({ rowNumber }) => [
+            { range: `${SALES_SHEET}!L${rowNumber}`, values: [["Cancelled"]] },
+            { range: `${SALES_SHEET}!Q${rowNumber}:R${rowNumber}`, values: [[0, 0]] },
+            { range: `${SALES_SHEET}!U${rowNumber}:V${rowNumber}`, values: [["Cancelled", stamp]] },
+            { range: `${SALES_SHEET}!AI${rowNumber}:AJ${rowNumber}`, values: [[0, 0]] },
+          ]),
+          ...linkedPayments.map(({ rowNumber }) => ({ range: `${PAYMENTS_SHEET}!M${rowNumber}:O${rowNumber}`, values: [["Voided", stamp, reason]] })),
+        ],
       },
     });
+
+    const totalSale = matches.reduce((sum, item) => sum + toNumber(item.row[28] || item.row[7]), 0);
+    const initialPaid = matches.reduce((sum, item) => sum + toNumber(item.row[16]), 0);
+    const voidedPaymentAmount = linkedPayments.reduce((sum, item) => sum + toNumber(item.row[5]), 0);
+    const summary = `Cancelled/voided unconfirmed sale ${recordRef}${customerName ? ` for ${customerName}` : ""}. Voided ${linkedPayments.length} linked payment record(s). No inventory deduction and no report impact.`;
 
     await appendAuditLog(sheets, [
       makeId("AUDIT"),
       stamp,
       "Sales",
-      "CANCEL_DRAFT_SALE",
+      "VOID_UNCONFIRMED_SALE",
       clean(first[22]),
       recordRef,
       actor,
       summary,
-      beforeJson,
-      JSON.stringify({ saleStatus: "Cancelled", paymentStatus: "Cancelled", cancelledAt: stamp }),
+      JSON.stringify({ salesRefNo: clean(first[1]), groupRef: clean(first[14]), saleId: clean(first[22]), customerName, saleStatus: clean(first[20]) || "Draft", paymentStatus: clean(first[11]) || "Pending", totalSale, initialPaid, linkedPaymentCount: linkedPayments.length, linkedPaymentAmount: voidedPaymentAmount }),
+      JSON.stringify({ saleStatus: "Cancelled", paymentStatus: "Cancelled", amountPaid: 0, balance: 0, linkedPayments: "Voided", cancelledAt: stamp, reason }),
     ]);
 
-    return NextResponse.json({ ok: true, message: "Draft sale cancelled successfully and recorded in Recent Activity." });
+    return NextResponse.json({
+      ok: true,
+      message: `Unconfirmed sale cancelled/voided. ${linkedPayments.length} linked payment record(s) were voided.`,
+      voidedPaymentCount: linkedPayments.length,
+      voidedPaymentAmount,
+    });
   } catch (error: any) {
-    return NextResponse.json({ error: error?.message || "Failed to cancel draft sale" }, { status: 500 });
+    return NextResponse.json({ error: error?.message || "Failed to cancel/void unconfirmed sale" }, { status: 500 });
   }
 }
