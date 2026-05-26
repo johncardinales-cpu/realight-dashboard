@@ -49,7 +49,8 @@ export async function PATCH(req: Request) {
     const salesRefNo = clean(body?.salesRefNo);
     const groupRef = clean(body?.groupRef);
     const actor = clean(body?.actor || body?.cashierName || "Admin");
-    const reason = clean(body?.reason || "Cancelled unconfirmed sale");
+    const allowConfirmedCancel = body?.allowConfirmedCancel === true;
+    const reason = clean(body?.reason || (allowConfirmedCancel ? "Cancelled confirmed test sale" : "Cancelled unconfirmed sale"));
     if (!saleId && !salesRefNo && !groupRef && !body?.saleDate) return NextResponse.json({ error: "Sale reference is required" }, { status: 400 });
 
     const sheets = await sheetsClient();
@@ -71,18 +72,16 @@ export async function PATCH(req: Request) {
       return false;
     });
 
-    if (!saleId && !groupRef && salesRefNo && matches.length > 1) {
-      const exactMatches = matches.filter(({ row }) => rowMatchesFallback(row, body));
-      if (exactMatches.length) matches = exactMatches;
-    }
+    const exactMatches = matches.filter(({ row }) => rowMatchesFallback(row, body));
+    if (exactMatches.length) matches = exactMatches;
     if (!matches.length) {
       matches = rows.slice(1).map((row, index) => ({ row, rowNumber: index + 2 })).filter(({ row }) => rowMatchesFallback(row, body));
     }
     if (!matches.length) return NextResponse.json({ error: "Sale was not found" }, { status: 404 });
 
     const unconfirmedMatches = matches.filter(({ row }) => clean(row[20]).toLowerCase() !== "confirmed");
-    if (!unconfirmedMatches.length) return NextResponse.json({ error: "Confirmed sales must be undone first before cancelling/voiding." }, { status: 400 });
-    matches = unconfirmedMatches;
+    if (unconfirmedMatches.length) matches = unconfirmedMatches;
+    else if (!allowConfirmedCancel) return NextResponse.json({ error: "Confirmed sales must be undone first before cancelling/voiding." }, { status: 400 });
 
     const first = matches[0].row;
     const recordRef = clean(first[1]) || clean(first[14]) || clean(first[22]) || salesRefNo || groupRef || saleId;
@@ -112,11 +111,12 @@ export async function PATCH(req: Request) {
     const totalSale = matches.reduce((sum, item) => sum + toNumber(item.row[28] || item.row[7]), 0);
     const initialPaid = matches.reduce((sum, item) => sum + toNumber(item.row[16]), 0);
     const voidedPaymentAmount = linkedPayments.reduce((sum, item) => sum + toNumber(item.row[5]), 0);
-    const summary = `Cancelled unconfirmed sale ${recordRef}${customerName ? ` for ${customerName}` : ""}. Voided ${linkedPayments.length} linked payment record(s). No inventory deduction and no report impact.`;
-    await appendAuditLog(sheets, [makeId("AUDIT"), stamp, "Sales", "CANCEL_UNCONFIRMED_SALE", clean(first[22]), recordRef, actor, summary, JSON.stringify({ salesRefNo: clean(first[1]), groupRef: clean(first[14]), saleId: clean(first[22]), customerName, saleStatus: clean(first[20]) || "Draft", paymentStatus: clean(first[11]) || "Pending", totalSale, initialPaid, linkedPaymentCount: linkedPayments.length, linkedPaymentAmount: voidedPaymentAmount }), JSON.stringify({ saleStatus: "Cancelled", paymentStatus: "Cancelled", amountPaid: 0, balance: 0, linkedPayments: "Voided", cancelledAt: stamp, reason })]);
-    return NextResponse.json({ ok: true, message: `Unconfirmed sale cancelled. ${linkedPayments.length} linked payment record(s) were voided.`, voidedPaymentCount: linkedPayments.length, voidedPaymentAmount });
+    const action = allowConfirmedCancel ? "CANCEL_CONFIRMED_SALE" : "CANCEL_UNCONFIRMED_SALE";
+    const summary = `Cancelled sale ${recordRef}${customerName ? ` for ${customerName}` : ""}. Voided ${linkedPayments.length} linked payment record(s). Removed from active reports, payments, sales ledger, and inventory calculations.`;
+    await appendAuditLog(sheets, [makeId("AUDIT"), stamp, "Sales", action, clean(first[22]), recordRef, actor, summary, JSON.stringify({ salesRefNo: clean(first[1]), groupRef: clean(first[14]), saleId: clean(first[22]), customerName, saleStatus: clean(first[20]) || "Draft", paymentStatus: clean(first[11]) || "Pending", totalSale, initialPaid, linkedPaymentCount: linkedPayments.length, linkedPaymentAmount: voidedPaymentAmount }), JSON.stringify({ saleStatus: "Cancelled", paymentStatus: "Cancelled", amountPaid: 0, balance: 0, linkedPayments: "Voided", cancelledAt: stamp, reason })]);
+    return NextResponse.json({ ok: true, message: `Sale cancelled. ${linkedPayments.length} linked payment record(s) were voided.`, voidedPaymentCount: linkedPayments.length, voidedPaymentAmount });
   } catch (error: any) {
-    console.error("CANCEL UNCONFIRMED SALE ERROR:", error);
-    return NextResponse.json({ error: error?.message || "Failed to cancel unconfirmed sale" }, { status: 500 });
+    console.error("CANCEL SALE ERROR:", error);
+    return NextResponse.json({ error: error?.message || "Failed to cancel sale" }, { status: 500 });
   }
 }
