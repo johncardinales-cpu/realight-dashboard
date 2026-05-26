@@ -56,6 +56,19 @@ function normalizeDate(value: unknown) {
   return Number.isNaN(parsed.getTime()) ? raw : parsed.toISOString().slice(0, 10);
 }
 
+function normalizeInvoiceValue(value: unknown) {
+  const raw = String(value || "").trim();
+  if (!raw) return "Unspecified";
+  if (/^\d{4}-\d{2}-\d{2}/.test(raw)) return raw.slice(0, 10);
+  if (/^\d{4}\/\d{2}\/\d{2}$/.test(raw)) return raw.replace(/\//g, "-");
+  if (/^\d{1,2}\/\d{1,2}\/\d{2,4}$/.test(raw)) return normalizeDate(raw);
+  if (/^\d+(\.\d+)?$/.test(raw)) {
+    const serial = Number(raw);
+    if (serial > 20000 && serial < 90000) return normalizeDate(raw);
+  }
+  return raw;
+}
+
 function buildReport(items: DeliveryItem[]) {
   const supplierMap = new Map<string, {
     supplier: string;
@@ -95,7 +108,7 @@ function buildReport(items: DeliveryItem[]) {
     supplierMap.set(supplier, current);
 
     statusCounts.set(status, (statusCounts.get(status) || 0) + 1);
-    const invoiceValid = item.invoiceValid || "Unspecified";
+    const invoiceValid = normalizeInvoiceValue(item.invoiceValid);
     invoiceCounts.set(invoiceValid, (invoiceCounts.get(invoiceValid) || 0) + 1);
   });
 
@@ -139,7 +152,7 @@ function buildReport(items: DeliveryItem[]) {
       },
       {
         title: "Invoice Validity Summary",
-        description: "Delivery rows grouped by invoice-valid field.",
+        description: "Delivery rows grouped by normalized invoice-valid field.",
         columns: ["Invoice Valid", "Records"],
         rows: [...invoiceCounts.entries()].map(([status, count]) => ({ "Invoice Valid": status, Records: count })),
         emptyMessage: "No invoice validity data was found.",
@@ -157,7 +170,7 @@ function buildReport(items: DeliveryItem[]) {
       damagedQty > 0 ? `Investigate ${numberText(damagedQty)} damaged/defective unit(s) before supplier settlement or reorder decisions.` : "No damaged supplier delivery quantity was detected in the current review.",
       incomingQty > 0 ? `Monitor ${numberText(incomingQty)} incoming unit(s) until they are received and marked available.` : "No incoming supplier quantity is currently recorded.",
     ],
-    systemNote: "This supplier history report was generated in safe read-only mode. No delivery, supplier, inventory, payment, sales, customer, or pricing records were modified.",
+    systemNote: "This supplier history report was generated in safe read-only mode. Invoice-valid serial dates are normalized for readability. No delivery, supplier, inventory, payment, sales, customer, or pricing records were modified.",
   };
 }
 
@@ -176,7 +189,7 @@ export async function GET() {
       specification: String(row[5] || "").trim(),
       qtyAdded: toNumber(row[6]),
       unitPriceUsd: toNumber(row[7]),
-      invoiceValid: String(row[8] || "").trim(),
+      invoiceValid: normalizeInvoiceValue(row[8]),
       status: String(row[9] || "").trim(),
       notes: String(row[10] || "").trim(),
       createdAt: normalizeDate(row[11]),
