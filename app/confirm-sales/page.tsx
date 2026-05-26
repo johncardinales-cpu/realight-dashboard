@@ -192,6 +192,27 @@ export default function ConfirmSalesPage() {
     }
   }
 
+  async function cancelDraftSale(sale: SaleSummary) {
+    if (!window.confirm(`Cancel draft sale ${sale.salesRefNo || sale.groupRef}?\n\nThis will hide it from Confirm Sales. Inventory will not be deducted.`)) return;
+    setWorkingKey(`cancel-${sale.key}`);
+    setMessage("");
+    try {
+      const res = await fetch("/api/sales/cancel-draft", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ saleId: sale.saleId, salesRefNo: sale.salesRefNo, groupRef: sale.groupRef }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data?.error || "Failed to cancel draft sale");
+      setMessage(data?.message || "Draft sale cancelled successfully.");
+      await loadSales();
+    } catch (error: any) {
+      setMessage(error?.message || "Failed to cancel draft sale.");
+    } finally {
+      setWorkingKey("");
+    }
+  }
+
   async function updateConfirmation(sale: SaleSummary, action: "confirm" | "undo") {
     const isUndo = action === "undo";
     const edit = getPaymentEdit(sale);
@@ -240,7 +261,7 @@ export default function ConfirmSalesPage() {
   }, []);
 
   const summaries = useMemo(() => summarizeSales(rows), [rows]);
-  const reviewSales = summaries.filter((sale) => sale.saleStatus.toLowerCase() !== "cancelled");
+  const reviewSales = summaries.filter((sale) => !["cancelled", "voided"].includes(sale.saleStatus.toLowerCase()));
   const compactInputClass = "h-8 rounded-lg border border-slate-300 bg-white px-2 text-[11px] font-semibold text-slate-700 outline-none focus:border-emerald-400";
 
   return (
@@ -313,15 +334,22 @@ export default function ConfirmSalesPage() {
                       </div>
                     </td>
                     <td className="px-4 py-3">
-                      {isConfirmed ? (
-                        <button type="button" onClick={() => updateConfirmation(sale, "undo")} disabled={workingKey === `undo-${sale.key}`} className="rounded-xl bg-amber-500 px-3 py-2 text-xs font-bold text-white disabled:bg-slate-300 disabled:text-slate-600">
-                          {workingKey === `undo-${sale.key}` ? "Undoing..." : "Undo Confirm"}
-                        </button>
-                      ) : (
-                        <button type="button" onClick={() => updateConfirmation(sale, "confirm")} disabled={workingKey === `confirm-${sale.key}`} className="rounded-xl bg-emerald-600 px-3 py-2 text-xs font-bold text-white disabled:bg-slate-300 disabled:text-slate-600">
-                          {workingKey === `confirm-${sale.key}` ? "Confirming..." : "Confirm + Mark Paid"}
-                        </button>
-                      )}
+                      <div className="flex flex-col gap-2">
+                        {isConfirmed ? (
+                          <button type="button" onClick={() => updateConfirmation(sale, "undo")} disabled={workingKey === `undo-${sale.key}`} className="rounded-xl bg-amber-500 px-3 py-2 text-xs font-bold text-white disabled:bg-slate-300 disabled:text-slate-600">
+                            {workingKey === `undo-${sale.key}` ? "Undoing..." : "Undo Confirm"}
+                          </button>
+                        ) : (
+                          <>
+                            <button type="button" onClick={() => updateConfirmation(sale, "confirm")} disabled={workingKey === `confirm-${sale.key}`} className="rounded-xl bg-emerald-600 px-3 py-2 text-xs font-bold text-white disabled:bg-slate-300 disabled:text-slate-600">
+                              {workingKey === `confirm-${sale.key}` ? "Confirming..." : "Confirm + Mark Paid"}
+                            </button>
+                            <button type="button" onClick={() => cancelDraftSale(sale)} disabled={workingKey === `cancel-${sale.key}`} className="rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-bold text-rose-700 disabled:opacity-50">
+                              {workingKey === `cancel-${sale.key}` ? "Cancelling..." : "Cancel Draft"}
+                            </button>
+                          </>
+                        )}
+                      </div>
                     </td>
                   </tr>
                 );
@@ -333,7 +361,7 @@ export default function ConfirmSalesPage() {
           </table>
         </div>
         <p className="mt-4 text-xs leading-6 text-slate-500">
-          Rule: confirming a sale marks it Paid and deducts inventory. Reports read paid amount, balance, payment method, and sale status from the Sales sheet, so saved payment changes are included in Reports.
+          Rule: confirming a sale marks it Paid and deducts inventory. Cancel Draft hides bad draft sales from this queue without deducting inventory.
         </p>
       </div>
     </section>
