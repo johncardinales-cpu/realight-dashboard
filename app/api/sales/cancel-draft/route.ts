@@ -3,6 +3,7 @@ import { google } from "googleapis";
 
 const SHEET_ID = process.env.GOOGLE_SHEET_ID as string;
 const SALES_SHEET = "Sales";
+const AUDIT_LOG_SHEET = "Audit_Log";
 
 const auth = new google.auth.GoogleAuth({
   credentials: {
@@ -16,9 +17,43 @@ function clean(value: unknown) {
   return String(value || "").trim();
 }
 
+function makeId(prefix: string) {
+  const stamp = new Date().toISOString().replace(/[-:.TZ]/g, "").slice(0, 14);
+  const random = Math.random().toString(36).slice(2, 8).toUpperCase();
+  return `${prefix}_${stamp}_${random}`;
+}
+
 async function sheetsClient() {
   const client = await auth.getClient();
   return google.sheets({ version: "v4", auth: client as any });
+}
+
+async function appendAuditLog(sheets: any, row: string[]) {
+  await sheets.spreadsheets.values.append({
+    spreadsheetId: SHEET_ID,
+    range: `${AUDIT_LOG_SHEET}!A:J`,
+    valueInputOption: "USER_ENTERED",
+    insertDataOption: "INSERT_ROWS",
+    requestBody: { values: [row] },
+  }).catch(async () => {
+    await sheets.spreadsheets.batchUpdate({
+      spreadsheetId: SHEET_ID,
+      requestBody: { requests: [{ addSheet: { properties: { title: AUDIT_LOG_SHEET } } }] },
+    });
+    await sheets.spreadsheets.values.update({
+      spreadsheetId: SHEET_ID,
+      range: `${AUDIT_LOG_SHEET}!A1:J1`,
+      valueInputOption: "USER_ENTERED",
+      requestBody: { values: [["Audit ID", "Created At", "Module", "Action", "Record ID", "Record Ref", "Actor", "Summary", "Before JSON", "After JSON"]] },
+    });
+    await sheets.spreadsheets.values.append({
+      spreadsheetId: SHEET_ID,
+      range: `${AUDIT_LOG_SHEET}!A:J`,
+      valueInputOption: "USER_ENTERED",
+      insertDataOption: "INSERT_ROWS",
+      requestBody: { values: [row] },
+    });
+  });
 }
 
 export async function PATCH(req: Request) {
@@ -27,6 +62,7 @@ export async function PATCH(req: Request) {
     const saleId = clean(body?.saleId);
     const salesRefNo = clean(body?.salesRefNo);
     const groupRef = clean(body?.groupRef);
+    const actor = clean(body?.actor || body?.cashierName || "Admin");
 
     if (!saleId && !salesRefNo && !groupRef) {
       return NextResponse.json({ error: "Sale reference is required" }, { status: 400 });
@@ -51,7 +87,13 @@ export async function PATCH(req: Request) {
       return NextResponse.json({ error: "Confirmed sales cannot be cancelled here." }, { status: 400 });
     }
 
+    const first = matches[0].row;
+    const recordRef = clean(first[1]) || clean(first[14]) || clean(first[22]) || salesRefNo || groupRef || saleId;
+    const customerName = clean(first[2]);
+    const summary = `Cancelled draft sale ${recordRef}${customerName ? ` for ${customerName}` : ""}. No inventory deduction and no report impact.`;
+    const beforeJson = JSON.stringify({ salesRefNo: clean(first[1]), groupRef: clean(first[14]), saleId: clean(first[22]), customerName, saleStatus: clean(first[20]) || "Draft", paymentStatus: clean(first[11]) || "Pending", lineCount: matches.length });
     const stamp = new Date().toISOString();
+
     await sheets.spreadsheets.values.batchUpdate({
       spreadsheetId: SHEET_ID,
       requestBody: {
@@ -63,7 +105,20 @@ export async function PATCH(req: Request) {
       },
     });
 
-    return NextResponse.json({ ok: true, message: "Draft sale cancelled successfully." });
+    await appendAuditLog(sheets, [
+      makeId("AUDIT"),
+      stamp,
+      "Sales",
+      "CANCEL_DRAFT_SALE",
+      clean(first[22]),
+      recordRef,
+      actor,
+      summary,
+      beforeJson,
+      JSON.stringify({ saleStatus: "Cancelled", paymentStatus: "Cancelled", cancelledAt: stamp }),
+    ]);
+
+    return NextResponse.json({ ok: true, message: "Draft sale cancelled successfully and recorded in Recent Activity." });
   } catch (error: any) {
     return NextResponse.json({ error: error?.message || "Failed to cancel draft sale" }, { status: 500 });
   }
