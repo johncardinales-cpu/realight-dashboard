@@ -23,6 +23,27 @@ type ActivityItem = {
   icon?: string;
 };
 
+type InventoryLowestStockItem = {
+  item: string;
+  sellableQty: number;
+  actualOnHand: number;
+  incomingQty: number;
+  soldQty: number;
+};
+
+type InventoryIncomingItem = {
+  item: string;
+  incomingQty: number;
+  latestIncoming: string;
+};
+
+type InventoryReorderItem = {
+  item: string;
+  sellableQty: number;
+  minimumBuffer: number;
+  suggestedReorderQty: number;
+};
+
 type InventoryAnalysis = {
   summary?: {
     totalItems?: number;
@@ -35,25 +56,25 @@ type InventoryAnalysis = {
     zeroStockCount?: number;
     lowStockCount?: number;
     healthyStockCount?: number;
-    lowestStock?: Array<{
-      item: string;
-      sellableQty: number;
-      actualOnHand: number;
-      incomingQty: number;
-      soldQty: number;
-    }>;
-    incoming?: Array<{
-      item: string;
-      incomingQty: number;
-      latestIncoming: string;
-    }>;
-    reorderSuggestions?: Array<{
-      item: string;
-      sellableQty: number;
-      minimumBuffer: number;
-      suggestedReorderQty: number;
-    }>;
+    lowestStock?: InventoryLowestStockItem[];
+    incoming?: InventoryIncomingItem[];
+    reorderSuggestions?: InventoryReorderItem[];
   };
+};
+
+type InventoryReport = {
+  title: string;
+  generatedBy: string;
+  mode: string;
+  sources: string[];
+  executiveSummary: string;
+  summaryCards: Array<{ label: string; value: string; helper: string }>;
+  lowStockItems: Array<{ product: string; sellableQty: number; actualOnHand: number; incomingQty: number; status: string }>;
+  reorderSuggestions: Array<{ product: string; currentSellable: number; suggestedReorderQty: number; priority: string }>;
+  lowestStockItems: Array<{ product: string; sellableQty: number; actualOnHand: number; incomingQty: number; soldQty: number }>;
+  incomingStock: Array<{ product: string; incomingQty: number; latestIncoming: string }>;
+  recommendedActions: string[];
+  systemNote: string;
 };
 
 function peso(value: number) {
@@ -96,6 +117,12 @@ function detectIntent(prompt: string) {
   return "dashboard";
 }
 
+function getPriority(sellableQty: number) {
+  if (sellableQty <= 4) return "High";
+  if (sellableQty <= 5) return "Medium";
+  return "Watch";
+}
+
 function buildAttentionItems(data: DashboardData, activity: ActivityItem[]) {
   const items: string[] = [];
 
@@ -133,6 +160,77 @@ function buildDashboardAnswer(prompt: string, data: DashboardData, activity: Act
   ].join("\n");
 }
 
+function buildInventoryReport(analysis: InventoryAnalysis): InventoryReport | null {
+  const summary = analysis.summary;
+  if (!summary) return null;
+
+  const lowestStock = (summary.lowestStock || []).slice(0, 10);
+  const reorderSuggestions = (summary.reorderSuggestions || []).slice(0, 10);
+  const incomingStock = (summary.incoming || []).slice(0, 8);
+
+  const lowStockItems = reorderSuggestions.map((suggestion) => {
+    const matchingLowestStock = lowestStock.find((item) => item.item === suggestion.item);
+    return {
+      product: suggestion.item,
+      sellableQty: suggestion.sellableQty,
+      actualOnHand: matchingLowestStock?.actualOnHand ?? suggestion.sellableQty,
+      incomingQty: matchingLowestStock?.incomingQty ?? 0,
+      status: suggestion.sellableQty <= 0 ? "Zero Stock" : "Low Stock",
+    };
+  });
+
+  const professionalLowestStock = lowestStock.map((item) => ({
+    product: item.item,
+    sellableQty: item.sellableQty,
+    actualOnHand: item.actualOnHand,
+    incomingQty: item.incomingQty,
+    soldQty: item.soldQty,
+  }));
+
+  const professionalReorderSuggestions = reorderSuggestions.map((item) => ({
+    product: item.item,
+    currentSellable: item.sellableQty,
+    suggestedReorderQty: item.suggestedReorderQty,
+    priority: getPriority(item.sellableQty),
+  }));
+
+  const recommendations: string[] = [];
+  if (professionalReorderSuggestions.length) {
+    const highestPriority = professionalReorderSuggestions[0];
+    recommendations.push(`Prioritize replenishment for ${highestPriority.product}; it has ${numberText(highestPriority.currentSellable)} sellable units and a suggested reorder quantity of ${numberText(highestPriority.suggestedReorderQty)}.`);
+  }
+  if ((summary.lowStockCount || 0) > 0) recommendations.push(`Review the ${numberText(summary.lowStockCount || 0)} low-stock item(s) before approving new sales commitments.`);
+  if ((summary.zeroStockCount || 0) > 0) recommendations.push(`Block or review selling for ${numberText(summary.zeroStockCount || 0)} zero-stock item(s) until replenishment is confirmed.`);
+  if (!incomingStock.length) recommendations.push("Review the purchasing schedule because no incoming stock rows are currently recorded.");
+  recommendations.push("Continue monitoring the lowest-stock products daily to prevent avoidable stockouts.");
+
+  return {
+    title: "Inventory Health Report",
+    generatedBy: "Inventory Agent",
+    mode: "Safe Read-Only",
+    sources: ["/api/inventory", "/api/ai/inventory-analysis"],
+    executiveSummary: `The inventory system is currently tracking ${numberText(summary.totalItems || 0)} items with ${numberText(summary.totalSellable || 0)} total sellable units. There are ${numberText(summary.lowStockCount || 0)} low-stock items and ${numberText(summary.zeroStockCount || 0)} zero-stock items. ${incomingStock.length ? `${numberText(incomingStock.length)} incoming stock line(s) were detected.` : "No incoming stock is currently recorded."}`,
+    summaryCards: [
+      { label: "Tracked Items", value: numberText(summary.totalItems || 0), helper: "Product/specification records" },
+      { label: "Total Sellable", value: numberText(summary.totalSellable || 0), helper: "Units available to sell" },
+      { label: "Actual On Hand", value: numberText(summary.totalOnHand || 0), helper: "Current physical stock" },
+      { label: "Low Stock", value: numberText(summary.lowStockCount || 0), helper: "Items needing attention" },
+      { label: "Zero Stock", value: numberText(summary.zeroStockCount || 0), helper: "Unavailable items" },
+      { label: "Incoming", value: numberText(summary.totalIncoming || 0), helper: "Units marked incoming" },
+    ],
+    lowStockItems,
+    reorderSuggestions: professionalReorderSuggestions,
+    lowestStockItems: professionalLowestStock,
+    incomingStock: incomingStock.map((item) => ({
+      product: item.item,
+      incomingQty: item.incomingQty,
+      latestIncoming: item.latestIncoming || "Not specified",
+    })),
+    recommendedActions: recommendations,
+    systemNote: "This report was generated in safe read-only mode. No stock, sales, delivery, product, supplier, customer, payment, or pricing records were modified.",
+  };
+}
+
 function buildInventoryAnswer(data: DashboardData, analysis: InventoryAnalysis) {
   const summary = analysis.summary;
 
@@ -158,34 +256,7 @@ function buildInventoryAnswer(data: DashboardData, analysis: InventoryAnalysis) 
     ].join("\n");
   }
 
-  const lowestStock = (summary.lowestStock || []).slice(0, 8);
-  const reorderSuggestions = (summary.reorderSuggestions || []).slice(0, 8);
-  const incoming = (summary.incoming || []).slice(0, 5);
-
-  return [
-    "Inventory Agent checked live product-level inventory in read-only mode.",
-    "",
-    `Tracked items: ${numberText(summary.totalItems || 0)}`,
-    `Total incoming: ${numberText(summary.totalIncoming || 0)}`,
-    `Total received: ${numberText(summary.totalReceived || 0)}`,
-    `Total sold: ${numberText(summary.totalSold || 0)}`,
-    `Total damaged: ${numberText(summary.totalDamaged || 0)}`,
-    `Total actual on hand: ${numberText(summary.totalOnHand || 0)}`,
-    `Total sellable: ${numberText(summary.totalSellable || 0)}`,
-    `Zero-stock items: ${numberText(summary.zeroStockCount || 0)}`,
-    `Low-stock items: ${numberText(summary.lowStockCount || 0)}`,
-    "",
-    "Lowest stock items:",
-    ...(lowestStock.length ? lowestStock.map((item) => `- ${item.item}: sellable ${numberText(item.sellableQty)}, on hand ${numberText(item.actualOnHand)}, incoming ${numberText(item.incomingQty)}`) : ["- No item-level stock rows returned."]),
-    "",
-    "Reorder suggestions:",
-    ...(reorderSuggestions.length ? reorderSuggestions.map((item) => `- ${item.item}: sellable ${numberText(item.sellableQty)}, suggested reorder ${numberText(item.suggestedReorderQty)}`) : ["- No reorder suggestion triggered from current low-stock rules."]),
-    "",
-    "Incoming stock:",
-    ...(incoming.length ? incoming.map((item) => `- ${item.item}: incoming ${numberText(item.incomingQty)}${item.latestIncoming ? `, latest ${item.latestIncoming}` : ""}`) : ["- No incoming stock rows detected."]),
-    "",
-    "Safe-mode note: I only read inventory data and created suggestions. I did not change stock, sales, or delivery records.",
-  ].join("\n");
+  return buildInventoryReport(analysis)?.executiveSummary || "Inventory Agent could not generate a structured inventory report.";
 }
 
 function buildActivityAnswer(activity: ActivityItem[]) {
@@ -257,6 +328,7 @@ export async function POST(request: Request) {
     }
 
     const intent = detectIntent(prompt);
+    const inventoryReport = intent === "inventory" ? buildInventoryReport(inventoryAnalysis) : null;
     const answer =
       intent === "inventory" ? buildInventoryAnswer(dashboard, inventoryAnalysis) :
       intent === "activity" ? buildActivityAnswer(Array.isArray(activity) ? activity : []) :
@@ -270,6 +342,8 @@ export async function POST(request: Request) {
       mode: "safe-read-only",
       prompt,
       response: answer,
+      reportType: intent === "inventory" && inventoryReport ? "inventory" : "text",
+      inventoryReport,
       dataSources: intent === "inventory" ? ["/api/inventory", "/api/ai/inventory-analysis"] : ["/api/dashboard", "/api/recent-activity"],
       writeActionsEnabled: false,
       timestamp: new Date().toISOString(),
