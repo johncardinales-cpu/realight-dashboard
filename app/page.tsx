@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import AgentTestPanel from "@/components/ai/AgentTestPanel";
 
 type DashboardData = {
   incomingUnits: number;
@@ -190,6 +191,8 @@ export default function HomePage() {
         </div>
       </div>
 
+      <AgentTestPanel />
+
       <div className="grid grid-cols-1 gap-5 md:grid-cols-2 xl:grid-cols-4">
         {kpis.slice(0, 4).map((item) => (
           <div key={item.title} className="rounded-[1.5rem] border border-slate-200/80 bg-white p-5 shadow-[0_16px_40px_rgba(15,23,42,0.05)]">
@@ -236,7 +239,7 @@ export default function HomePage() {
               })}
               <g className="text-xs fill-slate-500">
                 <text x="18" y="44">20K</text><text x="18" y="116">15K</text><text x="18" y="188">10K</text><text x="24" y="260">5K</text><text x="32" y="314">0</text>
-                {['Dec', 'Jan', 'Feb', 'Mar', 'Apr', 'May'].map((month, index) => (
+                {["Dec", "Jan", "Feb", "Mar", "Apr", "May"].map((month, index) => (
                   <text key={month} x={chartLeft - 8 + index * (chartWidth / (trend.length - 1))} y="350">{month}</text>
                 ))}
               </g>
