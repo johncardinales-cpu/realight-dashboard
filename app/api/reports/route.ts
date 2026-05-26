@@ -15,273 +15,162 @@ const auth = new google.auth.GoogleAuth({
   scopes: ["https://www.googleapis.com/auth/spreadsheets"],
 });
 
-function toNumber(value: string | number | undefined) { return Number(String(value || "").replace(/[^0-9.-]/g, "")) || 0; }
-function safeText(value: unknown) { return String(value || "").trim(); }
+function txt(v: unknown) { return String(v || "").trim(); }
+function num(v: unknown) { return Number(String(v || "").replace(/[^0-9.-]/g, "")) || 0; }
 function today() { return new Date().toISOString().slice(0, 10); }
-function formatDate(date: Date) { return date.toISOString().slice(0, 10); }
-function saleKey(salesRefNo: string, groupRef: string, saleId?: string) { return safeText(saleId) || safeText(groupRef) || safeText(salesRefNo); }
-function normalizeRef(value: unknown) { return safeText(value).toLowerCase(); }
-function getPaymentStatus(totalPaid: number, totalDue: number) { if (totalDue <= 0 || totalPaid <= 0) return "Pending"; if (totalPaid >= totalDue) return "Paid"; return "Partial"; }
+function fmt(d: Date) { return d.toISOString().slice(0, 10); }
+function key(ref: string, group: string, id?: string) { return txt(id) || txt(group) || txt(ref); }
+function finalSale(status: unknown) { return txt(status).toLowerCase() === "confirmed"; }
+function payStatus(paid: number, total: number) { if (total <= 0 || paid <= 0) return "Pending"; return paid >= total ? "Paid" : "Partial"; }
 
-function normalizeDate(value: unknown) {
-  const text = safeText(value);
-  if (!text) return "";
-  if (/^\d{4}-\d{2}-\d{2}/.test(text)) return text.slice(0, 10);
-  if (/^\d{1,2}\/\d{1,2}\/\d{2,4}$/.test(text)) {
-    const [first, second, yearPart] = text.split("/").map((part) => Number(part));
-    const year = yearPart < 100 ? 2000 + yearPart : yearPart;
-    const month = first;
-    const day = second;
-    return `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+function normDate(v: unknown) {
+  const s = txt(v);
+  if (!s) return "";
+  if (/^\d{4}-\d{2}-\d{2}/.test(s)) return s.slice(0, 10);
+  if (/^\d{1,2}\/\d{1,2}\/\d{2,4}$/.test(s)) {
+    const [m, d, y0] = s.split("/").map(Number);
+    const y = y0 < 100 ? 2000 + y0 : y0;
+    return `${y}-${String(m).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
   }
-  if (/^\d+(\.\d+)?$/.test(text)) {
-    const serial = Number(text);
-    if (serial > 20000 && serial < 90000) {
-      const utcDays = Math.floor(serial - 25569);
-      const utcValue = utcDays * 86400 * 1000;
-      return new Date(utcValue).toISOString().slice(0, 10);
-    }
+  if (/^\d+(\.\d+)?$/.test(s)) {
+    const serial = Number(s);
+    if (serial > 20000 && serial < 90000) return new Date(Math.floor(serial - 25569) * 86400 * 1000).toISOString().slice(0, 10);
   }
-  const parsed = new Date(text);
-  return Number.isNaN(parsed.getTime()) ? text.slice(0, 10) : parsed.toISOString().slice(0, 10);
+  const parsed = new Date(s);
+  return Number.isNaN(parsed.getTime()) ? s.slice(0, 10) : parsed.toISOString().slice(0, 10);
 }
 
-function toDate(value: string) { const normalized = normalizeDate(value); const parsed = new Date(`${normalized}T00:00:00`); return Number.isNaN(parsed.getTime()) ? null : parsed; }
-function inRange(value: unknown, startDate: string, endDate: string) { const date = normalizeDate(value); return date >= startDate && date <= endDate; }
+function toDate(v: string) { const d = new Date(`${normDate(v)}T00:00:00`); return Number.isNaN(d.getTime()) ? null : d; }
+function inRange(v: unknown, a: string, b: string) { const d = normDate(v); return d >= a && d <= b; }
 
-function getPeriodRange(mode: string, dateValue: string) {
-  const base = toDate(dateValue) || (toDate(today()) as Date);
-  const normalizedMode = ["daily", "weekly", "monthly"].includes(mode) ? mode : "daily";
-  const start = new Date(base);
-  const end = new Date(base);
-  if (normalizedMode === "weekly") {
-    const day = start.getDay();
-    const mondayOffset = day === 0 ? -6 : 1 - day;
-    start.setDate(start.getDate() + mondayOffset);
-    end.setTime(start.getTime());
-    end.setDate(start.getDate() + 6);
-  } else if (normalizedMode === "monthly") {
-    start.setDate(1);
-    end.setMonth(start.getMonth() + 1, 0);
-  }
-  return { mode: normalizedMode, startDate: formatDate(start), endDate: formatDate(end) };
+function period(mode: string, value: string) {
+  const base = toDate(value) || (toDate(today()) as Date);
+  const m = ["daily", "weekly", "monthly"].includes(mode) ? mode : "daily";
+  const start = new Date(base); const end = new Date(base);
+  if (m === "weekly") { const day = start.getDay(); const off = day === 0 ? -6 : 1 - day; start.setDate(start.getDate() + off); end.setTime(start.getTime()); end.setDate(start.getDate() + 6); }
+  if (m === "monthly") { start.setDate(1); end.setMonth(start.getMonth() + 1, 0); }
+  return { mode: m, startDate: fmt(start), endDate: fmt(end) };
 }
 
-async function readRange(sheets: any, range: string) {
-  const response = await sheets.spreadsheets.values.get({ spreadsheetId: SHEET_ID, range }).catch(() => ({ data: { values: [] } }));
-  return (response.data.values || []) as string[][];
+async function read(sheets: any, range: string) {
+  const res = await sheets.spreadsheets.values.get({ spreadsheetId: SHEET_ID, range }).catch(() => ({ data: { values: [] } }));
+  return (res.data.values || []) as string[][];
 }
 
-function buildPaymentLedgerTotals(paymentRows: string[][]) {
-  const byKey = new Map<string, number>();
-  paymentRows.slice(1).forEach((row) => {
-    const salesRefNo = safeText(row[1]);
-    const groupRef = safeText(row[2]);
-    const saleId = safeText(row[11]);
-    const amount = toNumber(row[5]);
-    if (amount <= 0) return;
-    [saleKey(salesRefNo, groupRef, saleId), saleId, groupRef, salesRefNo].filter(Boolean).forEach((key) => byKey.set(key, (byKey.get(key) || 0) + amount));
+function paymentLedger(rows: string[][]) {
+  const map = new Map<string, number>();
+  rows.slice(1).forEach((r) => {
+    const amount = num(r[5]); if (amount <= 0) return;
+    [key(r[1], r[2], r[11]), txt(r[11]), txt(r[2]), txt(r[1])].filter(Boolean).forEach((k) => map.set(k, (map.get(k) || 0) + amount));
   });
-  return { byKey };
+  return map;
 }
 
-function buildSaleSummaries(salesRows: string[][], paymentRows: string[][]) {
-  const paymentLedger = buildPaymentLedgerTotals(paymentRows);
+function salesSummary(salesRows: string[][], paymentRows: string[][]) {
+  const ledger = paymentLedger(paymentRows);
   const map = new Map<string, any>();
-  salesRows.slice(1).forEach((row) => {
-    const saleDate = normalizeDate(row[0]);
-    const salesRefNo = safeText(row[1]);
-    const customerName = safeText(row[2]);
-    const groupRef = safeText(row[14]);
-    const saleId = safeText(row[22]);
-    const customerId = safeText(row[33]);
-    const key = saleKey(salesRefNo, groupRef, saleId);
-    const productSubtotalPhp = toNumber(row[25] || row[7]);
-    const taxAmountPhp = toNumber(row[27]);
-    const grandTotalPhp = toNumber(row[28] || row[7]);
-    const deliveryFeePhp = toNumber(row[29]);
-    const installationFeePhp = toNumber(row[30]);
-    const otherChargePhp = toNumber(row[31]);
-    const discountPhp = toNumber(row[32]);
-    const grossProfitPhp = toNumber(row[10]);
-    const appliedPaidPhp = toNumber(row[16]);
-    const tenderedPhp = toNumber(row[34] || row[16]);
-    const changeDuePhp = toNumber(row[35]);
-    const paymentMethod = safeText(row[15]) || "Unspecified";
-    const saleStatus = safeText(row[20]) || "Draft";
-    if (!key || !saleDate || !customerName || grandTotalPhp <= 0) return;
-    const current = map.get(key) || {
-      key, saleId, saleDate, salesRefNo, groupRef, customerId, customerName,
-      productSubtotalPhp: 0, deliveryFeePhp: 0, installationFeePhp: 0, otherChargePhp: 0, discountPhp: 0, taxAmountPhp: 0,
-      totalSalePhp: 0, grossProfitPhp: 0, initialPaidPhp: 0, initialTenderedPhp: 0, initialChangeDuePhp: 0, initialPaymentMethod: paymentMethod, saleStatus,
-      linkedExpensesPhp: 0,
-    };
-    current.productSubtotalPhp += productSubtotalPhp;
-    current.deliveryFeePhp += deliveryFeePhp;
-    current.installationFeePhp += installationFeePhp;
-    current.otherChargePhp += otherChargePhp;
-    current.discountPhp += discountPhp;
-    current.taxAmountPhp += taxAmountPhp;
-    current.totalSalePhp += grandTotalPhp;
-    current.grossProfitPhp += grossProfitPhp;
-    current.initialPaidPhp += appliedPaidPhp;
-    current.initialTenderedPhp += tenderedPhp;
-    current.initialChangeDuePhp += changeDuePhp;
-    current.saleStatus = saleStatus;
-    if (!current.saleId && saleId) current.saleId = saleId;
-    if (!current.customerId && customerId) current.customerId = customerId;
-    map.set(key, current);
+  salesRows.slice(1).forEach((r) => {
+    const saleStatus = txt(r[20]) || "Draft";
+    if (!finalSale(saleStatus)) return;
+    const saleDate = normDate(r[0]);
+    const salesRefNo = txt(r[1]);
+    const customerName = txt(r[2]);
+    const groupRef = txt(r[14]);
+    const saleId = txt(r[22]);
+    const k = key(salesRefNo, groupRef, saleId);
+    const total = num(r[28] || r[7]);
+    if (!k || !saleDate || !customerName || total <= 0) return;
+    const current = map.get(k) || { key: k, saleId, saleDate, salesRefNo, groupRef, customerId: txt(r[33]), customerName, productSubtotalPhp: 0, deliveryFeePhp: 0, installationFeePhp: 0, otherChargePhp: 0, discountPhp: 0, taxAmountPhp: 0, totalSalePhp: 0, grossProfitPhp: 0, initialPaidPhp: 0, initialTenderedPhp: 0, initialChangeDuePhp: 0, initialPaymentMethod: txt(r[15]) || "Unspecified", linkedExpensesPhp: 0, saleStatus };
+    current.productSubtotalPhp += num(r[25] || r[7]);
+    current.deliveryFeePhp += num(r[29]);
+    current.installationFeePhp += num(r[30]);
+    current.otherChargePhp += num(r[31]);
+    current.discountPhp += num(r[32]);
+    current.taxAmountPhp += num(r[27]);
+    current.totalSalePhp += total;
+    current.grossProfitPhp += num(r[10]);
+    current.initialPaidPhp += num(r[16]);
+    current.initialTenderedPhp += num(r[34] || r[16]);
+    current.initialChangeDuePhp += num(r[35]);
+    map.set(k, current);
   });
-  return Array.from(map.values()).map((sale) => {
-    const followUpPaidPhp = paymentLedger.byKey.get(sale.saleId) || paymentLedger.byKey.get(sale.groupRef) || paymentLedger.byKey.get(sale.salesRefNo) || paymentLedger.byKey.get(sale.key) || 0;
-    const totalPaidPhp = sale.initialPaidPhp + followUpPaidPhp;
-    const totalTenderedPhp = sale.initialTenderedPhp + followUpPaidPhp;
-    const changeDuePhp = sale.initialChangeDuePhp;
-    const netCollectionPhp = totalTenderedPhp - changeDuePhp;
-    const balancePhp = Math.max(sale.totalSalePhp - totalPaidPhp, 0);
-    return { ...sale, followUpPaidPhp, totalPaidPhp, totalTenderedPhp, changeDuePhp, netCollectionPhp, balancePhp, paymentStatus: getPaymentStatus(totalPaidPhp, sale.totalSalePhp), netProfitPhp: sale.grossProfitPhp - sale.linkedExpensesPhp };
+  return Array.from(map.values()).map((s) => {
+    const followUpPaidPhp = ledger.get(s.saleId) || ledger.get(s.groupRef) || ledger.get(s.salesRefNo) || ledger.get(s.key) || 0;
+    const totalPaidPhp = s.initialPaidPhp + followUpPaidPhp;
+    const totalTenderedPhp = s.initialTenderedPhp + followUpPaidPhp;
+    const changeDuePhp = s.initialChangeDuePhp;
+    const balancePhp = Math.max(s.totalSalePhp - totalPaidPhp, 0);
+    return { ...s, followUpPaidPhp, totalPaidPhp, totalTenderedPhp, changeDuePhp, netCollectionPhp: totalTenderedPhp - changeDuePhp, balancePhp, paymentStatus: payStatus(totalPaidPhp, s.totalSalePhp), netProfitPhp: s.grossProfitPhp - s.linkedExpensesPhp };
   });
 }
 
-function parseExpenseRows(expenseRows: string[][]) {
-  if (!expenseRows.length) return [];
-  const header = expenseRows[0].map(safeText);
-  return expenseRows.slice(1).map((row) => {
-    const map: Record<string, string> = {};
-    header.forEach((h, i) => { map[h] = safeText(row[i]); });
-    return {
-      date: normalizeDate(map["Expense Date"] || map["Date"] || map["Upload Date"] || ""),
-      category: map["Category"] || "General Expense",
-      description: map["Description"] || map["Expense"] || "",
-      amount: toNumber(map["Total Amount"] || map["Amount"] || map["Total"] || map["Expense Amount"]),
-      paymentMethod: map["Payment Method"] || "",
-      reference: map["Reference No."] || map["Reference"] || "",
-      relatedSalesRefNo: map["Related Sales Ref No."] || "",
-      payee: map["Payee"] || "",
-      notes: map["Notes"] || "",
-      source: "Expenses",
-    };
-  }).filter((row) => row.date || row.description || row.amount > 0);
+function parseExpenses(rows: string[][]) {
+  if (!rows.length) return [];
+  const h = rows[0].map(txt);
+  return rows.slice(1).map((r) => {
+    const m: Record<string, string> = {}; h.forEach((x, i) => { m[x] = txt(r[i]); });
+    return { date: normDate(m["Expense Date"] || m["Date"] || m["Upload Date"]), category: m["Category"] || "General Expense", description: m["Description"] || m["Expense"] || "", amount: num(m["Total Amount"] || m["Amount"] || m["Total"] || m["Expense Amount"]), paymentMethod: m["Payment Method"] || "", reference: m["Reference No."] || m["Reference"] || "", relatedSalesRefNo: m["Related Sales Ref No."] || "", payee: m["Payee"] || "", notes: m["Notes"] || "", source: "Expenses" };
+  }).filter((x) => x.date || x.description || x.amount > 0);
 }
 
-function parseSupplierRows(supplierRows: string[][]) {
-  return supplierRows.slice(1).map((row) => ({
-    date: normalizeDate(row[0]), category: "Supplier Invoice Cost", description: safeText(row[1]), amount: toNumber(row[10]),
-    paymentMethod: "", reference: safeText(row[3]) || safeText(row[2]), relatedSalesRefNo: "", payee: safeText(row[1]), notes: safeText(row[11]), source: "Supplier_Invoice_Costs",
-  })).filter((row) => row.date || row.description || row.amount > 0);
+function parseSuppliers(rows: string[][]) {
+  return rows.slice(1).map((r) => ({ date: normDate(r[0]), category: "Supplier Invoice Cost", description: txt(r[1]), amount: num(r[10]), paymentMethod: "", reference: txt(r[3]) || txt(r[2]), relatedSalesRefNo: "", payee: txt(r[1]), notes: txt(r[11]), source: "Supplier_Invoice_Costs" })).filter((x) => x.date || x.description || x.amount > 0);
 }
 
-function attachLinkedExpenses(sales: any[], expenses: any[]) {
-  const expenseByRef = new Map<string, number>();
-  expenses.forEach((expense) => {
-    const ref = normalizeRef(expense.relatedSalesRefNo);
-    if (!ref || expense.amount <= 0) return;
-    expenseByRef.set(ref, (expenseByRef.get(ref) || 0) + expense.amount);
-  });
-  return sales.map((sale) => {
-    const linked = [sale.salesRefNo, sale.groupRef, sale.saleId, sale.key].map(normalizeRef).filter(Boolean).reduce((sum, ref) => sum + (expenseByRef.get(ref) || 0), 0);
-    return { ...sale, linkedExpensesPhp: linked, netProfitPhp: sale.grossProfitPhp - linked };
-  });
+function attachExpenses(sales: any[], expenses: any[]) {
+  const byRef = new Map<string, number>();
+  expenses.forEach((e) => { const r = txt(e.relatedSalesRefNo).toLowerCase(); if (r && e.amount > 0) byRef.set(r, (byRef.get(r) || 0) + e.amount); });
+  return sales.map((s) => { const linked = [s.salesRefNo, s.groupRef, s.saleId, s.key].map((x) => txt(x).toLowerCase()).filter(Boolean).reduce((sum, r) => sum + (byRef.get(r) || 0), 0); return { ...s, linkedExpensesPhp: linked, netProfitPhp: s.grossProfitPhp - linked }; });
 }
 
-function summarizeMethodBreakdown(entries: Array<{ method: string; amount: number }>) {
-  const map = new Map<string, number>();
-  entries.forEach((entry) => { const method = entry.method || "Unspecified"; map.set(method, (map.get(method) || 0) + entry.amount); });
-  return Array.from(map.entries()).map(([method, amount]) => ({ method, amount })).sort((a, b) => b.amount - a.amount);
+function byMethod(entries: Array<{ method: string; amount: number }>) {
+  const m = new Map<string, number>(); entries.forEach((e) => m.set(e.method || "Unspecified", (m.get(e.method || "Unspecified") || 0) + e.amount));
+  return Array.from(m.entries()).map(([method, amount]) => ({ method, amount })).sort((a, b) => b.amount - a.amount);
+}
+function byCategory(entries: Array<{ category: string; amount: number }>) {
+  const m = new Map<string, number>(); entries.forEach((e) => m.set(e.category || "Uncategorized", (m.get(e.category || "Uncategorized") || 0) + e.amount));
+  return Array.from(m.entries()).map(([category, amount]) => ({ category, amount })).sort((a, b) => b.amount - a.amount);
 }
 
-function summarizeByCategory(entries: Array<{ category: string; amount: number }>) {
-  const map = new Map<string, number>();
-  entries.forEach((entry) => { const category = entry.category || "Uncategorized"; map.set(category, (map.get(category) || 0) + entry.amount); });
-  return Array.from(map.entries()).map(([category, amount]) => ({ category, amount })).sort((a, b) => b.amount - a.amount);
-}
-
-function summarizeDaily(periodSales: any[], periodExpenses: any[], initialCollections: any[], followUpCollections: any[]) {
+function dailyTrend(sales: any[], expenses: any[], initial: any[], follow: any[]) {
   const days = new Map<string, any>();
-  const ensure = (date: string) => { if (!days.has(date)) days.set(date, { date, sales: 0, productSubtotal: 0, deliveryFee: 0, installationFee: 0, otherCharge: 0, discount: 0, tax: 0, collections: 0, cashReceived: 0, changeGiven: 0, expenses: 0, linkedExpenses: 0, grossProfit: 0, netProfit: 0, receivables: 0 }); return days.get(date); };
-  periodSales.forEach((sale) => { const item = ensure(sale.saleDate); item.sales += sale.totalSalePhp; item.productSubtotal += sale.productSubtotalPhp; item.deliveryFee += sale.deliveryFeePhp; item.installationFee += sale.installationFeePhp; item.otherCharge += sale.otherChargePhp; item.discount += sale.discountPhp; item.tax += sale.taxAmountPhp; item.grossProfit += sale.grossProfitPhp; item.linkedExpenses += sale.linkedExpensesPhp || 0; item.receivables += sale.balancePhp; });
-  periodExpenses.forEach((expense) => { const item = ensure(expense.date); item.expenses += expense.amount; });
-  [...initialCollections, ...followUpCollections].forEach((entry) => { const item = ensure(entry.date); item.collections += entry.amount; item.cashReceived += entry.tenderedAmount ?? entry.amount; item.changeGiven += entry.changeDue ?? 0; });
-  return Array.from(days.values()).map((item) => ({ ...item, netProfit: item.grossProfit - item.expenses })).sort((a, b) => a.date.localeCompare(b.date));
+  const get = (date: string) => { if (!days.has(date)) days.set(date, { date, sales: 0, productSubtotal: 0, deliveryFee: 0, installationFee: 0, otherCharge: 0, discount: 0, tax: 0, collections: 0, cashReceived: 0, changeGiven: 0, expenses: 0, linkedExpenses: 0, grossProfit: 0, netProfit: 0, receivables: 0 }); return days.get(date); };
+  sales.forEach((s) => { const d = get(s.saleDate); d.sales += s.totalSalePhp; d.productSubtotal += s.productSubtotalPhp; d.deliveryFee += s.deliveryFeePhp; d.installationFee += s.installationFeePhp; d.otherCharge += s.otherChargePhp; d.discount += s.discountPhp; d.tax += s.taxAmountPhp; d.grossProfit += s.grossProfitPhp; d.linkedExpenses += s.linkedExpensesPhp || 0; d.receivables += s.balancePhp; });
+  expenses.forEach((e) => { get(e.date).expenses += e.amount; });
+  [...initial, ...follow].forEach((e) => { const d = get(e.date); d.collections += e.amount; d.cashReceived += e.tenderedAmount ?? e.amount; d.changeGiven += e.changeDue || 0; });
+  return Array.from(days.values()).map((d) => ({ ...d, netProfit: d.grossProfit - d.expenses })).sort((a, b) => a.date.localeCompare(b.date));
 }
 
-function summarizeProductMovement(salesRows: string[][], startDate: string, endDate: string) {
-  const map = new Map<string, any>();
-  salesRows.slice(1).forEach((row) => {
-    const saleDate = normalizeDate(row[0]);
-    if (!inRange(saleDate, startDate, endDate)) return;
-    const description = safeText(row[3]);
-    const specification = safeText(row[4]);
-    const key = `${description}|||${specification}`;
-    const qty = toNumber(row[5]);
-    const totalSalePhp = toNumber(row[28] || row[7]);
-    const grossProfitPhp = toNumber(row[10]);
-    const saleStatus = safeText(row[20]) || "Draft";
-    if (!description && !specification) return;
-    const current = map.get(key) || { description, specification, qty: 0, totalSalePhp: 0, grossProfitPhp: 0, confirmedQty: 0 };
-    current.qty += qty; current.totalSalePhp += totalSalePhp; current.grossProfitPhp += grossProfitPhp; if (saleStatus.toLowerCase() === "confirmed") current.confirmedQty += qty; map.set(key, current);
+function productMovement(rows: string[][], start: string, end: string) {
+  const m = new Map<string, any>();
+  rows.slice(1).forEach((r) => {
+    if (!finalSale(r[20]) || !inRange(r[0], start, end)) return;
+    const description = txt(r[3]); const specification = txt(r[4]); if (!description && !specification) return;
+    const k = `${description}|||${specification}`; const current = m.get(k) || { description, specification, qty: 0, confirmedQty: 0, totalSalePhp: 0, grossProfitPhp: 0 };
+    current.qty += num(r[5]); current.confirmedQty += num(r[5]); current.totalSalePhp += num(r[28] || r[7]); current.grossProfitPhp += num(r[10]); m.set(k, current);
   });
-  return Array.from(map.values()).sort((a, b) => b.totalSalePhp - a.totalSalePhp);
+  return Array.from(m.values()).sort((a, b) => b.totalSalePhp - a.totalSalePhp);
 }
 
 export async function GET(req: Request) {
   try {
     const url = new URL(req.url);
-    const reportDate = url.searchParams.get("date") || today();
-    const mode = url.searchParams.get("mode") || "daily";
-    const period = getPeriodRange(mode, reportDate);
-    const client = await auth.getClient();
-    const sheets = google.sheets({ version: "v4", auth: client as any });
-    const [salesRows, paymentRows, expenseRows, supplierRows] = await Promise.all([
-      readRange(sheets, `${SALES_SHEET}!A:AJ`), readRange(sheets, `${PAYMENTS_SHEET}!A:L`), readRange(sheets, `${EXPENSES_SHEET}!A:Z`), readRange(sheets, `${SUPPLIER_COSTS_SHEET}!A:L`),
-    ]);
-    const allExpenses = [...parseExpenseRows(expenseRows), ...parseSupplierRows(supplierRows)];
-    const saleSummaries = attachLinkedExpenses(buildSaleSummaries(salesRows, paymentRows), allExpenses);
-    const periodSales = saleSummaries.filter((sale) => inRange(sale.saleDate, period.startDate, period.endDate));
-    const periodExpenses = allExpenses.filter((expense) => inRange(expense.date, period.startDate, period.endDate));
-    const linkedExpensesTotal = periodSales.reduce((sum, sale) => sum + (sale.linkedExpensesPhp || 0), 0);
-    const unlinkedExpenses = periodExpenses.filter((expense) => !safeText(expense.relatedSalesRefNo));
-    const periodExpenseTotal = periodExpenses.reduce((sum, expense) => sum + expense.amount, 0);
-    const initialCollections = periodSales.filter((sale) => sale.initialPaidPhp > 0 || sale.initialTenderedPhp > 0).map((sale) => ({ date: sale.saleDate, method: sale.initialPaymentMethod || "Unspecified", amount: sale.initialPaidPhp, tenderedAmount: sale.initialTenderedPhp || sale.initialPaidPhp, changeDue: sale.initialChangeDuePhp || 0 }));
-    const followUpCollections = paymentRows.slice(1).filter((row) => inRange(row[0], period.startDate, period.endDate)).map((row) => ({ date: normalizeDate(row[0]), method: safeText(row[4]) || "Unspecified", amount: toNumber(row[5]), tenderedAmount: toNumber(row[5]), changeDue: 0 })).filter((row) => row.amount > 0);
-    const productSubtotal = periodSales.reduce((sum, sale) => sum + sale.productSubtotalPhp, 0);
-    const deliveryFee = periodSales.reduce((sum, sale) => sum + sale.deliveryFeePhp, 0);
-    const installationFee = periodSales.reduce((sum, sale) => sum + sale.installationFeePhp, 0);
-    const otherCharge = periodSales.reduce((sum, sale) => sum + sale.otherChargePhp, 0);
-    const discount = periodSales.reduce((sum, sale) => sum + sale.discountPhp, 0);
-    const tax = periodSales.reduce((sum, sale) => sum + sale.taxAmountPhp, 0);
-    const totalSales = periodSales.reduce((sum, sale) => sum + sale.totalSalePhp, 0);
-    const confirmedSales = periodSales.filter((sale) => sale.saleStatus.toLowerCase() === "confirmed").reduce((sum, sale) => sum + sale.totalSalePhp, 0);
-    const grossProfit = periodSales.reduce((sum, sale) => sum + sale.grossProfitPhp, 0);
-    const initialCollectionsTotal = initialCollections.reduce((sum, entry) => sum + entry.amount, 0);
-    const followUpCollectionsTotal = followUpCollections.reduce((sum, entry) => sum + entry.amount, 0);
-    const collections = initialCollectionsTotal + followUpCollectionsTotal;
-    const cashReceived = [...initialCollections, ...followUpCollections].reduce((sum, entry) => sum + (entry.tenderedAmount ?? entry.amount), 0);
-    const changeGiven = [...initialCollections, ...followUpCollections].reduce((sum, entry) => sum + (entry.changeDue || 0), 0);
-    const endingReceivables = saleSummaries.reduce((sum, sale) => sum + sale.balancePhp, 0);
-    const newReceivables = periodSales.reduce((sum, sale) => sum + sale.balancePhp, 0);
-    const paymentStatusCounts = periodSales.reduce((acc: Record<string, number>, sale) => { acc[sale.paymentStatus] = (acc[sale.paymentStatus] || 0) + 1; return acc; }, {});
-
-    return NextResponse.json({
-      reportDate, mode: period.mode, startDate: period.startDate, endDate: period.endDate,
-      summary: {
-        productSubtotalPhp: productSubtotal, deliveryFeePhp: deliveryFee, installationFeePhp: installationFee, otherChargePhp: otherCharge, discountPhp: discount, taxAmountPhp: tax, grandTotalPhp: totalSales,
-        totalSalesToday: totalSales, confirmedSalesToday: confirmedSales, grossProfitToday: grossProfit, expensesToday: periodExpenseTotal, linkedExpensesToday: linkedExpensesTotal, unlinkedExpensesToday: unlinkedExpenses.reduce((sum, e) => sum + e.amount, 0), netProfitToday: grossProfit - periodExpenseTotal,
-        initialCollectionsToday: initialCollectionsTotal, followUpCollectionsToday: followUpCollectionsTotal, collectionsToday: collections, cashReceivedToday: cashReceived, changeGivenToday: changeGiven, netCashAfterChangeToday: cashReceived - changeGiven, newReceivablesToday: newReceivables, endingReceivables, dailySaleCount: periodSales.length, paymentStatusCounts,
-      },
-      accountingBreakdown: { productSubtotalPhp: productSubtotal, deliveryFeePhp: deliveryFee, installationFeePhp: installationFee, otherChargePhp: otherCharge, discountPhp: discount, taxAmountPhp: tax, grandTotalPhp: totalSales, grossProfitPhp: grossProfit, linkedExpensesPhp: linkedExpensesTotal, totalExpensesPhp: periodExpenseTotal, netProfitPhp: grossProfit - periodExpenseTotal },
-      collectionsByMethod: summarizeMethodBreakdown([...initialCollections, ...followUpCollections]),
-      cashByMethod: summarizeMethodBreakdown([...initialCollections, ...followUpCollections].map((entry) => ({ method: entry.method, amount: entry.tenderedAmount ?? entry.amount }))),
-      expensesByCategory: summarizeByCategory(periodExpenses),
-      dailyTrend: summarizeDaily(periodSales, periodExpenses, initialCollections, followUpCollections),
-      productMovement: summarizeProductMovement(salesRows, period.startDate, period.endDate),
-      dailySales: periodSales.map((sale) => ({ saleDate: sale.saleDate, salesRefNo: sale.salesRefNo, customerName: sale.customerName, customerId: sale.customerId, productSubtotalPhp: sale.productSubtotalPhp, deliveryFeePhp: sale.deliveryFeePhp, installationFeePhp: sale.installationFeePhp, otherChargePhp: sale.otherChargePhp, discountPhp: sale.discountPhp, taxAmountPhp: sale.taxAmountPhp, totalSalePhp: sale.totalSalePhp, grandTotalPhp: sale.totalSalePhp, totalPaidPhp: sale.totalPaidPhp, tenderedAmountPhp: sale.totalTenderedPhp, changeDuePhp: sale.changeDuePhp, netCollectionPhp: sale.netCollectionPhp, balancePhp: sale.balancePhp, grossProfitPhp: sale.grossProfitPhp, linkedExpensesPhp: sale.linkedExpensesPhp || 0, netProfitPhp: sale.netProfitPhp, paymentStatus: sale.paymentStatus, saleStatus: sale.saleStatus })),
-      dailyExpenses: periodExpenses,
-      linkedExpenses: periodExpenses.filter((expense) => safeText(expense.relatedSalesRefNo)),
-      openReceivables: saleSummaries.filter((sale) => sale.balancePhp > 0).sort((a, b) => b.balancePhp - a.balancePhp).map((sale) => ({ saleDate: sale.saleDate, salesRefNo: sale.salesRefNo, customerName: sale.customerName, totalSalePhp: sale.totalSalePhp, totalPaidPhp: sale.totalPaidPhp, tenderedAmountPhp: sale.totalTenderedPhp, changeDuePhp: sale.changeDuePhp, balancePhp: sale.balancePhp, paymentStatus: sale.paymentStatus, saleStatus: sale.saleStatus })),
-    });
+    const p = period(url.searchParams.get("mode") || "daily", url.searchParams.get("date") || today());
+    const client = await auth.getClient(); const sheets = google.sheets({ version: "v4", auth: client as any });
+    const [salesRows, paymentRows, expenseRows, supplierRows] = await Promise.all([read(sheets, `${SALES_SHEET}!A:AJ`), read(sheets, `${PAYMENTS_SHEET}!A:L`), read(sheets, `${EXPENSES_SHEET}!A:Z`), read(sheets, `${SUPPLIER_COSTS_SHEET}!A:L`)]);
+    const allExpenses = [...parseExpenses(expenseRows), ...parseSuppliers(supplierRows)];
+    const saleSummaries = attachExpenses(salesSummary(salesRows, paymentRows), allExpenses);
+    const periodSales = saleSummaries.filter((s) => inRange(s.saleDate, p.startDate, p.endDate));
+    const periodExpenses = allExpenses.filter((e) => inRange(e.date, p.startDate, p.endDate));
+    const initial = periodSales.filter((s) => s.initialPaidPhp > 0 || s.initialTenderedPhp > 0).map((s) => ({ date: s.saleDate, method: s.initialPaymentMethod || "Unspecified", amount: s.initialPaidPhp, tenderedAmount: s.initialTenderedPhp || s.initialPaidPhp, changeDue: s.initialChangeDuePhp || 0 }));
+    const follow = paymentRows.slice(1).filter((r) => inRange(r[0], p.startDate, p.endDate)).map((r) => ({ date: normDate(r[0]), method: txt(r[4]) || "Unspecified", amount: num(r[5]), tenderedAmount: num(r[5]), changeDue: 0 })).filter((r) => r.amount > 0);
+    const sum = (arr: any[], f: string) => arr.reduce((a, x) => a + (Number(x[f]) || 0), 0);
+    const collections = sum(initial, "amount") + sum(follow, "amount");
+    const cashReceived = [...initial, ...follow].reduce((a, x) => a + (x.tenderedAmount ?? x.amount), 0);
+    const changeGiven = [...initial, ...follow].reduce((a, x) => a + (x.changeDue || 0), 0);
+    const expensesTotal = sum(periodExpenses, "amount"); const grossProfit = sum(periodSales, "grossProfitPhp");
+    return NextResponse.json({ reportDate: url.searchParams.get("date") || today(), mode: p.mode, startDate: p.startDate, endDate: p.endDate, summary: { productSubtotalPhp: sum(periodSales, "productSubtotalPhp"), deliveryFeePhp: sum(periodSales, "deliveryFeePhp"), installationFeePhp: sum(periodSales, "installationFeePhp"), otherChargePhp: sum(periodSales, "otherChargePhp"), discountPhp: sum(periodSales, "discountPhp"), taxAmountPhp: sum(periodSales, "taxAmountPhp"), grandTotalPhp: sum(periodSales, "totalSalePhp"), totalSalesToday: sum(periodSales, "totalSalePhp"), confirmedSalesToday: sum(periodSales, "totalSalePhp"), grossProfitToday: grossProfit, expensesToday: expensesTotal, linkedExpensesToday: sum(periodSales, "linkedExpensesPhp"), unlinkedExpensesToday: periodExpenses.filter((e) => !txt(e.relatedSalesRefNo)).reduce((a, e) => a + e.amount, 0), netProfitToday: grossProfit - expensesTotal, initialCollectionsToday: sum(initial, "amount"), followUpCollectionsToday: sum(follow, "amount"), collectionsToday: collections, cashReceivedToday: cashReceived, changeGivenToday: changeGiven, netCashAfterChangeToday: cashReceived - changeGiven, newReceivablesToday: sum(periodSales, "balancePhp"), endingReceivables: sum(saleSummaries, "balancePhp"), dailySaleCount: periodSales.length, paymentStatusCounts: periodSales.reduce((a: Record<string, number>, s) => { a[s.paymentStatus] = (a[s.paymentStatus] || 0) + 1; return a; }, {}) }, accountingBreakdown: { productSubtotalPhp: sum(periodSales, "productSubtotalPhp"), deliveryFeePhp: sum(periodSales, "deliveryFeePhp"), installationFeePhp: sum(periodSales, "installationFeePhp"), otherChargePhp: sum(periodSales, "otherChargePhp"), discountPhp: sum(periodSales, "discountPhp"), taxAmountPhp: sum(periodSales, "taxAmountPhp"), grandTotalPhp: sum(periodSales, "totalSalePhp"), grossProfitPhp: grossProfit, linkedExpensesPhp: sum(periodSales, "linkedExpensesPhp"), totalExpensesPhp: expensesTotal, netProfitPhp: grossProfit - expensesTotal }, collectionsByMethod: byMethod([...initial, ...follow]), cashByMethod: byMethod([...initial, ...follow].map((x) => ({ method: x.method, amount: x.tenderedAmount ?? x.amount }))), expensesByCategory: byCategory(periodExpenses), dailyTrend: dailyTrend(periodSales, periodExpenses, initial, follow), productMovement: productMovement(salesRows, p.startDate, p.endDate), dailySales: periodSales.map((s) => ({ saleDate: s.saleDate, salesRefNo: s.salesRefNo, customerName: s.customerName, customerId: s.customerId, productSubtotalPhp: s.productSubtotalPhp, deliveryFeePhp: s.deliveryFeePhp, installationFeePhp: s.installationFeePhp, otherChargePhp: s.otherChargePhp, discountPhp: s.discountPhp, taxAmountPhp: s.taxAmountPhp, totalSalePhp: s.totalSalePhp, grandTotalPhp: s.totalSalePhp, totalPaidPhp: s.totalPaidPhp, tenderedAmountPhp: s.totalTenderedPhp, changeDuePhp: s.changeDuePhp, netCollectionPhp: s.netCollectionPhp, balancePhp: s.balancePhp, grossProfitPhp: s.grossProfitPhp, linkedExpensesPhp: s.linkedExpensesPhp || 0, netProfitPhp: s.netProfitPhp, paymentStatus: s.paymentStatus, saleStatus: s.saleStatus })), dailyExpenses: periodExpenses, linkedExpenses: periodExpenses.filter((e) => txt(e.relatedSalesRefNo)), openReceivables: saleSummaries.filter((s) => s.balancePhp > 0).map((s) => ({ saleDate: s.saleDate, salesRefNo: s.salesRefNo, customerName: s.customerName, totalSalePhp: s.totalSalePhp, totalPaidPhp: s.totalPaidPhp, tenderedAmountPhp: s.totalTenderedPhp, changeDuePhp: s.changeDuePhp, balancePhp: s.balancePhp, paymentStatus: s.paymentStatus, saleStatus: s.saleStatus })) });
   } catch (error: any) {
-    console.error("REPORTS API ERROR:", error);
-    return NextResponse.json({ error: error?.message || String(error) || "Failed to load reports" }, { status: 500 });
+    return NextResponse.json({ error: error?.message || "Failed to load reports" }, { status: 500 });
   }
 }
