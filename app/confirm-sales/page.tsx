@@ -61,7 +61,7 @@ function StatusPill({ value }: { value: string }) {
     ? "bg-emerald-50 text-emerald-700"
     : normalized === "partial"
       ? "bg-amber-50 text-amber-700"
-      : normalized === "cancelled"
+      : normalized === "cancelled" || normalized === "voided"
         ? "bg-rose-50 text-rose-700"
         : "bg-slate-100 text-slate-700";
 
@@ -193,21 +193,30 @@ export default function ConfirmSalesPage() {
   }
 
   async function cancelDraftSale(sale: SaleSummary) {
-    if (!window.confirm(`Cancel draft sale ${sale.salesRefNo || sale.groupRef}?\n\nThis will hide it from Confirm Sales. Inventory will not be deducted.`)) return;
+    const edit = getPaymentEdit(sale);
+    const hasPayment = sale.paidPhp > 0 || sale.paymentStatus.toLowerCase() === "partial";
+    const actionLabel = hasPayment ? "void this sale and its linked payment" : "cancel this draft sale";
+    if (!window.confirm(`Void / Cancel sale ${sale.salesRefNo || sale.groupRef}?\n\nThis will ${actionLabel}, remove it from active Payments/Reports, and will not deduct inventory because it is not confirmed.`)) return;
     setWorkingKey(`cancel-${sale.key}`);
     setMessage("");
     try {
       const res = await fetch("/api/sales/cancel-draft", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ saleId: sale.saleId, salesRefNo: sale.salesRefNo, groupRef: sale.groupRef }),
+        body: JSON.stringify({
+          saleId: sale.saleId,
+          salesRefNo: sale.salesRefNo,
+          groupRef: sale.groupRef,
+          actor: edit.cashierName || sale.cashierName || "Admin",
+          reason: hasPayment ? "Voided unconfirmed partial-payment sale from Confirm Sales" : "Cancelled draft sale from Confirm Sales",
+        }),
       });
       const data = await res.json();
-      if (!res.ok) throw new Error(data?.error || "Failed to cancel draft sale");
-      setMessage(data?.message || "Draft sale cancelled successfully.");
+      if (!res.ok) throw new Error(data?.error || "Failed to void/cancel sale");
+      setMessage(data?.message || "Sale voided/cancelled successfully.");
       await loadSales();
     } catch (error: any) {
-      setMessage(error?.message || "Failed to cancel draft sale.");
+      setMessage(error?.message || "Failed to void/cancel sale.");
     } finally {
       setWorkingKey("");
     }
@@ -271,7 +280,7 @@ export default function ConfirmSalesPage() {
           <div>
             <h1 className="text-3xl font-semibold text-slate-900">Confirm Sales</h1>
             <p className="mt-1 text-sm text-slate-600">
-              Confirm an existing sale to mark it Paid and make it count for inventory deduction. Edit payment details here before confirming if needed.
+              Confirm an existing sale to mark it Paid and make it count for inventory deduction. Unconfirmed draft/partial sales can be voided here.
             </p>
           </div>
           <button type="button" onClick={loadSales} disabled={loading} className="rounded-xl border border-slate-300 px-4 py-2 text-sm font-bold text-slate-700 disabled:opacity-60">
@@ -295,6 +304,7 @@ export default function ConfirmSalesPage() {
             <tbody>
               {reviewSales.map((sale) => {
                 const isConfirmed = sale.saleStatus.toLowerCase() === "confirmed";
+                const hasPayment = sale.paidPhp > 0 || sale.paymentStatus.toLowerCase() === "partial";
                 const edit = getPaymentEdit(sale);
                 return (
                   <tr key={sale.key} className="border-t border-slate-100 align-top">
@@ -345,7 +355,7 @@ export default function ConfirmSalesPage() {
                               {workingKey === `confirm-${sale.key}` ? "Confirming..." : "Confirm + Mark Paid"}
                             </button>
                             <button type="button" onClick={() => cancelDraftSale(sale)} disabled={workingKey === `cancel-${sale.key}`} className="rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-bold text-rose-700 disabled:opacity-50">
-                              {workingKey === `cancel-${sale.key}` ? "Cancelling..." : "Cancel Draft"}
+                              {workingKey === `cancel-${sale.key}` ? "Voiding..." : hasPayment ? "Void Sale + Payment" : "Void / Cancel"}
                             </button>
                           </>
                         )}
@@ -361,7 +371,7 @@ export default function ConfirmSalesPage() {
           </table>
         </div>
         <p className="mt-4 text-xs leading-6 text-slate-500">
-          Rule: confirming a sale marks it Paid and deducts inventory. Cancel Draft hides bad draft sales from this queue without deducting inventory.
+          Rule: Confirmed sales use Undo Confirm first. Unconfirmed Draft or Partial sales use Void / Cancel, which voids linked payments and keeps no inventory/report impact.
         </p>
       </div>
     </section>
