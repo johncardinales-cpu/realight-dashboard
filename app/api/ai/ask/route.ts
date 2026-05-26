@@ -35,9 +35,19 @@ function normalizePrompt(value: unknown) {
   return String(value || "").trim();
 }
 
-async function readJson<T>(origin: string, path: string, fallback: T): Promise<T> {
-  const response = await fetch(`${origin}${path}`, { cache: "no-store" });
+async function readJson<T>(origin: string, path: string, fallback: T, cookieHeader: string): Promise<T> {
+  const response = await fetch(`${origin}${path}`, {
+    cache: "no-store",
+    headers: cookieHeader ? { cookie: cookieHeader } : undefined,
+  });
+
   if (!response.ok) return fallback;
+
+  const contentType = response.headers.get("content-type") || "";
+  if (!contentType.includes("application/json")) {
+    return fallback;
+  }
+
   return (await response.json()) as T;
 }
 
@@ -159,6 +169,7 @@ export async function POST(request: Request) {
     const body = await request.json().catch(() => ({}));
     const prompt = normalizePrompt(body?.prompt) || "Show dashboard summary.";
     const origin = new URL(request.url).origin;
+    const cookieHeader = request.headers.get("cookie") || "";
 
     const [dashboard, activity] = await Promise.all([
       readJson<DashboardData>(origin, "/api/dashboard", {
@@ -169,8 +180,8 @@ export async function POST(request: Request) {
         totalSales: 0,
         totalExpenses: 0,
         netGain: 0,
-      }),
-      readJson<ActivityItem[]>(origin, "/api/recent-activity", []),
+      }, cookieHeader),
+      readJson<ActivityItem[]>(origin, "/api/recent-activity", [], cookieHeader),
     ]);
 
     if (dashboard.error) {
