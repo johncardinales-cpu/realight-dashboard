@@ -23,6 +23,39 @@ type ActivityItem = {
   icon?: string;
 };
 
+type InventoryAnalysis = {
+  summary?: {
+    totalItems?: number;
+    totalIncoming?: number;
+    totalReceived?: number;
+    totalSold?: number;
+    totalDamaged?: number;
+    totalOnHand?: number;
+    totalSellable?: number;
+    zeroStockCount?: number;
+    lowStockCount?: number;
+    healthyStockCount?: number;
+    lowestStock?: Array<{
+      item: string;
+      sellableQty: number;
+      actualOnHand: number;
+      incomingQty: number;
+      soldQty: number;
+    }>;
+    incoming?: Array<{
+      item: string;
+      incomingQty: number;
+      latestIncoming: string;
+    }>;
+    reorderSuggestions?: Array<{
+      item: string;
+      sellableQty: number;
+      minimumBuffer: number;
+      suggestedReorderQty: number;
+    }>;
+  };
+};
+
 function peso(value: number) {
   return `₱${Number(value || 0).toLocaleString()}`;
 }
@@ -100,25 +133,58 @@ function buildDashboardAnswer(prompt: string, data: DashboardData, activity: Act
   ].join("\n");
 }
 
-function buildInventoryAnswer(data: DashboardData) {
-  const notes: string[] = [];
-  if ((data.sellableUnits || 0) <= 0) notes.push("Sellable units are zero. Restock or validate stock records before selling.");
-  if ((data.incomingUnits || 0) > 0) notes.push(`${numberText(data.incomingUnits)} incoming units are recorded.`);
-  if ((data.warehouseReceived || 0) > 0) notes.push(`${numberText(data.warehouseReceived)} units are marked warehouse received.`);
-  if (!notes.length) notes.push("Current dashboard-level inventory numbers do not show an urgent stock warning.");
+function buildInventoryAnswer(data: DashboardData, analysis: InventoryAnalysis) {
+  const summary = analysis.summary;
+
+  if (!summary) {
+    const notes: string[] = [];
+    if ((data.sellableUnits || 0) <= 0) notes.push("Sellable units are zero. Restock or validate stock records before selling.");
+    if ((data.incomingUnits || 0) > 0) notes.push(`${numberText(data.incomingUnits)} incoming units are recorded.`);
+    if ((data.warehouseReceived || 0) > 0) notes.push(`${numberText(data.warehouseReceived)} units are marked warehouse received.`);
+    if (!notes.length) notes.push("Current dashboard-level inventory numbers do not show an urgent stock warning.");
+
+    return [
+      "Inventory Agent checked the live dashboard inventory totals in read-only mode.",
+      "",
+      `Incoming units: ${numberText(data.incomingUnits)}`,
+      `Warehouse received: ${numberText(data.warehouseReceived)}`,
+      `Actual on hand: ${numberText(data.actualOnHand)}`,
+      `Sellable units: ${numberText(data.sellableUnits)}`,
+      "",
+      "Inventory notes:",
+      ...notes.map((item) => `- ${item}`),
+      "",
+      "Product-level inventory analysis was not available, so this response used dashboard-level inventory totals only.",
+    ].join("\n");
+  }
+
+  const lowestStock = (summary.lowestStock || []).slice(0, 8);
+  const reorderSuggestions = (summary.reorderSuggestions || []).slice(0, 8);
+  const incoming = (summary.incoming || []).slice(0, 5);
 
   return [
-    "Inventory Agent checked the live dashboard inventory totals in read-only mode.",
+    "Inventory Agent checked live product-level inventory in read-only mode.",
     "",
-    `Incoming units: ${numberText(data.incomingUnits)}`,
-    `Warehouse received: ${numberText(data.warehouseReceived)}`,
-    `Actual on hand: ${numberText(data.actualOnHand)}`,
-    `Sellable units: ${numberText(data.sellableUnits)}`,
+    `Tracked items: ${numberText(summary.totalItems || 0)}`,
+    `Total incoming: ${numberText(summary.totalIncoming || 0)}`,
+    `Total received: ${numberText(summary.totalReceived || 0)}`,
+    `Total sold: ${numberText(summary.totalSold || 0)}`,
+    `Total damaged: ${numberText(summary.totalDamaged || 0)}`,
+    `Total actual on hand: ${numberText(summary.totalOnHand || 0)}`,
+    `Total sellable: ${numberText(summary.totalSellable || 0)}`,
+    `Zero-stock items: ${numberText(summary.zeroStockCount || 0)}`,
+    `Low-stock items: ${numberText(summary.lowStockCount || 0)}`,
     "",
-    "Inventory notes:",
-    ...notes.map((item) => `- ${item}`),
+    "Lowest stock items:",
+    ...(lowestStock.length ? lowestStock.map((item) => `- ${item.item}: sellable ${numberText(item.sellableQty)}, on hand ${numberText(item.actualOnHand)}, incoming ${numberText(item.incomingQty)}`) : ["- No item-level stock rows returned."]),
     "",
-    "Next upgrade: connect this agent to product-level stock rows so it can list exact low-stock products and reorder suggestions.",
+    "Reorder suggestions:",
+    ...(reorderSuggestions.length ? reorderSuggestions.map((item) => `- ${item.item}: sellable ${numberText(item.sellableQty)}, suggested reorder ${numberText(item.suggestedReorderQty)}`) : ["- No reorder suggestion triggered from current low-stock rules."]),
+    "",
+    "Incoming stock:",
+    ...(incoming.length ? incoming.map((item) => `- ${item.item}: incoming ${numberText(item.incomingQty)}${item.latestIncoming ? `, latest ${item.latestIncoming}` : ""}`) : ["- No incoming stock rows detected."]),
+    "",
+    "Safe-mode note: I only read inventory data and created suggestions. I did not change stock, sales, or delivery records.",
   ].join("\n");
 }
 
@@ -155,6 +221,7 @@ function buildGuardianAnswer() {
     "- Agent registry: active",
     "- Dashboard read check: available through /api/dashboard",
     "- Recent activity read check: available through /api/recent-activity",
+    "- Inventory read check: available through /api/inventory and /api/ai/inventory-analysis",
     "- Production writes: disabled",
     "- Auto deploy: disabled",
     "- Auto restore: disabled",
@@ -171,7 +238,7 @@ export async function POST(request: Request) {
     const origin = new URL(request.url).origin;
     const cookieHeader = request.headers.get("cookie") || "";
 
-    const [dashboard, activity] = await Promise.all([
+    const [dashboard, activity, inventoryAnalysis] = await Promise.all([
       readJson<DashboardData>(origin, "/api/dashboard", {
         incomingUnits: 0,
         warehouseReceived: 0,
@@ -182,6 +249,7 @@ export async function POST(request: Request) {
         netGain: 0,
       }, cookieHeader),
       readJson<ActivityItem[]>(origin, "/api/recent-activity", [], cookieHeader),
+      readJson<InventoryAnalysis>(origin, "/api/ai/inventory-analysis", {}, cookieHeader),
     ]);
 
     if (dashboard.error) {
@@ -190,7 +258,7 @@ export async function POST(request: Request) {
 
     const intent = detectIntent(prompt);
     const answer =
-      intent === "inventory" ? buildInventoryAnswer(dashboard) :
+      intent === "inventory" ? buildInventoryAnswer(dashboard, inventoryAnalysis) :
       intent === "activity" ? buildActivityAnswer(Array.isArray(activity) ? activity : []) :
       intent === "qa" ? buildQaAnswer() :
       intent === "guardian" ? buildGuardianAnswer() :
@@ -202,7 +270,7 @@ export async function POST(request: Request) {
       mode: "safe-read-only",
       prompt,
       response: answer,
-      dataSources: ["/api/dashboard", "/api/recent-activity"],
+      dataSources: intent === "inventory" ? ["/api/inventory", "/api/ai/inventory-analysis"] : ["/api/dashboard", "/api/recent-activity"],
       writeActionsEnabled: false,
       timestamp: new Date().toISOString(),
     });
