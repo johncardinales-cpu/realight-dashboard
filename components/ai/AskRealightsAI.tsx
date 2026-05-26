@@ -22,6 +22,18 @@ const quickPrompts = [
   "Check app guardian status.",
 ];
 
+async function readJsonResponse(response: Response) {
+  const contentType = response.headers.get("content-type") || "";
+
+  if (!contentType.includes("application/json")) {
+    const text = await response.text().catch(() => "");
+    const preview = text.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim().slice(0, 160);
+    throw new Error(preview || `Realights AI returned ${response.status} instead of JSON. Please refresh after deployment finishes.`);
+  }
+
+  return response.json();
+}
+
 export default function AskRealightsAI() {
   const [prompt, setPrompt] = useState("Show dashboard summary.");
   const [loading, setLoading] = useState(false);
@@ -42,7 +54,7 @@ export default function AskRealightsAI() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ prompt: cleanPrompt }),
       });
-      const payload = await response.json();
+      const payload = await readJsonResponse(response);
       if (!response.ok) throw new Error(payload?.error || "Failed to ask Realights AI.");
       setResult(payload);
     } catch (nextError: any) {
