@@ -72,7 +72,13 @@ function isValidSalesRow(row: string[]) {
   return true;
 }
 
-function buildReport(items: SalesItem[]) {
+function isCancelledSale(item: SalesItem) {
+  const saleStatus = item.saleStatus.toLowerCase();
+  const paymentStatus = item.paymentStatus.toLowerCase();
+  return saleStatus.includes("cancel") || saleStatus.includes("void") || paymentStatus.includes("cancel") || paymentStatus.includes("void");
+}
+
+function buildCustomerRows(items: SalesItem[]) {
   const customerMap = new Map<string, {
     customer: string;
     salesCount: number;
@@ -83,9 +89,6 @@ function buildReport(items: SalesItem[]) {
     grossProfitPhp: number;
     lastSaleDate: string;
   }>();
-
-  const paymentCounts = new Map<string, number>();
-  const statusCounts = new Map<string, number>();
 
   items.forEach((item) => {
     const customer = item.customerName || "Unspecified Customer";
@@ -108,20 +111,33 @@ function buildReport(items: SalesItem[]) {
     current.grossProfitPhp += item.grossProfitPhp;
     current.lastSaleDate = !current.lastSaleDate || item.saleDate > current.lastSaleDate ? item.saleDate : current.lastSaleDate;
     customerMap.set(customer, current);
+  });
 
+  return [...customerMap.values()];
+}
+
+function buildReport(items: SalesItem[]) {
+  const activeItems = items.filter((item) => !isCancelledSale(item));
+  const cancelledItems = items.filter(isCancelledSale);
+  const activeCustomers = buildCustomerRows(activeItems);
+
+  const paymentCounts = new Map<string, number>();
+  const saleStatusCounts = new Map<string, number>();
+
+  items.forEach((item) => {
     const paymentStatus = item.paymentStatus || "Unspecified";
     paymentCounts.set(paymentStatus, (paymentCounts.get(paymentStatus) || 0) + 1);
     const saleStatus = item.saleStatus || "Unspecified";
-    statusCounts.set(saleStatus, (statusCounts.get(saleStatus) || 0) + 1);
+    saleStatusCounts.set(saleStatus, (saleStatusCounts.get(saleStatus) || 0) + 1);
   });
 
-  const customers = [...customerMap.values()];
-  const totalSalesPhp = items.reduce((sum, item) => sum + item.totalSalePhp, 0);
-  const totalPaidPhp = items.reduce((sum, item) => sum + item.amountPaidPhp, 0);
-  const totalBalancePhp = items.reduce((sum, item) => sum + item.balancePhp, 0);
-  const totalQty = items.reduce((sum, item) => sum + item.qty, 0);
-  const topCustomers = customers.sort((a, b) => b.totalSalesPhp - a.totalSalesPhp).slice(0, 10);
-  const outstandingCustomers = [...customerMap.values()].filter((item) => item.balancePhp > 0).sort((a, b) => b.balancePhp - a.balancePhp).slice(0, 10);
+  const activeSalesPhp = activeItems.reduce((sum, item) => sum + item.totalSalePhp, 0);
+  const activePaidPhp = activeItems.reduce((sum, item) => sum + item.amountPaidPhp, 0);
+  const activeBalancePhp = activeItems.reduce((sum, item) => sum + item.balancePhp, 0);
+  const activeQty = activeItems.reduce((sum, item) => sum + item.qty, 0);
+  const cancelledSalesPhp = cancelledItems.reduce((sum, item) => sum + item.totalSalePhp, 0);
+  const topCustomers = [...activeCustomers].sort((a, b) => b.totalSalesPhp - a.totalSalesPhp).slice(0, 10);
+  const outstandingCustomers = [...activeCustomers].filter((item) => item.balancePhp > 0).sort((a, b) => b.balancePhp - a.balancePhp).slice(0, 10);
   const recentSales = [...items].sort((a, b) => String(b.saleDate).localeCompare(String(a.saleDate))).slice(0, 12);
 
   return {
@@ -129,51 +145,66 @@ function buildReport(items: SalesItem[]) {
     generatedBy: "Customer History Agent",
     mode: "Safe Read-Only",
     sources: ["Sales sheet via read-only Google Sheets scope"],
-    executiveSummary: `The customer history review found ${numberText(customers.length)} customer(s), ${numberText(items.length)} sale line(s), ${peso(totalSalesPhp)} in tracked sales, and ${peso(totalBalancePhp)} outstanding balance.`,
+    executiveSummary: `The customer history review found ${numberText(activeCustomers.length)} active customer(s), ${numberText(activeItems.length)} active sale line(s), ${peso(activeSalesPhp)} in active tracked sales, and ${peso(activeBalancePhp)} outstanding balance. ${numberText(cancelledItems.length)} cancelled/void sale line(s) totaling ${peso(cancelledSalesPhp)} were separated from active totals.`,
     summaryCards: [
-      { label: "Customers", value: numberText(customers.length), helper: "Unique customer names" },
-      { label: "Sale Lines", value: numberText(items.length), helper: "Valid sales rows" },
-      { label: "Total Sales", value: peso(totalSalesPhp), helper: "Tracked customer sales" },
-      { label: "Amount Paid", value: peso(totalPaidPhp), helper: "Collected amount" },
-      { label: "Outstanding", value: peso(totalBalancePhp), helper: "Remaining balances" },
-      { label: "Units Sold", value: numberText(totalQty), helper: "Total quantity sold" },
+      { label: "Customers", value: numberText(activeCustomers.length), helper: "Unique active customers" },
+      { label: "Active Sale Lines", value: numberText(activeItems.length), helper: "Excludes cancelled/void" },
+      { label: "Active Sales", value: peso(activeSalesPhp), helper: "Confirmed/non-cancelled sales" },
+      { label: "Amount Paid", value: peso(activePaidPhp), helper: "Collected active sales amount" },
+      { label: "Outstanding", value: peso(activeBalancePhp), helper: "Remaining active balances" },
+      { label: "Cancelled Lines", value: numberText(cancelledItems.length), helper: "Separated from active totals" },
     ],
     sections: [
       {
-        title: "Top Customers by Sales",
-        description: "Customers ranked by total tracked sales value.",
+        title: "Top Customers by Active Sales",
+        description: "Customers ranked by active tracked sales value. Cancelled/void sales are excluded.",
         columns: ["Customer", "Sale Lines", "Total Sales", "Paid", "Balance", "Last Sale"],
         rows: topCustomers.map((item) => ({ Customer: item.customer, "Sale Lines": item.salesCount, "Total Sales": peso(item.totalSalesPhp), Paid: peso(item.totalPaidPhp), Balance: peso(item.balancePhp), "Last Sale": item.lastSaleDate || "Not specified" })),
-        emptyMessage: "No customer sales were found.",
+        emptyMessage: "No active customer sales were found.",
       },
       {
         title: "Outstanding Customer Balances",
-        description: "Customers with remaining balances that may require follow-up.",
+        description: "Customers with remaining active balances that may require follow-up.",
         columns: ["Customer", "Balance", "Total Sales", "Paid", "Sale Lines", "Last Sale"],
         rows: outstandingCustomers.map((item) => ({ Customer: item.customer, Balance: peso(item.balancePhp), "Total Sales": peso(item.totalSalesPhp), Paid: peso(item.totalPaidPhp), "Sale Lines": item.salesCount, "Last Sale": item.lastSaleDate || "Not specified" })),
         emptyMessage: "No outstanding customer balances were detected.",
       },
       {
         title: "Payment Status Summary",
-        description: "Sales rows grouped by current payment status.",
+        description: "All valid sales rows grouped by current payment status.",
         columns: ["Payment Status", "Records"],
         rows: [...paymentCounts.entries()].map(([status, count]) => ({ "Payment Status": status, Records: count })),
         emptyMessage: "No payment status records were found.",
       },
       {
+        title: "Sale Status Summary",
+        description: "All valid sales rows grouped by sale status.",
+        columns: ["Sale Status", "Records"],
+        rows: [...saleStatusCounts.entries()].map(([status, count]) => ({ "Sale Status": status, Records: count })),
+        emptyMessage: "No sale status records were found.",
+      },
+      {
+        title: "Cancelled / Void Sales Excluded From Totals",
+        description: "Cancelled or void rows are shown for audit visibility, but not included in active sales totals.",
+        columns: ["Date", "Sales Ref", "Customer", "Product", "Qty", "Total", "Status"],
+        rows: cancelledItems.map((item) => ({ Date: item.saleDate || "Not specified", "Sales Ref": item.salesRefNo || "Not specified", Customer: item.customerName, Product: `${item.description} - ${item.specification}`, Qty: item.qty, Total: peso(item.totalSalePhp), Status: item.saleStatus || item.paymentStatus || "Not specified" })),
+        emptyMessage: "No cancelled or void sales were detected.",
+      },
+      {
         title: "Recent Customer Sales",
-        description: "Latest customer sale lines returned from the Sales sheet.",
+        description: "Latest customer sale lines returned from the Sales sheet. Cancelled/void rows are visibly marked by status.",
         columns: ["Date", "Sales Ref", "Customer", "Product", "Qty", "Total", "Balance", "Status"],
         rows: recentSales.map((item) => ({ Date: item.saleDate || "Not specified", "Sales Ref": item.salesRefNo || "Not specified", Customer: item.customerName, Product: `${item.description} - ${item.specification}`, Qty: item.qty, Total: peso(item.totalSalePhp), Balance: peso(item.balancePhp), Status: item.saleStatus || item.paymentStatus || "Not specified" })),
         emptyMessage: "No recent customer sales were found.",
       },
     ],
     recommendedActions: [
-      outstandingCustomers.length ? `Follow up on the highest outstanding balance: ${outstandingCustomers[0].customer} at ${peso(outstandingCustomers[0].balancePhp)}.` : "No customer balance follow-up is required from the current read-only review.",
+      outstandingCustomers.length ? `Follow up on the highest outstanding active balance: ${outstandingCustomers[0].customer} at ${peso(outstandingCustomers[0].balancePhp)}.` : "No active customer balance follow-up is required from the current read-only review.",
+      cancelledItems.length ? `Review ${numberText(cancelledItems.length)} cancelled/void sale line(s) for audit completeness; they are excluded from active totals.` : "No cancelled or void sale rows were detected.",
       "Compare customer balances against payment records before closing daily sales review.",
-      "Use customer filters by date, payment status, and customer name when investigating specific sales history.",
+      "Use customer filters by date, payment status, sale status, and customer name when investigating specific sales history.",
     ],
-    systemNote: "This customer history report was generated in safe read-only mode. No sales, customer, payment, balance, inventory, supplier, or pricing records were modified.",
+    systemNote: "This customer history report was generated in safe read-only mode. Cancelled/void sales are separated from active totals. No sales, customer, payment, balance, inventory, supplier, or pricing records were modified.",
   };
 }
 
