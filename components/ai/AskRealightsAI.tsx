@@ -53,6 +53,8 @@ const quickPrompts = [
   "Show dashboard summary.",
   "What needs attention today?",
   "Check inventory status.",
+  "Show customer history.",
+  "Show supplier history.",
   "Show recent activity.",
   "Create a QA checklist.",
   "Check app guardian status.",
@@ -338,7 +340,7 @@ export default function AskRealightsAI() {
           <p className="text-sm font-bold uppercase tracking-[0.24em] text-emerald-700">Ask Realights AI</p>
           <h3 className="mt-2 text-2xl font-semibold tracking-tight text-slate-950">Read-Only POS Assistant</h3>
           <p className="mt-2 max-w-2xl text-sm font-medium leading-6 text-slate-600">
-            Ask for dashboard summaries, inventory status, recent activity, QA checks, and guardian status. This assistant reads data only and cannot change POS records.
+            Ask for dashboard summaries, inventory status, customer history, supplier history, recent activity, QA checks, and guardian status. This assistant reads data only and cannot change POS records.
           </p>
         </div>
         <div className="rounded-2xl border border-emerald-200 bg-white px-4 py-3 text-sm font-bold text-emerald-700 shadow-sm">
