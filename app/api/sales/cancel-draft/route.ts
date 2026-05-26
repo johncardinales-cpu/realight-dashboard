@@ -72,13 +72,17 @@ export async function PATCH(req: Request) {
     });
 
     if (!saleId && !groupRef && salesRefNo && matches.length > 1) {
-      matches = matches.filter(({ row }) => rowMatchesFallback(row, body));
+      const exactMatches = matches.filter(({ row }) => rowMatchesFallback(row, body));
+      if (exactMatches.length) matches = exactMatches;
     }
     if (!matches.length) {
       matches = rows.slice(1).map((row, index) => ({ row, rowNumber: index + 2 })).filter(({ row }) => rowMatchesFallback(row, body));
     }
     if (!matches.length) return NextResponse.json({ error: "Sale was not found" }, { status: 404 });
-    if (matches.some(({ row }) => clean(row[20]).toLowerCase() === "confirmed")) return NextResponse.json({ error: "Confirmed sales must be undone first before cancelling/voiding." }, { status: 400 });
+
+    const unconfirmedMatches = matches.filter(({ row }) => clean(row[20]).toLowerCase() !== "confirmed");
+    if (!unconfirmedMatches.length) return NextResponse.json({ error: "Confirmed sales must be undone first before cancelling/voiding." }, { status: 400 });
+    matches = unconfirmedMatches;
 
     const first = matches[0].row;
     const recordRef = clean(first[1]) || clean(first[14]) || clean(first[22]) || salesRefNo || groupRef || saleId;
@@ -108,11 +112,11 @@ export async function PATCH(req: Request) {
     const totalSale = matches.reduce((sum, item) => sum + toNumber(item.row[28] || item.row[7]), 0);
     const initialPaid = matches.reduce((sum, item) => sum + toNumber(item.row[16]), 0);
     const voidedPaymentAmount = linkedPayments.reduce((sum, item) => sum + toNumber(item.row[5]), 0);
-    const summary = `Cancelled/voided unconfirmed sale ${recordRef}${customerName ? ` for ${customerName}` : ""}. Voided ${linkedPayments.length} linked payment record(s). No inventory deduction and no report impact.`;
-    await appendAuditLog(sheets, [makeId("AUDIT"), stamp, "Sales", "VOID_UNCONFIRMED_SALE", clean(first[22]), recordRef, actor, summary, JSON.stringify({ salesRefNo: clean(first[1]), groupRef: clean(first[14]), saleId: clean(first[22]), customerName, saleStatus: clean(first[20]) || "Draft", paymentStatus: clean(first[11]) || "Pending", totalSale, initialPaid, linkedPaymentCount: linkedPayments.length, linkedPaymentAmount: voidedPaymentAmount }), JSON.stringify({ saleStatus: "Cancelled", paymentStatus: "Cancelled", amountPaid: 0, balance: 0, linkedPayments: "Voided", cancelledAt: stamp, reason })]);
-    return NextResponse.json({ ok: true, message: `Unconfirmed sale cancelled/voided. ${linkedPayments.length} linked payment record(s) were voided.`, voidedPaymentCount: linkedPayments.length, voidedPaymentAmount });
+    const summary = `Cancelled unconfirmed sale ${recordRef}${customerName ? ` for ${customerName}` : ""}. Voided ${linkedPayments.length} linked payment record(s). No inventory deduction and no report impact.`;
+    await appendAuditLog(sheets, [makeId("AUDIT"), stamp, "Sales", "CANCEL_UNCONFIRMED_SALE", clean(first[22]), recordRef, actor, summary, JSON.stringify({ salesRefNo: clean(first[1]), groupRef: clean(first[14]), saleId: clean(first[22]), customerName, saleStatus: clean(first[20]) || "Draft", paymentStatus: clean(first[11]) || "Pending", totalSale, initialPaid, linkedPaymentCount: linkedPayments.length, linkedPaymentAmount: voidedPaymentAmount }), JSON.stringify({ saleStatus: "Cancelled", paymentStatus: "Cancelled", amountPaid: 0, balance: 0, linkedPayments: "Voided", cancelledAt: stamp, reason })]);
+    return NextResponse.json({ ok: true, message: `Unconfirmed sale cancelled. ${linkedPayments.length} linked payment record(s) were voided.`, voidedPaymentCount: linkedPayments.length, voidedPaymentAmount });
   } catch (error: any) {
-    console.error("VOID UNCONFIRMED SALE ERROR:", error);
-    return NextResponse.json({ error: error?.message || "Failed to cancel/void unconfirmed sale" }, { status: 500 });
+    console.error("CANCEL UNCONFIRMED SALE ERROR:", error);
+    return NextResponse.json({ error: error?.message || "Failed to cancel unconfirmed sale" }, { status: 500 });
   }
 }
