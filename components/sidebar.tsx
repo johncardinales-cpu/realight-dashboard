@@ -19,8 +19,6 @@ const mainNavItems = [
 ];
 
 const adminNavItems = [
-  { label: "Migration", href: "/migration", icon: "M4 7h16M4 12h10M4 17h16M16 10l4 4-4 4" },
-  { label: "Testing Reset", href: "/testing-reset", icon: "M4 4h16v6H4V4Zm0 10h16v6H4v-6Zm4-7h8M8 17h8" },
   { label: "Users", href: "/users", icon: "M16 21v-2a4 4 0 0 0-8 0v2M12 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8Z" },
   { label: "Settings", href: "/settings", icon: "M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6" },
 ];
@@ -64,7 +62,7 @@ export default function Sidebar() {
 
       {showAdminTools ? (
         <div className="mt-6 border-t border-slate-100 pt-4">
-          <p className="mb-2 px-4 text-[11px] font-black uppercase tracking-[0.22em] text-slate-400">Admin Tools</p>
+          <p className="mb-2 px-4 text-[11px] font-black uppercase tracking-[0.22em] text-slate-400">Admin</p>
           <nav className="space-y-2 text-sm font-medium">
             {adminNavItems.map((item) => <NavLink key={item.href} item={item} />)}
           </nav>
