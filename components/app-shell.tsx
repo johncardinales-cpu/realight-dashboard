@@ -3,12 +3,10 @@
 import { usePathname } from "next/navigation";
 import Sidebar from "@/components/sidebar";
 import Topbar from "@/components/topbar";
-import AIChatBox from "@/components/ai-chatbox";
 
 export default function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const isLogin = pathname === "/login";
-  const isDashboard = pathname === "/";
 
   if (isLogin) return <>{children}</>;
 
@@ -23,7 +21,6 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
           </main>
         </div>
       </div>
-      {!isDashboard ? <AIChatBox /> : null}
     </>
   );
 }
