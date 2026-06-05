@@ -16,6 +16,7 @@ const mainNavItems = [
   { label: "Payments", href: "/payments", icon: "M4 7h16v10H4V7Zm0 3h16M7 15h4" },
   { label: "Expenses", href: "/expenses", icon: "M4 7h16v12H4V7Zm0 4h16M16 15h2" },
   { label: "Reports", href: "/reports", icon: "M6 3h9l3 3v15H6V3Zm8 0v4h4M9 13h6M9 17h6" },
+  { label: "AI Agents", href: "/ai-agents", icon: "M12 3c1.2 2.8 3.2 4.8 6 6-2.8 1.2-4.8 3.2-6 6-1.2-2.8-3.2-4.8-6-6 2.8-1.2 4.8-3.2 6-6Zm6 9c.7 1.6 1.8 2.7 3 3-1.2.3-2.3 1.4-3 3-.7-1.6-1.8-2.7-3-3 1.2-.3 2.3-1.4 3-3ZM6 15c.5 1.1 1.4 2 2.5 2.5C7.4 18 6.5 18.9 6 20c-.5-1.1-1.4-2-2.5-2.5C4.6 17 5.5 16.1 6 15Z" },
 ];
 
 const adminNavItems = [
