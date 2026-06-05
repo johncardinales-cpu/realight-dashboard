@@ -1,279 +1,145 @@
-"use client";
+const recentActivities = [
+  { title: "New sale completed", note: "Invoice #INV-2024-0523", time: "2m ago", tone: "emerald", icon: "M6 6h15l-2 8H8L6 6Zm0 0L5 3H3M9 20a1 1 0 1 0 0-2 1 1 0 0 0 0 2Zm9 0a1 1 0 1 0 0-2 1 1 0 0 0 0 2Z" },
+  { title: "Stock updated", note: "50 items updated", time: "15m ago", tone: "blue", icon: "M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z" },
+  { title: "Delivery received", note: "From ABC Supplier", time: "1h ago", tone: "violet", icon: "M3 7h11v10H3V7Zm11 4h3l3 3v3h-6v-6Zm-8 8a2 2 0 1 0 0-4 2 2 0 0 0 0 4Zm12 0a2 2 0 1 0 0-4 2 2 0 0 0 0 4Z" },
+  { title: "New customer added", note: "Juan Dela Cruz", time: "2h ago", tone: "amber", icon: "M16 21v-2a4 4 0 0 0-8 0v2M12 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8" },
+  { title: "Expense recorded", note: "Office Supplies", time: "3h ago", tone: "emerald", icon: "M12 6v12M8 10h6a2 2 0 0 1 0 4h-4a2 2 0 0 0 0 4h6" },
+];
 
-import { useEffect, useMemo, useState } from "react";
-import AgentTestPanel from "@/components/ai/AgentTestPanel";
+const kpis = [
+  { label: "Total Sales", value: "₱128,430.00", change: "↑ 12.5%", helper: "vs last 7 days", tone: "emerald", icon: "M6 6h15l-2 8H8L6 6Zm0 0L5 3H3M9 20a1 1 0 1 0 0-2 1 1 0 0 0 0 2Zm9 0a1 1 0 1 0 0-2 1 1 0 0 0 0 2Z" },
+  { label: "Total Orders", value: "245", change: "↑ 8.3%", helper: "vs last 7 days", tone: "blue", icon: "M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z" },
+  { label: "Total Customers", value: "1,234", change: "↑ 6.7%", helper: "vs last 7 days", tone: "violet", icon: "M16 21v-2a4 4 0 0 0-8 0v2M12 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8Zm6-6a3 3 0 1 1 0 6" },
+  { label: "Low Stock Items", value: "28", change: "↓ 5", helper: "vs yesterday", tone: "orange", icon: "M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z" },
+];
 
-type DashboardData = {
-  incomingUnits: number;
-  warehouseReceived: number;
-  actualOnHand: number;
-  sellableUnits: number;
-  totalSales: number;
-  totalExpenses: number;
-  netGain: number;
+const toneClasses: Record<string, string> = {
+  emerald: "bg-emerald-50 text-emerald-600",
+  blue: "bg-blue-50 text-blue-600",
+  violet: "bg-violet-50 text-violet-600",
+  orange: "bg-orange-50 text-orange-600",
+  amber: "bg-orange-50 text-orange-600",
 };
 
-type ActivityItem = {
-  id: string;
-  title: string;
-  note: string;
-  actor: string;
-  module: string;
-  action: string;
-  recordRef: string;
-  time: string;
-  icon: string;
-};
-
-function peso(value: number) {
-  return `₱${value.toLocaleString()}`;
-}
-
-function formatNumber(value: number) {
-  return value.toLocaleString();
-}
-
-const iconPaths = {
-  incoming: "M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z",
-  warehouse: "M3 21h18M5 21V9l7-5 7 5v12M9 21v-7h6v7",
-  tag: "M20.6 13.4 13.4 20.6a2 2 0 0 1-2.8 0L3 13V3h10l7.6 7.6a2 2 0 0 1 0 2.8ZM7.5 7.5h.01",
-  sales: "M6 6h15l-2 8H8L6 6Zm0 0L5 3H3M9 20a1 1 0 1 0 0-2 1 1 0 0 0 0 2Zm9 0a1 1 0 1 0 0-2 1 1 0 0 0 0 2Z",
-  expenses: "M4 7h16v12H4V7Zm0 4h16M16 15h2",
-  gain: "M4 17 10 11l4 4 6-8M20 7v6h-6",
-  payment: "M4 7h16v10H4V7Zm0 3h16M7 15h4",
-  reset: "M4 4h16v6H4V4Zm0 10h16v6H4v-6Zm4-7h8M8 17h8",
-  activity: "M12 8v5l3 2M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z",
-};
-
-function activityIconPath(icon: string) {
-  if (icon === "sales") return iconPaths.sales;
-  if (icon === "payment") return iconPaths.payment;
-  if (icon === "inventory") return iconPaths.warehouse;
-  if (icon === "expense") return iconPaths.expenses;
-  if (icon === "reset") return iconPaths.reset;
-  return iconPaths.activity;
-}
-
-function activityTone(icon: string): "emerald" | "blue" | "amber" | "violet" | "rose" {
-  if (icon === "sales") return "violet";
-  if (icon === "payment") return "emerald";
-  if (icon === "inventory") return "blue";
-  if (icon === "expense") return "rose";
-  if (icon === "reset") return "amber";
-  return "emerald";
-}
-
-function MetricIcon({ path, tone = "emerald" }: { path: string; tone?: "emerald" | "blue" | "amber" | "violet" | "rose" }) {
-  const tones = {
-    emerald: "bg-emerald-50 text-emerald-600",
-    blue: "bg-sky-50 text-sky-600",
-    amber: "bg-amber-50 text-amber-600",
-    violet: "bg-violet-50 text-violet-600",
-    rose: "bg-rose-50 text-rose-600",
-  };
-
+function IconCircle({ icon, tone = "emerald" }: { icon: string; tone?: string }) {
   return (
-    <span className={`flex h-12 w-12 shrink-0 items-center justify-center rounded-full ${tones[tone]}`}>
-      <svg viewBox="0 0 24 24" aria-hidden="true" className="h-6 w-6" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-        <path d={path} />
+    <span className={`flex h-16 w-16 shrink-0 items-center justify-center rounded-full ${toneClasses[tone] || toneClasses.emerald}`}>
+      <svg viewBox="0 0 24 24" aria-hidden="true" className="h-7 w-7" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <path d={icon} />
       </svg>
     </span>
   );
 }
 
-function DetailLine({ label, value }: { label: string; value: string }) {
-  if (!value) return null;
-  return (
-    <div className="grid grid-cols-[82px_minmax(0,1fr)] gap-2 text-xs leading-5">
-      <span className="font-bold uppercase tracking-wide text-slate-400">{label}</span>
-      <span className="break-words font-semibold text-slate-700">{value}</span>
-    </div>
-  );
-}
-
-function ActivityDetails({ item }: { item: ActivityItem }) {
-  return (
-    <div className="pointer-events-none absolute right-0 top-full z-30 mt-2 hidden w-[min(340px,calc(100vw-3rem))] rounded-2xl border border-slate-200 bg-white p-4 text-left shadow-2xl ring-1 ring-slate-900/5 group-hover:block group-focus-within:block">
-      <div className="mb-3 flex items-start gap-3 border-b border-slate-100 pb-3">
-        <MetricIcon path={activityIconPath(item.icon)} tone={activityTone(item.icon)} />
-        <div className="min-w-0">
-          <p className="text-sm font-bold text-slate-950">{item.title}</p>
-          <p className="mt-1 text-xs font-medium text-slate-500">Complete activity details</p>
-        </div>
-      </div>
-      <div className="space-y-2">
-        <DetailLine label="Action" value={item.action || item.title} />
-        <DetailLine label="Module" value={item.module} />
-        <DetailLine label="Ref" value={item.recordRef} />
-        <DetailLine label="Actor" value={item.actor} />
-        <DetailLine label="Time" value={item.time} />
-        <DetailLine label="Summary" value={item.note} />
-      </div>
-    </div>
-  );
-}
-
 export default function HomePage() {
-  const [data, setData] = useState<DashboardData | null>(null);
-  const [activity, setActivity] = useState<ActivityItem[]>([]);
-
-  async function loadDashboard() {
-    const res = await fetch("/api/dashboard", { cache: "no-store" });
-    const nextData = await res.json();
-    setData(nextData);
-  }
-
-  async function loadActivity() {
-    const res = await fetch("/api/recent-activity", { cache: "no-store" });
-    const nextActivity = await res.json();
-    setActivity(Array.isArray(nextActivity) ? nextActivity : []);
-  }
-
-  useEffect(() => {
-    loadDashboard().catch(console.error);
-    loadActivity().catch(console.error);
-  }, []);
-
-  const kpis = useMemo(
-    () => [
-      { title: "Incoming Units", value: data ? formatNumber(data.incomingUnits) : "...", icon: iconPaths.incoming, tone: "emerald" as const },
-      { title: "Warehouse Received", value: data ? formatNumber(data.warehouseReceived) : "...", icon: iconPaths.warehouse, tone: "blue" as const },
-      { title: "Actual On Hand", value: data ? formatNumber(data.actualOnHand) : "...", icon: iconPaths.incoming, tone: "emerald" as const },
-      { title: "Sellable Units", value: data ? formatNumber(data.sellableUnits) : "...", icon: iconPaths.tag, tone: "amber" as const },
-      { title: "Total Sales", value: data ? peso(data.totalSales) : "...", icon: iconPaths.sales, tone: "violet" as const },
-      { title: "Total Expenses", value: data ? peso(data.totalExpenses) : "...", icon: iconPaths.expenses, tone: "rose" as const },
-      { title: "Net Gain", value: data ? peso(data.netGain) : "...", icon: iconPaths.gain, tone: "emerald" as const },
-    ],
-    [data]
-  );
-
-  const onHand = data?.actualOnHand ?? 0;
-  const trend = [
-    Math.max(Math.round(onHand * 0.64), 0),
-    Math.max(Math.round(onHand * 0.72), 0),
-    Math.max(Math.round(onHand * 0.81), 0),
-    Math.max(Math.round(onHand * 0.9), 0),
-    Math.max(Math.round(onHand * 0.96), 0),
-    onHand,
-  ];
-  const maxTrend = Math.max(...trend, 20000);
-  const chartLeft = 58;
-  const chartRight = 1060;
-  const chartBottom = 310;
-  const chartTop = 40;
-  const chartWidth = chartRight - chartLeft;
-  const chartHeight = chartBottom - chartTop;
-  const points = trend
-    .map((value, index) => {
-      const x = chartLeft + index * (chartWidth / (trend.length - 1));
-      const y = chartBottom - (value / maxTrend) * chartHeight;
-      return `${x},${y}`;
-    })
-    .join(" ");
+  const chartPoints = "40,170 160,145 280,170 400,120 520,55 640,50 760,165";
 
   return (
-    <section className="w-full space-y-5">
-      <div className="rounded-[1.75rem] border border-slate-200/80 bg-white p-6 shadow-[0_18px_50px_rgba(15,23,42,0.06)]">
-        <div className="flex flex-col gap-5 lg:flex-row lg:items-center lg:justify-between">
-          <div>
-            <h1 className="text-3xl font-semibold tracking-tight text-slate-950">Dashboard Overview</h1>
-            <p className="mt-2 text-sm font-medium text-slate-500">Live data from Google Sheets.</p>
-          </div>
-          <div className="flex flex-wrap gap-3">
-            <button onClick={() => { loadDashboard().catch(console.error); loadActivity().catch(console.error); }} className="inline-flex items-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 shadow-sm transition hover:border-slate-300 hover:bg-slate-50">
-              Refresh
-            </button>
-            <a href="/add-delivery" className="inline-flex items-center gap-2 rounded-2xl bg-emerald-600 px-5 py-2.5 text-sm font-semibold text-white shadow-sm shadow-emerald-600/20 transition hover:bg-emerald-700">
-              <span className="text-lg leading-none">+</span>
-              Add Delivery
-            </a>
-          </div>
-        </div>
+    <section className="space-y-6">
+      <div>
+        <h1 className="text-3xl font-bold tracking-tight text-slate-950">Dashboard</h1>
+        <p className="mt-1 text-sm font-medium text-slate-500">Welcome back, Admin! Here's what's happening with your business today.</p>
       </div>
-
-      <AgentTestPanel />
 
       <div className="grid grid-cols-1 gap-5 md:grid-cols-2 xl:grid-cols-4">
-        {kpis.slice(0, 4).map((item) => (
-          <div key={item.title} className="rounded-[1.5rem] border border-slate-200/80 bg-white p-5 shadow-[0_16px_40px_rgba(15,23,42,0.05)]">
-            <div className="flex items-center gap-4">
-              <MetricIcon path={item.icon} tone={item.tone} />
-              <div><p className="text-sm font-medium text-slate-500">{item.title}</p><p className="mt-1 text-3xl font-semibold tracking-tight text-slate-950">{item.value}</p></div>
+        {kpis.map((item) => (
+          <div key={item.label} className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+            <div className="flex items-center gap-5">
+              <IconCircle icon={item.icon} tone={item.tone} />
+              <div>
+                <p className="text-sm font-semibold text-slate-500">{item.label}</p>
+                <p className="mt-2 text-2xl font-bold tracking-tight text-slate-950">{item.value}</p>
+                <p className={`mt-2 text-sm font-bold ${item.tone === "orange" ? "text-orange-600" : "text-emerald-600"}`}>{item.change}</p>
+                <p className="mt-1 text-sm text-slate-500">{item.helper}</p>
+              </div>
             </div>
           </div>
         ))}
       </div>
 
-      <div className="grid grid-cols-1 gap-5 lg:grid-cols-3">
-        {kpis.slice(4).map((item) => (
-          <div key={item.title} className="rounded-[1.5rem] border border-slate-200/80 bg-white p-5 shadow-[0_16px_40px_rgba(15,23,42,0.05)]">
-            <div className="flex items-center gap-4">
-              <MetricIcon path={item.icon} tone={item.tone} />
-              <div><p className="text-sm font-medium text-slate-500">{item.title}</p><p className="mt-1 text-3xl font-semibold tracking-tight text-slate-950">{item.value}</p></div>
-            </div>
+      <div className="grid grid-cols-1 gap-5 xl:grid-cols-[minmax(0,1.15fr)_minmax(420px,0.85fr)]">
+        <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+          <div className="mb-5 flex items-center justify-between">
+            <h2 className="text-lg font-bold text-slate-950">Sales Overview</h2>
+            <button className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-bold text-slate-700 shadow-sm">This Week⌄</button>
           </div>
-        ))}
-      </div>
-
-      <div className="grid grid-cols-1 items-start gap-6 xl:grid-cols-[minmax(0,1fr)_380px]">
-        <div className="rounded-[1.75rem] border border-slate-200/80 bg-white p-6 shadow-[0_18px_50px_rgba(15,23,42,0.06)]">
-          <div className="mb-5 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-            <div className="flex items-start gap-3">
-              <span className="flex h-9 w-9 items-center justify-center rounded-full bg-emerald-50 text-emerald-600"><svg viewBox="0 0 24 24" aria-hidden="true" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d={iconPaths.gain} /></svg></span>
-              <div><h2 className="text-xl font-semibold tracking-tight text-slate-950">Inventory Trend</h2><p className="mt-1 text-sm text-slate-500">Actual on hand over the last 6 months.</p></div>
-            </div>
-            <button className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-600 shadow-sm">Last 6 Months</button>
-          </div>
-
-          <div className="overflow-hidden rounded-3xl bg-gradient-to-b from-slate-50 to-white px-3 pb-2 pt-4">
-            <svg viewBox="0 0 1120 380" className="h-[390px] w-full" role="img" aria-label="Inventory trend chart" preserveAspectRatio="none">
-              {[0, 1, 2, 3].map((line) => (
-                <line key={line} x1={chartLeft} x2={chartRight} y1={chartTop + line * 72} y2={chartTop + line * 72} stroke="#e2e8f0" strokeDasharray="4 6" />
-              ))}
-              <polyline points={`${chartLeft},${chartBottom} ${points} ${chartRight},${chartBottom}`} fill="#10b981" fillOpacity="0.08" stroke="none" />
-              <polyline points={points} fill="none" stroke="#059669" strokeWidth="4" strokeLinecap="round" strokeLinejoin="round" vectorEffect="non-scaling-stroke" />
-              {trend.map((value, index) => {
-                const x = chartLeft + index * (chartWidth / (trend.length - 1));
-                const y = chartBottom - (value / maxTrend) * chartHeight;
-                return <circle key={index} cx={x} cy={y} r="6" fill="#059669" stroke="white" strokeWidth="3" vectorEffect="non-scaling-stroke" />;
-              })}
-              <g className="text-xs fill-slate-500">
-                <text x="18" y="44">20K</text><text x="18" y="116">15K</text><text x="18" y="188">10K</text><text x="24" y="260">5K</text><text x="32" y="314">0</text>
-                {["Dec", "Jan", "Feb", "Mar", "Apr", "May"].map((month, index) => (
-                  <text key={month} x={chartLeft - 8 + index * (chartWidth / (trend.length - 1))} y="350">{month}</text>
-                ))}
-              </g>
-              <foreignObject x="790" y="150" width="155" height="90">
-                <div className="rounded-2xl border border-slate-200 bg-white p-3 text-sm shadow-xl">
-                  <p className="font-medium text-slate-500">May 2025</p><p className="mt-1 text-slate-500">Actual On Hand</p><p className="mt-1 font-semibold text-slate-950">{data ? formatNumber(data.actualOnHand) : "..."}</p>
-                </div>
-              </foreignObject>
+          <div className="overflow-hidden rounded-2xl bg-white">
+            <svg viewBox="0 0 820 310" className="h-[310px] w-full" role="img" aria-label="Sales overview chart">
+              <defs>
+                <linearGradient id="salesFill" x1="0" x2="0" y1="0" y2="1">
+                  <stop offset="0%" stopColor="#10b981" stopOpacity="0.25" />
+                  <stop offset="100%" stopColor="#10b981" stopOpacity="0" />
+                </linearGradient>
+              </defs>
+              {[60,120,180,240].map((y) => <line key={y} x1="40" x2="780" y1={y} y2={y} stroke="#e2e8f0" strokeDasharray="4 5" />)}
+              <text x="0" y="64" className="fill-slate-500 text-xs font-semibold">₱30K</text>
+              <text x="0" y="124" className="fill-slate-500 text-xs font-semibold">₱20K</text>
+              <text x="0" y="184" className="fill-slate-500 text-xs font-semibold">₱10K</text>
+              <text x="0" y="244" className="fill-slate-500 text-xs font-semibold">₱0</text>
+              <polygon points={`40,245 ${chartPoints} 760,245`} fill="url(#salesFill)" />
+              <polyline points={chartPoints} fill="none" stroke="#059669" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" />
+              {chartPoints.split(" ").map((point, index) => { const [x, y] = point.split(","); return <circle key={index} cx={x} cy={y} r="6" fill="#059669" stroke="white" strokeWidth="3" />; })}
+              {[
+                [60, "Mon"], [180, "Tue"], [300, "Wed"], [420, "Thu"], [540, "Fri"], [660, "Sat"], [760, "Sun"],
+              ].map(([x, label]) => <text key={label} x={x} y="285" textAnchor="middle" className="fill-slate-500 text-xs font-semibold">{label}</text>)}
             </svg>
           </div>
-
-          <div className="mt-4 flex items-center justify-center gap-2 text-sm font-medium text-slate-500"><span className="h-2.5 w-2.5 rounded-full bg-emerald-600" />Actual On Hand</div>
+          <div className="mt-4 grid grid-cols-3 divide-x divide-slate-200">
+            <div className="px-4 first:pl-0"><p className="text-lg font-bold text-slate-950">₱128,430.00</p><p className="text-sm text-slate-500">Total Sales</p></div>
+            <div className="px-4"><p className="text-lg font-bold text-slate-950">₱18,347.14</p><p className="text-sm text-slate-500">Daily Average</p></div>
+            <div className="px-4"><p className="text-lg font-bold text-emerald-600">12.5%</p><p className="text-sm text-slate-500">↑ vs Last Week</p></div>
+          </div>
         </div>
 
-        <div className="rounded-[1.75rem] border border-slate-200/80 bg-white p-6 shadow-[0_18px_50px_rgba(15,23,42,0.06)]">
+        <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
           <div className="mb-5 flex items-center justify-between">
-            <div className="flex items-center gap-3"><span className="flex h-9 w-9 items-center justify-center rounded-full bg-emerald-50 text-emerald-600"><svg viewBox="0 0 24 24" aria-hidden="true" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d={iconPaths.activity} /></svg></span><h2 className="text-xl font-semibold tracking-tight text-slate-950">Recent Activity</h2></div>
-            <button onClick={() => loadActivity().catch(console.error)} className="text-sm font-semibold text-emerald-600 hover:text-emerald-700">Refresh</button>
+            <h2 className="text-lg font-bold text-slate-950">Recent Activities</h2>
+            <button className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-bold text-slate-700 shadow-sm">View All</button>
           </div>
-          <div className="divide-y divide-slate-100 overflow-visible">
-            {activity.map((item) => (
-              <div key={item.id || `${item.title}-${item.time}`} tabIndex={0} className="group relative flex cursor-help items-center gap-4 rounded-2xl px-2 py-4 transition hover:bg-slate-50 focus:bg-slate-50 focus:outline-none first:pt-0 last:pb-0">
-                <MetricIcon path={activityIconPath(item.icon)} tone={activityTone(item.icon)} />
-                <div className="min-w-0 flex-1"><p className="font-semibold text-slate-950">{item.title}</p><p className="mt-1 truncate text-sm text-slate-500">{item.note}</p><p className="mt-1 text-xs font-medium text-slate-400">By {item.actor}</p></div>
-                <p className="whitespace-nowrap text-sm font-medium text-slate-500">{item.time}</p>
-                <ActivityDetails item={item} />
+          <div className="divide-y divide-slate-100">
+            {recentActivities.map((item) => (
+              <div key={item.title} className="flex items-center gap-4 py-4 first:pt-0 last:pb-0">
+                <span className={`flex h-12 w-12 shrink-0 items-center justify-center rounded-full ${toneClasses[item.tone] || toneClasses.emerald}`}>
+                  <svg viewBox="0 0 24 24" className="h-6 w-6" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d={item.icon} /></svg>
+                </span>
+                <div className="min-w-0 flex-1">
+                  <p className="font-bold text-slate-950">{item.title}</p>
+                  <p className="text-sm text-slate-500">{item.note}</p>
+                </div>
+                <p className="text-sm text-slate-500">{item.time}</p>
               </div>
             ))}
-            {!activity.length ? <div className="py-8 text-center text-sm font-medium text-slate-500">No recent activity yet.</div> : null}
           </div>
         </div>
       </div>
 
-      <p className="pb-2 text-center text-sm text-slate-400">© 2025 Realight Corporation. All rights reserved.</p>
+      <div className="grid grid-cols-1 gap-5 xl:grid-cols-[minmax(0,1fr)_minmax(420px,0.85fr)]">
+        <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+          <h2 className="text-lg font-bold text-slate-950">Inventory Summary</h2>
+          <div className="mt-5 grid grid-cols-2 gap-5 md:grid-cols-4 md:divide-x md:divide-slate-200">
+            <div><p className="text-sm text-slate-500">Total Items</p><p className="mt-2 text-2xl font-bold text-slate-950">1,245</p><p className="text-sm text-slate-500">All items in inventory</p></div>
+            <div className="md:pl-6"><p className="text-sm text-slate-500">In Stock</p><p className="mt-2 text-2xl font-bold text-emerald-600">987</p><p className="text-sm text-slate-500">Items available</p></div>
+            <div className="md:pl-6"><p className="text-sm text-slate-500">Low Stock</p><p className="mt-2 text-2xl font-bold text-orange-600">28</p><p className="text-sm text-slate-500">Need attention</p></div>
+            <div className="md:pl-6"><p className="text-sm text-slate-500">Out of Stock</p><p className="mt-2 text-2xl font-bold text-rose-600">15</p><p className="text-sm text-slate-500">Restock required</p></div>
+          </div>
+        </div>
+
+        <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+          <div className="mb-4 flex items-center justify-between">
+            <h2 className="text-lg font-bold text-slate-950">Top Selling Products</h2>
+            <button className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-bold text-slate-700 shadow-sm">View Report</button>
+          </div>
+          <div className="space-y-4">
+            {[["LED Bulb 9W", "432 sold"], ["Electrical Wire 2mm", "312 sold"], ["Circuit Breaker 20A", "256 sold"]].map(([name, sold], index) => (
+              <div key={name} className="flex items-center gap-4">
+                <span className="flex h-7 w-7 items-center justify-center rounded-full bg-emerald-50 text-sm font-bold text-emerald-700">{index + 1}</span>
+                <p className="min-w-0 flex-1 font-bold text-slate-950">{name}</p>
+                <p className="text-sm font-semibold text-slate-500">{sold}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
     </section>
   );
 }
