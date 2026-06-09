@@ -1,24 +1,12 @@
 import { NextResponse } from "next/server";
-import { google } from "googleapis";
+import { getSheetsClient, SHEET_ID } from "@/lib/sheets";
 
-const SHEET_ID = process.env.GOOGLE_SHEET_ID as string;
 const SALES_SHEET = "Sales";
 const INVENTORY_SHEET = "App_Deliveries";
 const AUDIT_LOG_SHEET = "Audit_Log";
+const AUDIT_HEADERS = ["Audit ID", "Created At", "Module", "Action", "Record ID", "Record Ref", "Actor", "Summary", "Before JSON", "After JSON"];
 
-const auth = new google.auth.GoogleAuth({
-  credentials: {
-    client_email: process.env.GOOGLE_CLIENT_EMAIL as string,
-    private_key: process.env.GOOGLE_PRIVATE_KEY?.replace(/\n/g, "\n"),
-  },
-  scopes: ["https://www.googleapis.com/auth/spreadsheets"],
-});
-
-const AUDIT_HEADERS = [
-  "Audit ID","Created At","Module","Action","Record ID","Record Ref","Actor","Summary","Before JSON","After JSON",
-];
-
-function toNumber(value: string | number | undefined) {
+function toNumber(value: unknown) {
   return Number(String(value || "").replace(/[^0-9.-]/g, "")) || 0;
 }
 
@@ -32,6 +20,10 @@ function safeText(value: unknown) {
 
 function itemKey(description: string, specification: string) {
   return `${safeText(description)}|||${safeText(specification)}`;
+}
+
+function saleKey(salesRefNo: string, groupRef: string) {
+  return safeText(groupRef) || safeText(salesRefNo);
 }
 
 function makeId(prefix: string) {
@@ -51,13 +43,9 @@ function columnLetter(index: number) {
   return column;
 }
 
-function saleKey(salesRefNo: string, groupRef: string) {
-  return safeText(groupRef) || safeText(salesRefNo);
-}
-
 function paymentStatusFromAmounts(paid: number, total: number) {
-  const paidAmount = toNumber(paid);
-  const totalAmount = toNumber(total);
+  const paidAmount = roundMoney(toNumber(paid));
+  const totalAmount = roundMoney(toNumber(total));
   if (totalAmount > 0 && paidAmount >= totalAmount) return "Paid";
   if (paidAmount > 0) return "Partial";
   return "Pending";
@@ -74,19 +62,21 @@ function isValidSalesRow(row: string[]) {
   );
 }
 
-async function getSheets() {
-  const client = await auth.getClient();
-  return google.sheets({ version: "v4", auth: client as any });
-}
-
 async function ensureSheetExists(sheets: any, title: string, headers: string[]) {
   const meta = await sheets.spreadsheets.get({ spreadsheetId: SHEET_ID });
   const found = (meta.data.sheets || []).find((s: any) => s.properties?.title === title);
   if (!found) {
-    await sheets.spreadsheets.batchUpdate({ spreadsheetId: SHEET_ID, requestBody: { requests: [{ addSheet: { properties: { title } } }] } });
+    await sheets.spreadsheets.batchUpdate({
+      spreadsheetId: SHEET_ID,
+      requestBody: { requests: [{ addSheet: { properties: { title } } }] },
+    });
   }
-  const lastCol = columnLetter(headers.length);
-  await sheets.spreadsheets.values.update({ spreadsheetId: SHEET_ID, range: `${title}!A1:${lastCol}1`, valueInputOption: "USER_ENTERED", requestBody: { values: [headers] } });
+  await sheets.spreadsheets.values.update({
+    spreadsheetId: SHEET_ID,
+    range: `${title}!A1:${columnLetter(headers.length)}1`,
+    valueInputOption: "USER_ENTERED",
+    requestBody: { values: [headers] },
+  });
 }
 
 async function appendAuditLog(sheets: any, entry: { action: string; recordId: string; recordRef: string; actor: string; summary: string; before?: unknown; after?: unknown }) {
@@ -147,7 +137,6 @@ function getConfirmedSoldMap(salesRows: string[][], saleIdBeingConfirmed: string
     const saleStatus = safeText(row[20]).toLowerCase() || "draft";
     if (saleStatus !== "confirmed") return;
     if ((saleIdBeingConfirmed && rowSaleId === saleIdBeingConfirmed) || (saleKeyBeingConfirmed && rowKey === saleKeyBeingConfirmed)) return;
-
     const key = itemKey(row[3], row[4]);
     map.set(key, (map.get(key) || 0) + toNumber(row[5]));
   });
@@ -176,11 +165,11 @@ function findTargetRows(salesRows: string[][], body: any) {
 
 function summarizeTarget(targetRows: Array<{ row: string[]; rowNumber: number }>) {
   const first = targetRows[0]?.row || [];
-  const totalSale = targetRows.reduce((sum, item) => sum + toNumber(item.row[7]), 0);
-  const paid = targetRows.reduce((sum, item) => sum + toNumber(item.row[16]), 0);
-  const balance = targetRows.reduce((sum, item) => sum + toNumber(item.row[17]), 0);
+  const totalSale = roundMoney(targetRows.reduce((sum, item) => sum + toNumber(item.row[7]), 0));
+  const paid = roundMoney(targetRows.reduce((sum, item) => sum + toNumber(item.row[16]), 0));
+  const balance = roundMoney(Math.max(totalSale - paid, 0));
   const saleStatus = safeText(first[20]) || "Draft";
-  const paymentStatus = safeText(first[11]) || paymentStatusFromAmounts(paid, totalSale);
+  const paymentStatus = paymentStatusFromAmounts(paid, totalSale);
   const saleId = safeText(first[22]);
   const salesRefNo = safeText(first[1]);
   const groupRef = safeText(first[14]);
@@ -223,16 +212,20 @@ async function validateStock(sheets: any, salesRows: string[][], target: ReturnT
   return insufficient.length ? `Insufficient confirmed stock. ${insufficient.join("; ")}` : "";
 }
 
-function makePaymentUpdates(targetRows: Array<{ row: string[]; rowNumber: number }>, paymentStatus: string, totalPaid: number, paymentMethod: string, transactionRef: string, cashierName: string) {
-  const totalSale = targetRows.reduce((sum, item) => sum + toNumber(item.row[7]), 0);
+function makePaymentUpdates(targetRows: Array<{ row: string[]; rowNumber: number }>, totalPaid: number, paymentMethod: string, transactionRef: string, cashierName: string) {
+  const totalSale = roundMoney(targetRows.reduce((sum, item) => sum + toNumber(item.row[7]), 0));
   const paidAmount = roundMoney(Math.min(Math.max(totalPaid, 0), totalSale));
-  return targetRows.flatMap(({ row, rowNumber }) => {
+  const status = paymentStatusFromAmounts(paidAmount, totalSale);
+
+  return targetRows.flatMap(({ row, rowNumber }, index) => {
     const lineTotal = toNumber(row[7]);
     const lineShare = totalSale > 0 ? lineTotal / totalSale : 0;
-    const linePaid = roundMoney(paidAmount * lineShare);
+    const linePaid = index === targetRows.length - 1
+      ? roundMoney(paidAmount - targetRows.slice(0, -1).reduce((sum, item) => sum + roundMoney(paidAmount * (toNumber(item.row[7]) / totalSale)), 0))
+      : roundMoney(paidAmount * lineShare);
     const lineBalance = roundMoney(Math.max(lineTotal - linePaid, 0));
     return [
-      { range: `${SALES_SHEET}!L${rowNumber}`, values: [[paymentStatus]] },
+      { range: `${SALES_SHEET}!L${rowNumber}`, values: [[status]] },
       { range: `${SALES_SHEET}!P${rowNumber}:T${rowNumber}`, values: [[paymentMethod, linePaid, lineBalance, transactionRef, cashierName]] },
     ];
   });
@@ -248,31 +241,26 @@ export async function PATCH(req: Request) {
       return NextResponse.json({ error: "Unsupported sales action" }, { status: 400 });
     }
 
-    const sheets = await getSheets();
+    const sheets = await getSheetsClient();
     await ensureSheetExists(sheets, AUDIT_LOG_SHEET, AUDIT_HEADERS);
     const salesRows = await readSalesRows(sheets);
     const targetRows = findTargetRows(salesRows, body);
-
-    if (!targetRows.length) {
-      return NextResponse.json({ error: "Sale was not found" }, { status: 404 });
-    }
+    if (!targetRows.length) return NextResponse.json({ error: "Sale was not found" }, { status: 404 });
 
     const target = summarizeTarget(targetRows);
     const normalizedSaleStatus = target.saleStatus.toLowerCase();
 
     if (action === "update-payment") {
-      const requestedStatus = safeText(body?.paymentStatus || target.paymentStatus || "Pending");
-      const normalizedRequestedStatus = requestedStatus.toLowerCase();
+      const requestedPaid = toNumber(body?.amountPaidPhp);
       const paymentMethod = safeText(body?.paymentMethod || target.paymentMethod);
       const transactionRef = safeText(body?.transactionRef || target.transactionRef);
       const cashierName = safeText(body?.cashierName || target.cashierName || actor);
-      const requestedPaid = toNumber(body?.amountPaidPhp);
-      const finalStatus = normalizedRequestedStatus === "paid" ? "Paid" : normalizedRequestedStatus === "partial" ? "Partial" : "Pending";
-      const finalPaid = finalStatus === "Paid" ? target.totalSale : finalStatus === "Partial" ? requestedPaid : 0;
-      const updateData = makePaymentUpdates(targetRows, finalStatus, finalPaid, paymentMethod, transactionRef, cashierName);
+      const updateData = makePaymentUpdates(targetRows, requestedPaid, paymentMethod, transactionRef, cashierName);
+      const finalStatus = paymentStatusFromAmounts(requestedPaid, target.totalSale);
+      const finalPaid = roundMoney(Math.min(Math.max(requestedPaid, 0), target.totalSale));
+      const finalBalance = roundMoney(Math.max(target.totalSale - finalPaid, 0));
 
       await sheets.spreadsheets.values.batchUpdate({ spreadsheetId: SHEET_ID, requestBody: { valueInputOption: "USER_ENTERED", data: updateData } });
-
       await appendAuditLog(sheets, {
         action: "UPDATE_SALE_PAYMENT",
         recordId: target.saleId || target.key,
@@ -280,78 +268,61 @@ export async function PATCH(req: Request) {
         actor,
         summary: `Updated payment for sale ${target.salesRefNo || target.groupRef} to ${finalStatus}`,
         before: { paymentStatus: target.paymentStatus, paid: target.paid, balance: target.balance, paymentMethod: target.paymentMethod },
-        after: { paymentStatus: finalStatus, paid: Math.min(finalPaid, target.totalSale), balance: Math.max(target.totalSale - finalPaid, 0), paymentMethod, transactionRef, cashierName },
+        after: { paymentStatus: finalStatus, paid: finalPaid, balance: finalBalance, paymentMethod, transactionRef, cashierName },
       });
 
-      return NextResponse.json({ ok: true, message: `Payment updated to ${finalStatus}.`, sale: { ...target, paymentStatus: finalStatus, paid: Math.min(finalPaid, target.totalSale), balance: Math.max(target.totalSale - finalPaid, 0), paymentMethod, transactionRef, cashierName } });
+      return NextResponse.json({ ok: true, message: `Payment updated to ${finalStatus}.`, sale: { ...target, paymentStatus: finalStatus, paid: finalPaid, balance: finalBalance, paymentMethod, transactionRef, cashierName } });
     }
 
     if (action === "undo" || action === "unconfirm") {
-      if (normalizedSaleStatus !== "confirmed") {
-        return NextResponse.json({ ok: true, message: "Sale is not confirmed, no undo needed", sale: target });
-      }
-
-      const updateData = targetRows.flatMap(({ rowNumber }) => [
-        { range: `${SALES_SHEET}!U${rowNumber}:V${rowNumber}`, values: [["Draft", ""]] },
-      ]);
-
+      if (normalizedSaleStatus !== "confirmed") return NextResponse.json({ ok: true, message: "Sale is not confirmed, no undo needed", sale: target });
+      const updateData = targetRows.map(({ rowNumber }) => ({ range: `${SALES_SHEET}!U${rowNumber}:V${rowNumber}`, values: [["Draft", ""]] }));
       await sheets.spreadsheets.values.batchUpdate({ spreadsheetId: SHEET_ID, requestBody: { valueInputOption: "USER_ENTERED", data: updateData } });
-
       await appendAuditLog(sheets, {
         action: "UNDO_CONFIRM_SALE",
         recordId: target.saleId || target.key,
         recordRef: target.salesRefNo || target.groupRef,
         actor,
-        summary: `Undid confirmation for sale ${target.salesRefNo || target.groupRef} with ${targetRows.length} line(s)` ,
+        summary: `Undid confirmation for sale ${target.salesRefNo || target.groupRef} with ${targetRows.length} line(s)`,
         before: { saleStatus: target.saleStatus, paymentStatus: target.paymentStatus, balance: target.balance },
         after: { saleStatus: "Draft", confirmedAt: "", paymentStatus: target.paymentStatus, balance: target.balance },
       });
-
       return NextResponse.json({ ok: true, message: "Sale confirmation undone successfully", sale: { ...target, saleStatus: "Draft", confirmedAt: "" } });
     }
 
-    if (normalizedSaleStatus === "confirmed") {
-      return NextResponse.json({ ok: true, message: "Sale is already confirmed", sale: target });
-    }
-
-    if (normalizedSaleStatus === "cancelled") {
-      return NextResponse.json({ error: "Cancelled sales cannot be confirmed" }, { status: 400 });
-    }
-
-    const paymentMethod = safeText(body?.paymentMethod || target.paymentMethod);
-    const transactionRef = safeText(body?.transactionRef || target.transactionRef);
-    const cashierName = safeText(body?.cashierName || target.cashierName || actor);
-    if (!paymentMethod) return NextResponse.json({ error: "Payment Method is required before confirming a sale as Paid." }, { status: 400 });
+    if (normalizedSaleStatus === "confirmed") return NextResponse.json({ ok: true, message: "Sale is already confirmed", sale: target });
+    if (normalizedSaleStatus === "cancelled") return NextResponse.json({ error: "Cancelled sales cannot be confirmed" }, { status: 400 });
 
     const stockError = await validateStock(sheets, salesRows, target);
     if (stockError) return NextResponse.json({ error: stockError }, { status: 409 });
 
+    const paymentMethod = safeText(body?.paymentMethod || target.paymentMethod || "Unspecified");
+    const transactionRef = safeText(body?.transactionRef || target.transactionRef);
+    const cashierName = safeText(body?.cashierName || target.cashierName || actor);
     const confirmedAt = new Date().toISOString();
-    const finalPaymentStatus = "Paid";
+    const finalPaymentStatus = paymentStatusFromAmounts(target.paid, target.totalSale);
+    const finalBalance = roundMoney(Math.max(target.totalSale - target.paid, 0));
     const updateData = [
-      ...makePaymentUpdates(targetRows, finalPaymentStatus, target.totalSale, paymentMethod, transactionRef, cashierName),
-      ...targetRows.flatMap(({ rowNumber }) => [
-        { range: `${SALES_SHEET}!U${rowNumber}:V${rowNumber}`, values: [["Confirmed", confirmedAt]] },
-      ]),
+      ...makePaymentUpdates(targetRows, target.paid, paymentMethod, transactionRef, cashierName),
+      ...targetRows.map(({ rowNumber }) => ({ range: `${SALES_SHEET}!U${rowNumber}:V${rowNumber}`, values: [["Confirmed", confirmedAt]] })),
     ];
 
     await sheets.spreadsheets.values.batchUpdate({ spreadsheetId: SHEET_ID, requestBody: { valueInputOption: "USER_ENTERED", data: updateData } });
-
     await appendAuditLog(sheets, {
       action: "CONFIRM_SALE",
       recordId: target.saleId || target.key,
       recordRef: target.salesRefNo || target.groupRef,
       actor,
-      summary: `Confirmed sale ${target.salesRefNo || target.groupRef} with ${targetRows.length} line(s) and marked payment Paid`,
+      summary: `Confirmed sale ${target.salesRefNo || target.groupRef} with payment ${finalPaymentStatus} and balance ${finalBalance}`,
       before: { saleStatus: target.saleStatus, paymentStatus: target.paymentStatus, balance: target.balance, paid: target.paid, totalSale: target.totalSale },
-      after: { saleStatus: "Confirmed", confirmedAt, paymentStatus: finalPaymentStatus, balance: 0, paid: target.totalSale, totalSale: target.totalSale, paymentMethod, transactionRef, cashierName },
+      after: { saleStatus: "Confirmed", confirmedAt, paymentStatus: finalPaymentStatus, balance: finalBalance, paid: target.paid, totalSale: target.totalSale, paymentMethod, transactionRef, cashierName },
     });
 
     return NextResponse.json({
       ok: true,
-      message: "Sale confirmed successfully. Payment status set to Paid.",
+      message: `Sale confirmed successfully. Payment status ${finalPaymentStatus}.`,
       confirmedAt,
-      sale: { ...target, saleStatus: "Confirmed", confirmedAt, paymentStatus: finalPaymentStatus, paid: target.totalSale, balance: 0, paymentMethod, transactionRef, cashierName },
+      sale: { ...target, saleStatus: "Confirmed", confirmedAt, paymentStatus: finalPaymentStatus, paid: target.paid, balance: finalBalance, paymentMethod, transactionRef, cashierName },
     });
   } catch (error: any) {
     console.error("CONFIRM SALE ERROR:", error);
