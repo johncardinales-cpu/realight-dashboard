@@ -3,6 +3,75 @@
 :root {
   --background: #f8fafc;
   --foreground: #0f172a;
+  --surface: #ffffff;
+  --surface-muted: #f1f5f9;
+  --border-soft: #e2e8f0;
+  --accent: #059669;
+  --accent-soft: #d1fae5;
+  --accent-text: #047857;
+}
+
+html[data-theme="dark"] {
+  --background: #020617;
+  --foreground: #f8fafc;
+  --surface: #0f172a;
+  --surface-muted: #111827;
+  --border-soft: #1e293b;
+}
+
+html[data-accent="emerald"] {
+  --accent: #059669;
+  --accent-soft: #d1fae5;
+  --accent-text: #047857;
+}
+
+html[data-accent="amber"] {
+  --accent: #f59e0b;
+  --accent-soft: #fef3c7;
+  --accent-text: #b45309;
+}
+
+html[data-accent="blue"] {
+  --accent: #2563eb;
+  --accent-soft: #dbeafe;
+  --accent-text: #1d4ed8;
+}
+
+html[data-accent="violet"] {
+  --accent: #7c3aed;
+  --accent-soft: #ede9fe;
+  --accent-text: #6d28d9;
+}
+
+html[data-accent="slate"] {
+  --accent: #475569;
+  --accent-soft: #e2e8f0;
+  --accent-text: #334155;
+}
+
+html[data-theme="dark"][data-accent="emerald"] {
+  --accent-soft: rgba(16, 185, 129, 0.14);
+  --accent-text: #6ee7b7;
+}
+
+html[data-theme="dark"][data-accent="amber"] {
+  --accent-soft: rgba(245, 158, 11, 0.16);
+  --accent-text: #fcd34d;
+}
+
+html[data-theme="dark"][data-accent="blue"] {
+  --accent-soft: rgba(37, 99, 235, 0.18);
+  --accent-text: #93c5fd;
+}
+
+html[data-theme="dark"][data-accent="violet"] {
+  --accent-soft: rgba(124, 58, 237, 0.2);
+  --accent-text: #c4b5fd;
+}
+
+html[data-theme="dark"][data-accent="slate"] {
+  --accent-soft: rgba(148, 163, 184, 0.16);
+  --accent-text: #cbd5e1;
 }
 
 @theme inline {
@@ -20,9 +89,96 @@ html {
 
 body {
   min-height: 100vh;
-  background: var(--background);
+  background: var(--background) !important;
   color: var(--foreground);
   font-family: Arial, Helvetica, sans-serif;
+}
+
+html[data-theme="dark"] body {
+  color-scheme: dark;
+}
+
+html[data-theme="dark"] .bg-white {
+  background-color: var(--surface) !important;
+}
+
+html[data-theme="dark"] .bg-slate-50,
+html[data-theme="dark"] .bg-slate-100 {
+  background-color: var(--surface-muted) !important;
+}
+
+html[data-theme="dark"] .border-slate-100,
+html[data-theme="dark"] .border-slate-200,
+html[data-theme="dark"] .border-slate-300 {
+  border-color: var(--border-soft) !important;
+}
+
+html[data-theme="dark"] .text-slate-950,
+html[data-theme="dark"] .text-slate-900,
+html[data-theme="dark"] .text-slate-800,
+html[data-theme="dark"] .text-slate-700 {
+  color: #f8fafc !important;
+}
+
+html[data-theme="dark"] .text-slate-600,
+html[data-theme="dark"] .text-slate-500,
+html[data-theme="dark"] .text-slate-400 {
+  color: #cbd5e1 !important;
+}
+
+html[data-theme="dark"] input,
+html[data-theme="dark"] select,
+html[data-theme="dark"] textarea {
+  background-color: #020617 !important;
+  border-color: var(--border-soft) !important;
+  color: #f8fafc !important;
+}
+
+html[data-theme="dark"] input::placeholder,
+html[data-theme="dark"] textarea::placeholder {
+  color: #94a3b8 !important;
+}
+
+html[data-accent="amber"] .bg-emerald-600,
+html[data-accent="amber"] .bg-emerald-700,
+html[data-accent="blue"] .bg-emerald-600,
+html[data-accent="blue"] .bg-emerald-700,
+html[data-accent="violet"] .bg-emerald-600,
+html[data-accent="violet"] .bg-emerald-700,
+html[data-accent="slate"] .bg-emerald-600,
+html[data-accent="slate"] .bg-emerald-700 {
+  background-color: var(--accent) !important;
+}
+
+html[data-accent] .text-emerald-600,
+html[data-accent] .text-emerald-700,
+html[data-accent] .text-emerald-800,
+html[data-accent] .text-emerald-300 {
+  color: var(--accent-text) !important;
+}
+
+html[data-accent] .bg-emerald-50,
+html[data-accent] .bg-emerald-100 {
+  background-color: var(--accent-soft) !important;
+}
+
+html[data-accent] .border-emerald-100,
+html[data-accent] .border-emerald-200,
+html[data-accent] .border-emerald-300 {
+  border-color: var(--accent) !important;
+}
+
+html[data-accent] .ring-emerald-100,
+html[data-accent] .ring-emerald-200 {
+  --tw-ring-color: var(--accent-soft) !important;
+}
+
+html[data-density="compact"] body {
+  --density-scale: 0.86;
+}
+
+html[data-density="spacious"] body {
+  --density-scale: 1.12;
 }
 
 button,
