@@ -1,19 +1,10 @@
 import { NextResponse } from "next/server";
-import { google } from "googleapis";
+import { getSheetsClient, SHEET_ID } from "@/lib/sheets";
 
-const SHEET_ID = process.env.GOOGLE_SHEET_ID as string;
 const SALES_SHEET = "Sales";
 const PAYMENTS_SHEET = "Payments";
 const EXPENSES_SHEET = "Expenses";
 const SUPPLIER_COSTS_SHEET = "Supplier_Invoice_Costs";
-
-const auth = new google.auth.GoogleAuth({
-  credentials: {
-    client_email: process.env.GOOGLE_CLIENT_EMAIL as string,
-    private_key: process.env.GOOGLE_PRIVATE_KEY?.replace(/\n/g, "\n"),
-  },
-  scopes: ["https://www.googleapis.com/auth/spreadsheets"],
-});
 
 function txt(v: unknown) { return String(v || "").trim(); }
 function num(v: unknown) { return Number(String(v || "").replace(/[^0-9.-]/g, "")) || 0; }
@@ -24,6 +15,8 @@ function finalSale(status: unknown) { return txt(status).toLowerCase() === "conf
 function inactive(status: unknown) { return ["voided", "cancelled", "canceled"].includes(txt(status).toLowerCase()); }
 function activePayment(row: string[]) { return !inactive(row[12]) && num(row[5]) > 0; }
 function payStatus(paid: number, total: number) { if (total <= 0 || paid <= 0) return "Pending"; return paid >= total ? "Paid" : "Partial"; }
+function round(value: number) { return Math.round((Number(value) || 0) * 100) / 100; }
+function uniqueKeys(values: string[]) { return Array.from(new Set(values.map(txt).filter(Boolean))); }
 
 function normDate(v: unknown) {
   const s = txt(v);
@@ -78,9 +71,15 @@ function paymentLedger(rows: string[][]) {
   const map = new Map<string, number>();
   rows.slice(1).filter(activePayment).forEach((r) => {
     const amount = num(r[5]);
-    [key(r[1], r[2], r[11]), txt(r[11]), txt(r[2]), txt(r[1])].filter(Boolean).forEach((k) => map.set(k, (map.get(k) || 0) + amount));
+    uniqueKeys([key(r[1], r[2], r[11]), txt(r[11]), txt(r[2]), txt(r[1])]).forEach((k) => map.set(k, (map.get(k) || 0) + amount));
   });
   return map;
+}
+
+function followUpForSale(ledger: Map<string, number>, sale: any) {
+  const keys = uniqueKeys([sale.saleId, sale.groupRef, sale.salesRefNo, sale.key]);
+  for (const k of keys) if (ledger.has(k)) return ledger.get(k) || 0;
+  return 0;
 }
 
 function salesSummary(salesRows: string[][], paymentRows: string[][]) {
@@ -117,8 +116,8 @@ function salesSummary(salesRows: string[][], paymentRows: string[][]) {
       taxAmountPhp: 0,
       totalSalePhp: 0,
       grossProfitPhp: 0,
-      initialPaidPhp: 0,
-      initialTenderedPhp: 0,
+      salesSheetPaidPhp: 0,
+      salesSheetTenderedPhp: 0,
       initialChangeDuePhp: 0,
       initialPaymentMethod: txt(r[15]) || "Unspecified",
       linkedExpensesPhp: 0,
@@ -137,25 +136,29 @@ function salesSummary(salesRows: string[][], paymentRows: string[][]) {
     current.taxAmountPhp += num(r[27]);
     current.totalSalePhp += total;
     current.grossProfitPhp += num(r[10]);
-    current.initialPaidPhp += linePaid;
-    current.initialTenderedPhp += lineTendered;
+    current.salesSheetPaidPhp += linePaid;
+    current.salesSheetTenderedPhp += lineTendered;
     current.initialChangeDuePhp += num(r[35]);
     map.set(k, current);
   });
 
   return Array.from(map.values()).map((s) => {
-    const followUpPaidPhp = ledger.get(s.saleId) || ledger.get(s.groupRef) || ledger.get(s.salesRefNo) || ledger.get(s.key) || 0;
-    const totalPaidPhp = s.initialPaidPhp + followUpPaidPhp;
-    const totalTenderedPhp = Math.max(s.initialTenderedPhp + followUpPaidPhp, totalPaidPhp);
-    const changeDuePhp = s.initialChangeDuePhp;
-    const balancePhp = Math.max(s.totalSalePhp - totalPaidPhp, 0);
+    const followUpPaidPhp = round(followUpForSale(ledger, s));
+    const totalPaidPhp = round(Math.min(Math.max(s.salesSheetPaidPhp, 0), s.totalSalePhp));
+    const initialCollectionPhp = round(Math.max(totalPaidPhp - followUpPaidPhp, 0));
+    const initialTenderedPhp = s.initialChangeDuePhp > 0 ? round(Math.max(s.salesSheetTenderedPhp - followUpPaidPhp, initialCollectionPhp)) : initialCollectionPhp;
+    const totalTenderedPhp = round(initialTenderedPhp + followUpPaidPhp);
+    const changeDuePhp = round(s.initialChangeDuePhp);
+    const balancePhp = round(Math.max(s.totalSalePhp - totalPaidPhp, 0));
     return {
       ...s,
+      initialPaidPhp: initialCollectionPhp,
+      initialTenderedPhp,
       followUpPaidPhp,
       totalPaidPhp,
       totalTenderedPhp,
       changeDuePhp,
-      netCollectionPhp: totalTenderedPhp - changeDuePhp,
+      netCollectionPhp: round(totalTenderedPhp - changeDuePhp),
       balancePhp,
       paymentStatus: payStatus(totalPaidPhp, s.totalSalePhp),
       netProfitPhp: s.grossProfitPhp - s.linkedExpensesPhp,
@@ -268,8 +271,7 @@ export async function GET(req: Request) {
   try {
     const url = new URL(req.url);
     const p = period(url.searchParams.get("mode") || "daily", url.searchParams.get("date") || today());
-    const client = await auth.getClient();
-    const sheets = google.sheets({ version: "v4", auth: client as any });
+    const sheets = await getSheetsClient();
     const [salesRows, paymentRows, expenseRows, supplierRows] = await Promise.all([
       read(sheets, `${SALES_SHEET}!A:AJ`),
       read(sheets, `${PAYMENTS_SHEET}!A:O`),
@@ -353,7 +355,7 @@ export async function GET(req: Request) {
         totalSalePhp: s.totalSalePhp,
         grandTotalPhp: s.totalSalePhp,
         totalPaidPhp: s.totalPaidPhp,
-        tenderedAmountPhp: Math.max(s.totalTenderedPhp || 0, s.totalPaidPhp || 0),
+        tenderedAmountPhp: s.totalTenderedPhp,
         changeDuePhp: s.changeDuePhp,
         netCollectionPhp: s.netCollectionPhp,
         balancePhp: s.balancePhp,
@@ -371,7 +373,7 @@ export async function GET(req: Request) {
         customerName: s.customerName,
         totalSalePhp: s.totalSalePhp,
         totalPaidPhp: s.totalPaidPhp,
-        tenderedAmountPhp: Math.max(s.totalTenderedPhp || 0, s.totalPaidPhp || 0),
+        tenderedAmountPhp: s.totalTenderedPhp,
         changeDuePhp: s.changeDuePhp,
         balancePhp: s.balancePhp,
         paymentStatus: s.paymentStatus,
