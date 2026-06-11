@@ -40,6 +40,7 @@ export default function AgentTestPanel() {
   const [status, setStatus] = useState<StatusPayload | null>(null);
   const [loadingStatus, setLoadingStatus] = useState(true);
   const [testingAgentId, setTestingAgentId] = useState<string | null>(null);
+  const [expandedAgentId, setExpandedAgentId] = useState<string | null>(null);
   const [testResponse, setTestResponse] = useState<TestResponse | null>(null);
   const [error, setError] = useState("");
 
@@ -87,7 +88,7 @@ export default function AgentTestPanel() {
           <p className="text-sm font-bold uppercase tracking-[0.24em] text-emerald-600">AI Agents</p>
           <h2 className="mt-2 text-2xl font-semibold tracking-tight text-slate-950">Agent Test Panel</h2>
           <p className="mt-2 max-w-2xl text-sm font-medium leading-6 text-slate-500">
-            Verify that the 7 Realights POS agents are registered, online, and protected by safe-mode restrictions before deeper activation.
+            Verify that the Realights POS agents are registered, online, and protected by safe-mode restrictions before deeper activation.
           </p>
         </div>
         <button onClick={() => loadStatus().catch(console.error)} className="rounded-2xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 shadow-sm transition hover:border-slate-300 hover:bg-slate-50">
@@ -97,48 +98,65 @@ export default function AgentTestPanel() {
 
       {error ? <div className="mb-4 rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm font-semibold text-rose-700">{error}</div> : null}
 
-      <div className="mb-5 grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-4">
-        <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-          <p className="text-xs font-bold uppercase tracking-wide text-slate-400">System Mode</p>
-          <p className="mt-1 text-lg font-semibold text-slate-950">{status?.mode || "safe"}</p>
+      <div className="mb-5 grid grid-cols-2 gap-3 xl:grid-cols-4">
+        <div className="rounded-2xl border border-slate-200 bg-slate-50 p-3">
+          <p className="text-[10px] font-bold uppercase tracking-wide text-slate-400">System Mode</p>
+          <p className="mt-1 text-base font-semibold text-slate-950">{status?.mode || "safe"}</p>
         </div>
-        <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-          <p className="text-xs font-bold uppercase tracking-wide text-slate-400">Registered Agents</p>
-          <p className="mt-1 text-lg font-semibold text-slate-950">{status?.agents?.length ?? "..."}</p>
+        <div className="rounded-2xl border border-slate-200 bg-slate-50 p-3">
+          <p className="text-[10px] font-bold uppercase tracking-wide text-slate-400">Registered Agents</p>
+          <p className="mt-1 text-base font-semibold text-slate-950">{status?.agents?.length ?? "..."}</p>
         </div>
-        <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-          <p className="text-xs font-bold uppercase tracking-wide text-slate-400">Production Writes</p>
-          <p className="mt-1 text-lg font-semibold text-slate-950">{status?.writeActionsEnabled ? "Enabled" : "Disabled"}</p>
+        <div className="rounded-2xl border border-slate-200 bg-slate-50 p-3">
+          <p className="text-[10px] font-bold uppercase tracking-wide text-slate-400">Production Writes</p>
+          <p className="mt-1 text-base font-semibold text-slate-950">{status?.writeActionsEnabled ? "Enabled" : "Disabled"}</p>
         </div>
-        <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-          <p className="text-xs font-bold uppercase tracking-wide text-slate-400">Auto Restore</p>
-          <p className="mt-1 text-lg font-semibold text-slate-950">{status?.autoRestoreEnabled ? "Enabled" : "Disabled"}</p>
+        <div className="rounded-2xl border border-slate-200 bg-slate-50 p-3">
+          <p className="text-[10px] font-bold uppercase tracking-wide text-slate-400">Auto Restore</p>
+          <p className="mt-1 text-base font-semibold text-slate-950">{status?.autoRestoreEnabled ? "Enabled" : "Disabled"}</p>
         </div>
       </div>
 
-      <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
-        {(status?.agents || []).map((agent) => (
-          <div key={agent.id} className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
-            <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-              <div>
-                <div className="flex flex-wrap items-center gap-2">
-                  <h3 className="text-lg font-semibold text-slate-950">{agent.name}</h3>
-                  <span className="rounded-full bg-emerald-50 px-2.5 py-1 text-xs font-bold uppercase tracking-wide text-emerald-700">{agent.status}</span>
-                  <span className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-bold uppercase tracking-wide text-slate-600">{agent.mode}</span>
+      <div className="grid grid-cols-1 gap-3 xl:grid-cols-2">
+        {(status?.agents || []).map((agent) => {
+          const isExpanded = expandedAgentId === agent.id;
+
+          return (
+            <div key={agent.id} className="rounded-3xl border border-slate-200 bg-white p-4 shadow-sm transition hover:border-emerald-200 hover:shadow-md">
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <div className="min-w-0">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <h3 className="text-base font-semibold text-slate-950">{agent.name}</h3>
+                    <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-emerald-700">{agent.status}</span>
+                    <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-slate-600">{agent.mode}</span>
+                  </div>
+                  <p className="mt-1 truncate text-sm font-semibold text-slate-500">{agent.title}</p>
                 </div>
-                <p className="mt-1 text-sm font-semibold text-slate-500">{agent.title}</p>
+
+                <button
+                  type="button"
+                  onClick={() => setExpandedAgentId(isExpanded ? null : agent.id)}
+                  className="rounded-2xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 shadow-sm transition hover:border-emerald-200 hover:bg-emerald-50 hover:text-emerald-700"
+                >
+                  {isExpanded ? "Hide Details" : "View Details"}
+                </button>
               </div>
-              <button onClick={() => testAgent(agent)} disabled={testingAgentId === agent.id} className="rounded-2xl bg-emerald-600 px-4 py-2 text-sm font-semibold text-white shadow-sm shadow-emerald-600/20 transition hover:bg-emerald-700 disabled:cursor-not-allowed disabled:bg-slate-300">
-                {testingAgentId === agent.id ? "Testing..." : "Test Agent"}
-              </button>
+
+              {isExpanded ? (
+                <div className="mt-4 border-t border-slate-100 pt-4">
+                  <p className="text-sm leading-6 text-slate-600">{agent.summary}</p>
+                  <div className="mt-4 rounded-2xl bg-slate-50 p-4">
+                    <p className="text-xs font-bold uppercase tracking-wide text-slate-400">Sample Prompt</p>
+                    <p className="mt-1 text-sm font-semibold text-slate-700">{agent.samplePrompts[0]}</p>
+                  </div>
+                  <button onClick={() => testAgent(agent)} disabled={testingAgentId === agent.id} className="mt-4 rounded-2xl bg-emerald-600 px-4 py-2 text-sm font-semibold text-white shadow-sm shadow-emerald-600/20 transition hover:bg-emerald-700 disabled:cursor-not-allowed disabled:bg-slate-300">
+                    {testingAgentId === agent.id ? "Testing..." : "Test Agent"}
+                  </button>
+                </div>
+              ) : null}
             </div>
-            <p className="mt-4 text-sm leading-6 text-slate-600">{agent.summary}</p>
-            <div className="mt-4 rounded-2xl bg-slate-50 p-4">
-              <p className="text-xs font-bold uppercase tracking-wide text-slate-400">Sample Prompt</p>
-              <p className="mt-1 text-sm font-semibold text-slate-700">{agent.samplePrompts[0]}</p>
-            </div>
-          </div>
-        ))}
+          );
+        })}
       </div>
 
       {testResponse ? (
