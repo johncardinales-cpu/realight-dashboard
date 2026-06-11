@@ -35,7 +35,7 @@ const AUDIT_HEADERS = [
 const auth = new google.auth.GoogleAuth({
   credentials: {
     client_email: process.env.GOOGLE_CLIENT_EMAIL,
-    private_key: process.env.GOOGLE_PRIVATE_KEY?.replace(/\\n/g, "\n"),
+    private_key: process.env.GOOGLE_PRIVATE_KEY?.replace(/\n/g, "\n"),
   },
   scopes: ["https://www.googleapis.com/auth/spreadsheets"],
 });
@@ -152,16 +152,21 @@ function parseSale(row: string[]) {
   };
 }
 
+function isActiveCustomerSale(sale: ReturnType<typeof parseSale>) {
+  return !["cancelled", "canceled", "void", "voided"].includes(safeText(sale.saleStatus).toLowerCase());
+}
+
 function attachSalesHistory(customers: any[], salesRows: string[][]) {
   const sales = salesRows.slice(1).map(parseSale).filter((sale) => sale.customerName && sale.description && sale.qty > 0);
   return customers.map((customer) => {
     const customerKey = normalizeName(customer.customerName);
     const customerSales = sales.filter((sale) => normalizeName(sale.customerName) === customerKey);
-    const totalOrders = new Set(customerSales.map((sale) => sale.salesRefNo || sale.groupRef || sale.saleId).filter(Boolean)).size || customerSales.length;
-    const totalPurchasedPhp = customerSales.reduce((sum, sale) => sum + sale.grandTotalPhp, 0);
-    const totalPaidPhp = customerSales.reduce((sum, sale) => sum + sale.amountPaidPhp, 0);
-    const outstandingBalancePhp = customerSales.reduce((sum, sale) => sum + sale.balancePhp, 0);
-    const lastPurchaseDate = customerSales
+    const activeCustomerSales = customerSales.filter(isActiveCustomerSale);
+    const totalOrders = new Set(activeCustomerSales.map((sale) => sale.salesRefNo || sale.groupRef || sale.saleId).filter(Boolean)).size || activeCustomerSales.length;
+    const totalPurchasedPhp = activeCustomerSales.reduce((sum, sale) => sum + sale.grandTotalPhp, 0);
+    const totalPaidPhp = activeCustomerSales.reduce((sum, sale) => sum + sale.amountPaidPhp, 0);
+    const outstandingBalancePhp = activeCustomerSales.reduce((sum, sale) => sum + sale.balancePhp, 0);
+    const lastPurchaseDate = activeCustomerSales
       .map((sale) => sale.saleDate)
       .filter(Boolean)
       .sort((a, b) => new Date(b).getTime() - new Date(a).getTime())[0] || "";
