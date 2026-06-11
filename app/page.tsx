@@ -2,12 +2,21 @@
 
 import { useEffect, useMemo, useState } from "react";
 
-type DashboardData = { incomingUnits: number; warehouseReceived: number; actualOnHand: number; sellableUnits: number; totalSales: number; totalExpenses: number; netGain: number };
+type DashboardData = {
+  incomingUnits: number;
+  warehouseReceived: number;
+  actualOnHand: number;
+  sellableUnits: number;
+  totalSales: number;
+  totalExpenses: number;
+  netGain: number;
+};
+
 type ActivityItem = { id: string; title: string; note: string; time: string; icon: string };
 type TopProduct = { name: string; sold: number };
 type Trend = { date: string; sales: number; collections: number; expenses: number; grossProfit: number; netProfit: number; receivables: number };
 type ReportsData = { summary: Record<string, number>; dailyTrend: Trend[]; productMovement: Array<{ description: string; qty: number; confirmedQty: number }> };
-type PeriodMode = "daily" | "weekly" | "monthly" | "yearly";
+type PeriodMode = "daily" | "weekly" | "monthly" | "yearly" | "custom";
 
 const icons = {
   sales: "M6 6h15l-2 8H8L6 6Zm0 0L5 3H3M9 20a1 1 0 1 0 0 2Zm9 0a1 1 0 1 0 0-2 1 1 0 0 0 0 2Z",
@@ -16,21 +25,126 @@ const icons = {
   activity: "M12 8v5l3 2M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z",
   money: "M12 6v12m-4-8c0-2.21 1.79-4 4-4s4 1.79 4 4-1.79 4-4 4-4 1.79-4 4",
 };
-const toneClasses: Record<string, string> = { emerald: "bg-emerald-50 text-emerald-600", blue: "bg-blue-50 text-blue-600", violet: "bg-violet-50 text-violet-600", orange: "bg-orange-50 text-orange-600", rose: "bg-rose-50 text-rose-600", slate: "bg-slate-100 text-slate-600" };
-function peso(value: number) { return `₱${Number(value || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`; }
-function num(value: number) { return Number(value || 0).toLocaleString(); }
-function today() { return new Date().toISOString().slice(0, 10); }
-function title(mode: PeriodMode) { return mode === "daily" ? "Daily" : mode === "weekly" ? "Weekly" : mode === "monthly" ? "Monthly" : "Yearly"; }
-function go(path: string) { globalThis.location.assign(path); }
+
+const toneClasses: Record<string, string> = {
+  emerald: "bg-emerald-50 text-emerald-600",
+  blue: "bg-blue-50 text-blue-600",
+  violet: "bg-violet-50 text-violet-600",
+  orange: "bg-orange-50 text-orange-600",
+  rose: "bg-rose-50 text-rose-600",
+  slate: "bg-slate-100 text-slate-600",
+};
+
+function peso(value: number) {
+  return `₱${Number(value || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+}
+
+function num(value: number) {
+  return Number(value || 0).toLocaleString();
+}
+
+function today() {
+  return new Date().toISOString().slice(0, 10);
+}
+
+function title(mode: PeriodMode) {
+  if (mode === "daily") return "Daily";
+  if (mode === "weekly") return "Weekly";
+  if (mode === "monthly") return "Monthly";
+  if (mode === "yearly") return "Yearly";
+  return "Custom";
+}
+
+function go(path: string) {
+  globalThis.location.assign(path);
+}
+
+function dateRange(start: string, end: string) {
+  const a = new Date(`${start}T00:00:00`);
+  const b = new Date(`${end}T00:00:00`);
+  if (Number.isNaN(a.getTime()) || Number.isNaN(b.getTime()) || a > b) return [];
+  const days: string[] = [];
+  const d = new Date(a);
+  while (d <= b && days.length < 370) {
+    days.push(d.toISOString().slice(0, 10));
+    d.setDate(d.getDate() + 1);
+  }
+  return days;
+}
+
+function emptyReports(): ReportsData {
+  return { summary: {}, dailyTrend: [], productMovement: [] };
+}
+
+function combineReports(items: ReportsData[]): ReportsData {
+  const combined = emptyReports();
+  const movement = new Map<string, { description: string; qty: number; confirmedQty: number }>();
+
+  items.forEach((item) => {
+    const summary = item?.summary || {};
+    Object.entries(summary).forEach(([key, value]) => {
+      if (key === "endingReceivables") combined.summary[key] = Number(value || 0);
+      else combined.summary[key] = Number(combined.summary[key] || 0) + Number(value || 0);
+    });
+
+    combined.dailyTrend.push(...(item?.dailyTrend || []));
+
+    (item?.productMovement || []).forEach((product) => {
+      const key = product.description || "Unknown Product";
+      const current = movement.get(key) || { description: key, qty: 0, confirmedQty: 0 };
+      current.qty += Number(product.qty || 0);
+      current.confirmedQty += Number(product.confirmedQty || 0);
+      movement.set(key, current);
+    });
+  });
+
+  combined.dailyTrend.sort((a, b) => a.date.localeCompare(b.date));
+  combined.productMovement = Array.from(movement.values()).sort((a, b) => Number(b.confirmedQty || b.qty || 0) - Number(a.confirmedQty || a.qty || 0));
+  return combined;
+}
 
 function IconCircle({ icon, tone = "emerald" }: { icon: string; tone?: string }) {
-  return <span className={`flex h-14 w-14 shrink-0 items-center justify-center rounded-full ${toneClasses[tone] || toneClasses.emerald}`}><svg viewBox="0 0 24 24" aria-hidden="true" className="h-6 w-6" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d={icon} /></svg></span>;
+  return (
+    <span className={`flex h-14 w-14 shrink-0 items-center justify-center rounded-full ${toneClasses[tone] || toneClasses.emerald}`}>
+      <svg viewBox="0 0 24 24" aria-hidden="true" className="h-6 w-6" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <path d={icon} />
+      </svg>
+    </span>
+  );
 }
 
 function MiniChart({ rows }: { rows: Trend[] }) {
   const max = Math.max(...rows.map((r) => Math.max(r.sales || 0, r.grossProfit || 0)), 1);
-  if (!rows.length || max <= 1) return <div className="flex h-[260px] items-center justify-center rounded-2xl border border-dashed border-slate-200 bg-slate-50 text-center"><div><p className="text-lg font-bold text-slate-950">No sales data available</p><p className="mt-2 text-sm text-slate-500">Confirmed sales will appear here.</p></div></div>;
-  return <div className="rounded-2xl border border-slate-100 bg-slate-50 p-5"><div className="flex h-[220px] items-end gap-4 overflow-x-auto pb-2">{rows.map((r) => <div key={r.date} className="flex min-w-[80px] flex-1 flex-col items-center justify-end gap-2"><div className="flex h-[180px] items-end gap-2"><div className="w-5 rounded-t-lg bg-emerald-500" style={{ height: `${Math.max((r.sales / max) * 180, r.sales ? 8 : 0)}px` }} /><div className="w-5 rounded-t-lg bg-blue-500" style={{ height: `${Math.max((r.grossProfit / max) * 180, r.grossProfit ? 8 : 0)}px` }} /></div><p className="text-xs font-semibold text-slate-500">{r.date.slice(5)}</p></div>)}</div><div className="mt-3 flex gap-5 text-xs font-semibold text-slate-500"><span className="inline-flex items-center gap-2"><span className="h-3 w-3 rounded bg-emerald-500" />Sales</span><span className="inline-flex items-center gap-2"><span className="h-3 w-3 rounded bg-blue-500" />Gross Profit</span></div></div>;
+  if (!rows.length || max <= 1) {
+    return (
+      <div className="flex h-[260px] items-center justify-center rounded-2xl border border-dashed border-slate-200 bg-slate-50 text-center">
+        <div>
+          <p className="text-lg font-bold text-slate-950">No sales data available</p>
+          <p className="mt-2 text-sm text-slate-500">Confirmed sales will appear here.</p>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="rounded-2xl border border-slate-100 bg-slate-50 p-5">
+      <div className="flex h-[220px] items-end gap-4 overflow-x-auto pb-2">
+        {rows.map((r) => (
+          <div key={r.date} className="flex min-w-[80px] flex-1 flex-col items-center justify-end gap-2">
+            <div className="flex h-[180px] items-end gap-2">
+              <div className="w-5 rounded-t-lg bg-emerald-500" style={{ height: `${Math.max((r.sales / max) * 180, r.sales ? 8 : 0)}px` }} />
+              <div className="w-5 rounded-t-lg bg-blue-500" style={{ height: `${Math.max((r.grossProfit / max) * 180, r.grossProfit ? 8 : 0)}px` }} />
+            </div>
+            <p className="text-xs font-semibold text-slate-500">{r.date.slice(5)}</p>
+          </div>
+        ))}
+      </div>
+      <div className="mt-3 flex gap-5 text-xs font-semibold text-slate-500">
+        <span className="inline-flex items-center gap-2"><span className="h-3 w-3 rounded bg-emerald-500" />Sales</span>
+        <span className="inline-flex items-center gap-2"><span className="h-3 w-3 rounded bg-blue-500" />Gross Profit</span>
+      </div>
+    </div>
+  );
 }
 
 export default function HomePage() {
@@ -39,20 +153,48 @@ export default function HomePage() {
   const [activities, setActivities] = useState<ActivityItem[]>([]);
   const [topProducts, setTopProducts] = useState<TopProduct[]>([]);
   const [periodMode, setPeriodMode] = useState<PeriodMode>("weekly");
+  const [rangeStart, setRangeStart] = useState(today());
+  const [rangeEnd, setRangeEnd] = useState(today());
+  const [loading, setLoading] = useState(false);
   const reportDate = today();
 
-  async function loadDashboard(mode = periodMode) {
-    const [dashboardRes, reportsRes, activityRes, productsRes] = await Promise.all([fetch("/api/dashboard", { cache: "no-store" }), fetch(`/api/reports?mode=${mode}&date=${reportDate}`, { cache: "no-store" }), fetch("/api/recent-activity", { cache: "no-store" }), fetch("/api/dashboard/top-products", { cache: "no-store" })]);
-    const dashboardData = await dashboardRes.json();
-    const reportsData = await reportsRes.json();
-    const activityData = await activityRes.json();
-    const productData = await productsRes.json();
-    setData(dashboardData && !dashboardData.error ? dashboardData : null);
-    setReports(reportsData && !reportsData.error ? reportsData : null);
-    setActivities(Array.isArray(activityData) ? activityData : []);
-    setTopProducts(Array.isArray(productData) ? productData : []);
+  async function fetchReports(mode: PeriodMode) {
+    if (mode !== "custom") {
+      const apiMode = mode === "yearly" ? "monthly" : mode;
+      const response = await fetch(`/api/reports?mode=${apiMode}&date=${reportDate}`, { cache: "no-store" });
+      return response.json();
+    }
+
+    const days = dateRange(rangeStart, rangeEnd);
+    if (!days.length) return emptyReports();
+    const responses = await Promise.all(days.map((day) => fetch(`/api/reports?mode=daily&date=${day}`, { cache: "no-store" }).then((r) => r.json())));
+    return combineReports(responses.filter((item) => item && !item.error));
   }
-  useEffect(() => { loadDashboard(periodMode).catch(console.error); }, [periodMode]);
+
+  async function loadDashboard(mode = periodMode) {
+    setLoading(true);
+    try {
+      const [dashboardRes, reportsData, activityRes, productsRes] = await Promise.all([
+        fetch("/api/dashboard", { cache: "no-store" }),
+        fetchReports(mode),
+        fetch("/api/recent-activity", { cache: "no-store" }),
+        fetch("/api/dashboard/top-products", { cache: "no-store" }),
+      ]);
+      const dashboardData = await dashboardRes.json();
+      const activityData = await activityRes.json();
+      const productData = await productsRes.json();
+      setData(dashboardData && !dashboardData.error ? dashboardData : null);
+      setReports(reportsData && !reportsData.error ? reportsData : null);
+      setActivities(Array.isArray(activityData) ? activityData : []);
+      setTopProducts(Array.isArray(productData) ? productData : []);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    loadDashboard(periodMode).catch(console.error);
+  }, [periodMode]);
 
   const s = reports?.summary || {};
   const totalSales = s.totalSalesToday ?? data?.totalSales ?? 0;
@@ -82,5 +224,109 @@ export default function HomePage() {
     { label: "Low Stock", value: num(lowStockItems), change: lowStockItems ? "Needs review" : "Clear", helper: "live inventory", tone: "orange", icon: icons.lowStock },
   ], [totalSales, collections, netCash, cashReceived, changeGiven, netProfit, expenses, grossProfit, receivables, totalOrders, unitsSold, lowStockItems, periodMode]);
 
-  return <section className="space-y-6"><div className="flex items-start justify-between gap-4"><div><h1 className="text-3xl font-bold tracking-tight text-slate-950">Dashboard</h1><p className="mt-1 text-sm font-medium text-slate-500">Live business snapshot from the same totals used in Reports.</p></div><button onClick={() => loadDashboard(periodMode).catch(console.error)} className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-bold text-slate-700 shadow-sm">Refresh</button></div><div className="grid grid-cols-1 gap-5 md:grid-cols-2 xl:grid-cols-4">{kpis.map((item) => <div key={item.label} className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm"><div className="flex items-center gap-4"><IconCircle icon={item.icon} tone={item.tone} /><div><p className="text-sm font-semibold text-slate-500">{item.label}</p><p className="mt-2 text-2xl font-bold tracking-tight text-slate-950">{item.value}</p><p className={`mt-2 text-sm font-bold ${item.tone === "rose" ? "text-rose-600" : item.tone === "orange" ? "text-orange-600" : "text-emerald-600"}`}>{item.change}</p><p className="mt-1 text-sm text-slate-500">{item.helper}</p></div></div></div>)}</div><div className="grid grid-cols-1 gap-5 xl:grid-cols-[minmax(0,1.15fr)_minmax(420px,0.85fr)]"><div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm"><div className="mb-5 flex flex-wrap items-center justify-between gap-3"><h2 className="text-lg font-bold text-slate-950">Sales Overview</h2><div className="flex rounded-xl border border-slate-200 bg-white p-1 shadow-sm">{(["daily", "weekly", "monthly", "yearly"] as PeriodMode[]).map((mode) => <button key={mode} onClick={() => setPeriodMode(mode)} className={`rounded-lg px-3 py-1.5 text-sm font-bold ${periodMode === mode ? "bg-emerald-600 text-white" : "text-slate-600 hover:bg-slate-50"}`}>{title(mode)}</button>)}</div></div><MiniChart rows={reports?.dailyTrend || []} /><div className="mt-4 grid grid-cols-2 gap-4 md:grid-cols-4 md:divide-x md:divide-slate-200"><div className="md:px-4 md:first:pl-0"><p className="text-lg font-bold text-slate-950">{peso(totalSales)}</p><p className="text-sm text-slate-500">Sales</p></div><div className="md:px-4"><p className="text-lg font-bold text-slate-950">{peso(collections)}</p><p className="text-sm text-slate-500">Collections</p></div><div className="md:px-4"><p className="text-lg font-bold text-slate-950">{peso(grossProfit)}</p><p className="text-sm text-slate-500">Gross Profit</p></div><div className="md:px-4"><p className={`text-lg font-bold ${netProfit < 0 ? "text-rose-600" : "text-emerald-600"}`}>{peso(netProfit)}</p><p className="text-sm text-slate-500">Net Profit</p></div></div></div><div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm"><div className="mb-5 flex items-center justify-between"><h2 className="text-lg font-bold text-slate-950">Recent Activities</h2><button onClick={() => go("/reports")} className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-bold text-slate-700 shadow-sm">View All</button></div>{activities.length ? <div className="divide-y divide-slate-100">{activities.slice(0, 5).map((item) => <div key={item.id || item.title} className="flex items-center gap-4 py-4 first:pt-0 last:pb-0"><span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-emerald-50 text-emerald-600"><svg viewBox="0 0 24 24" className="h-6 w-6" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d={icons.activity} /></svg></span><div className="min-w-0 flex-1"><p className="font-bold text-slate-950">{item.title}</p><p className="text-sm text-slate-500">{item.note}</p></div><p className="text-sm text-slate-500">{item.time}</p></div>)}</div> : <div className="flex h-[260px] items-center justify-center rounded-2xl border border-dashed border-slate-200 bg-slate-50 text-center"><div><p className="font-bold text-slate-950">No recent activities</p><p className="mt-1 text-sm text-slate-500">Activity will appear after testing begins.</p></div></div>}</div></div><div className="grid grid-cols-1 gap-5 xl:grid-cols-[minmax(0,1fr)_minmax(420px,0.85fr)]"><div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm"><h2 className="text-lg font-bold text-slate-950">Inventory Summary</h2><div className="mt-5 grid grid-cols-2 gap-5 md:grid-cols-4 md:divide-x md:divide-slate-200"><div><p className="text-sm text-slate-500">Total Items</p><p className="mt-2 text-2xl font-bold text-slate-950">{num(totalItems)}</p><p className="text-sm text-slate-500">All items in inventory</p></div><div className="md:pl-6"><p className="text-sm text-slate-500">In Stock</p><p className="mt-2 text-2xl font-bold text-emerald-600">{num(inStock)}</p><p className="text-sm text-slate-500">Items available</p></div><div className="md:pl-6"><p className="text-sm text-slate-500">Low Stock</p><p className="mt-2 text-2xl font-bold text-orange-600">{num(lowStockItems)}</p><p className="text-sm text-slate-500">Need attention</p></div><div className="md:pl-6"><p className="text-sm text-slate-500">Out of Stock</p><p className="mt-2 text-2xl font-bold text-rose-600">{num(outOfStock)}</p><p className="text-sm text-slate-500">Restock required</p></div></div></div><div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm"><div className="mb-4 flex items-center justify-between"><h2 className="text-lg font-bold text-slate-950">Top Selling Products</h2><button onClick={() => go("/reports")} className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-bold text-slate-700 shadow-sm">View Report</button></div>{topProducts.length ? <div className="space-y-4">{topProducts.map((item, index) => <div key={item.name} className="flex items-center gap-4"><span className="flex h-7 w-7 items-center justify-center rounded-full bg-emerald-50 text-sm font-bold text-emerald-700">{index + 1}</span><p className="min-w-0 flex-1 font-bold text-slate-950">{item.name}</p><p className="text-sm font-semibold text-slate-500">{num(item.sold)} sold</p></div>)}</div> : <div className="flex h-[150px] items-center justify-center rounded-2xl border border-dashed border-slate-200 bg-slate-50 text-center"><div><p className="font-bold text-slate-950">No sales data available</p><p className="mt-1 text-sm text-slate-500">Top products will appear after confirmed sales.</p></div></div>}</div></div></section>;
+  return (
+    <section className="space-y-6">
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <h1 className="text-3xl font-bold tracking-tight text-slate-950">Dashboard</h1>
+          <p className="mt-1 text-sm font-medium text-slate-500">Live business snapshot from the same totals used in Reports.</p>
+        </div>
+        <button onClick={() => loadDashboard(periodMode).catch(console.error)} className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-bold text-slate-700 shadow-sm">
+          {loading ? "Refreshing..." : "Refresh"}
+        </button>
+      </div>
+
+      <div className="grid grid-cols-1 gap-5 md:grid-cols-2 xl:grid-cols-4">
+        {kpis.map((item) => (
+          <div key={item.label} className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+            <div className="flex items-center gap-4">
+              <IconCircle icon={item.icon} tone={item.tone} />
+              <div>
+                <p className="text-sm font-semibold text-slate-500">{item.label}</p>
+                <p className="mt-2 text-2xl font-bold tracking-tight text-slate-950">{item.value}</p>
+                <p className={`mt-2 text-sm font-bold ${item.tone === "rose" ? "text-rose-600" : item.tone === "orange" ? "text-orange-600" : "text-emerald-600"}`}>{item.change}</p>
+                <p className="mt-1 text-sm text-slate-500">{item.helper}</p>
+              </div>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      <div className="grid grid-cols-1 gap-5 xl:grid-cols-[minmax(0,1.15fr)_minmax(420px,0.85fr)]">
+        <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+          <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <h2 className="text-lg font-bold text-slate-950">Sales Overview</h2>
+              {periodMode === "custom" ? <p className="mt-1 text-xs font-semibold text-slate-500">Showing {rangeStart} to {rangeEnd}</p> : null}
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              <div className="flex rounded-xl border border-slate-200 bg-white p-1 shadow-sm">
+                {(["daily", "weekly", "monthly", "yearly", "custom"] as PeriodMode[]).map((mode) => (
+                  <button key={mode} onClick={() => setPeriodMode(mode)} className={`rounded-lg px-3 py-1.5 text-sm font-bold ${periodMode === mode ? "bg-emerald-600 text-white" : "text-slate-600 hover:bg-slate-50"}`}>{title(mode)}</button>
+                ))}
+              </div>
+              <div className="flex flex-wrap items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 p-2">
+                <input type="date" value={rangeStart} onChange={(e) => setRangeStart(e.target.value)} className="rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-xs font-semibold text-slate-700" />
+                <span className="text-xs font-bold text-slate-400">to</span>
+                <input type="date" value={rangeEnd} onChange={(e) => setRangeEnd(e.target.value)} className="rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-xs font-semibold text-slate-700" />
+                <button onClick={() => { setPeriodMode("custom"); loadDashboard("custom").catch(console.error); }} className="rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-bold text-white">Apply</button>
+              </div>
+            </div>
+          </div>
+
+          <MiniChart rows={reports?.dailyTrend || []} />
+
+          <div className="mt-4 grid grid-cols-2 gap-4 md:grid-cols-4 md:divide-x md:divide-slate-200">
+            <div className="md:px-4 md:first:pl-0"><p className="text-lg font-bold text-slate-950">{peso(totalSales)}</p><p className="text-sm text-slate-500">Sales</p></div>
+            <div className="md:px-4"><p className="text-lg font-bold text-slate-950">{peso(collections)}</p><p className="text-sm text-slate-500">Collections</p></div>
+            <div className="md:px-4"><p className="text-lg font-bold text-slate-950">{peso(grossProfit)}</p><p className="text-sm text-slate-500">Gross Profit</p></div>
+            <div className="md:px-4"><p className={`text-lg font-bold ${netProfit < 0 ? "text-rose-600" : "text-emerald-600"}`}>{peso(netProfit)}</p><p className="text-sm text-slate-500">Net Profit</p></div>
+          </div>
+        </div>
+
+        <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+          <div className="mb-5 flex items-center justify-between">
+            <h2 className="text-lg font-bold text-slate-950">Recent Activities</h2>
+            <button onClick={() => go("/reports")} className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-bold text-slate-700 shadow-sm">View All</button>
+          </div>
+          {activities.length ? (
+            <div className="divide-y divide-slate-100">
+              {activities.slice(0, 5).map((item) => (
+                <div key={item.id || item.title} className="flex items-center gap-4 py-4 first:pt-0 last:pb-0">
+                  <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-emerald-50 text-emerald-600">
+                    <svg viewBox="0 0 24 24" className="h-6 w-6" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d={icons.activity} /></svg>
+                  </span>
+                  <div className="min-w-0 flex-1"><p className="font-bold text-slate-950">{item.title}</p><p className="text-sm text-slate-500">{item.note}</p></div>
+                  <p className="text-sm text-slate-500">{item.time}</p>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="flex h-[260px] items-center justify-center rounded-2xl border border-dashed border-slate-200 bg-slate-50 text-center"><div><p className="font-bold text-slate-950">No recent activities</p><p className="mt-1 text-sm text-slate-500">Activity will appear after testing begins.</p></div></div>
+          )}
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 gap-5 xl:grid-cols-[minmax(0,0.9fr)_minmax(420px,0.6fr)]">
+        <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+          <h2 className="text-lg font-bold text-slate-950">Inventory Summary</h2>
+          <div className="mt-5 grid grid-cols-2 gap-4 md:grid-cols-4 md:divide-x md:divide-slate-200">
+            <div className="md:px-4 md:first:pl-0"><p className="text-sm text-slate-500">Total Items</p><p className="mt-2 text-2xl font-bold text-slate-950">{num(totalItems)}</p><p className="text-sm text-slate-500">All items in inventory</p></div>
+            <div className="md:px-4"><p className="text-sm text-slate-500">In Stock</p><p className="mt-2 text-2xl font-bold text-blue-600">{num(inStock)}</p><p className="text-sm text-slate-500">Items available</p></div>
+            <div className="md:px-4"><p className="text-sm text-slate-500">Low Stock</p><p className="mt-2 text-2xl font-bold text-orange-600">{num(lowStockItems)}</p><p className="text-sm text-slate-500">Need attention</p></div>
+            <div className="md:px-4"><p className="text-sm text-slate-500">Out of Stock</p><p className="mt-2 text-2xl font-bold text-rose-600">{num(outOfStock)}</p><p className="text-sm text-slate-500">Restock required</p></div>
+          </div>
+        </div>
+
+        <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+          <div className="mb-5 flex items-center justify-between"><h2 className="text-lg font-bold text-slate-950">Top Selling Products</h2><button onClick={() => go("/reports")} className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-bold text-slate-700 shadow-sm">View Report</button></div>
+          {topProducts.length ? (
+            <div className="space-y-4">
+              {topProducts.slice(0, 5).map((item, index) => <div key={item.name} className="flex items-center justify-between gap-4"><div className="flex items-center gap-3"><span className="flex h-7 w-7 items-center justify-center rounded-full bg-emerald-50 text-xs font-bold text-emerald-700">{index + 1}</span><p className="font-bold text-slate-950">{item.name}</p></div><p className="text-sm font-semibold text-slate-500">{num(item.sold)} sold</p></div>)}
+            </div>
+          ) : <p className="text-sm text-slate-500">No product sales yet.</p>}
+        </div>
+      </div>
+    </section>
+  );
 }
