@@ -3,19 +3,23 @@
 import { useEffect, useMemo, useState } from "react";
 
 type DashboardData = {
-  incomingUnits: number;
-  warehouseReceived: number;
-  actualOnHand: number;
-  sellableUnits: number;
-  totalSales: number;
-  totalExpenses: number;
-  netGain: number;
+  incomingUnits?: number;
+  warehouseReceived?: number;
+  actualOnHand?: number;
+  sellableUnits?: number;
+  totalSales?: number;
+  totalExpenses?: number;
 };
 
-type ActivityItem = { id: string; title: string; note: string; time: string; icon: string };
+type ActivityItem = { id?: string; title: string; note: string; time: string; icon?: string };
 type TopProduct = { name: string; sold: number };
 type Trend = { date: string; sales: number; collections: number; expenses: number; grossProfit: number; netProfit: number; receivables: number };
-type ReportsData = { summary: Record<string, number>; dailyTrend: Trend[]; productMovement: Array<{ description: string; qty: number; confirmedQty: number }> };
+type ReportsData = {
+  error?: string;
+  summary: Record<string, number>;
+  dailyTrend: Trend[];
+  productMovement: Array<{ description: string; qty: number; confirmedQty: number }>;
+};
 type PeriodMode = "daily" | "weekly" | "monthly" | "yearly" | "custom";
 
 type DateRange = { start: string; end: string };
@@ -23,7 +27,6 @@ type DateRange = { start: string; end: string };
 const icons = {
   sales: "M6 6h15l-2 8H8L6 6Zm0 0L5 3H3M9 20a1 1 0 1 0 0 2Zm9 0a1 1 0 1 0 0-2 1 1 0 0 0 0 2Z",
   orders: "M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z",
-  lowStock: "M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z",
   activity: "M12 8v5l3 2M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z",
   money: "M12 6v12m-4-8c0-2.21 1.79-4 4-4s4 1.79 4 4-1.79 4-4 4-4 1.79-4 4",
 };
@@ -37,11 +40,11 @@ const toneClasses: Record<string, string> = {
   slate: "bg-slate-100 text-slate-600",
 };
 
-function peso(value: number) {
+function peso(value: number | undefined) {
   return `₱${Number(value || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
 
-function num(value: number) {
+function num(value: number | undefined) {
   return Number(value || 0).toLocaleString();
 }
 
@@ -76,7 +79,6 @@ function rangeForMode(mode: PeriodMode, anchorValue = today()): DateRange {
   const end = new Date(anchor);
 
   if (mode === "daily") return { start: fmt(start), end: fmt(end) };
-
   if (mode === "weekly") {
     const day = start.getDay();
     const offset = day === 0 ? -6 : 1 - day;
@@ -85,20 +87,17 @@ function rangeForMode(mode: PeriodMode, anchorValue = today()): DateRange {
     end.setDate(start.getDate() + 6);
     return { start: fmt(start), end: fmt(end) };
   }
-
   if (mode === "monthly") {
     start.setDate(1);
     end.setTime(start.getTime());
     end.setMonth(start.getMonth() + 1, 0);
     return { start: fmt(start), end: fmt(end) };
   }
-
   if (mode === "yearly") {
     start.setMonth(0, 1);
     end.setMonth(11, 31);
     return { start: fmt(start), end: fmt(end) };
   }
-
   return { start: fmt(start), end: fmt(end) };
 }
 
@@ -127,16 +126,13 @@ function combineReports(items: ReportsData[], days: string[]): ReportsData {
   const combined = emptyReports();
   const movement = new Map<string, { description: string; qty: number; confirmedQty: number }>();
   const trend = new Map<string, Trend>();
-
   days.forEach((day) => trend.set(day, emptyTrend(day)));
 
   items.forEach((item) => {
-    const summary = item?.summary || {};
-    Object.entries(summary).forEach(([key, value]) => {
+    Object.entries(item?.summary || {}).forEach(([key, value]) => {
       if (key === "endingReceivables") combined.summary[key] = Number(value || 0);
       else combined.summary[key] = Number(combined.summary[key] || 0) + Number(value || 0);
     });
-
     (item?.dailyTrend || []).forEach((row) => {
       const current = trend.get(row.date) || emptyTrend(row.date);
       current.sales += Number(row.sales || 0);
@@ -147,7 +143,6 @@ function combineReports(items: ReportsData[], days: string[]): ReportsData {
       current.receivables += Number(row.receivables || 0);
       trend.set(row.date, current);
     });
-
     (item?.productMovement || []).forEach((product) => {
       const key = product.description || "Unknown Product";
       const current = movement.get(key) || { description: key, qty: 0, confirmedQty: 0 };
@@ -173,37 +168,39 @@ function IconCircle({ icon, tone = "emerald" }: { icon: string; tone?: string })
 }
 
 function MiniChart({ rows }: { rows: Trend[] }) {
-  const max = Math.max(...rows.map((r) => Math.max(r.sales || 0, r.grossProfit || 0, r.collections || 0)), 1);
-  const hasData = rows.some((r) => Number(r.sales || 0) > 0 || Number(r.grossProfit || 0) > 0 || Number(r.collections || 0) > 0);
+  const max = Math.max(...rows.map((r) => Math.max(r.sales || 0, r.grossProfit || 0, r.collections || 0, r.expenses || 0, r.netProfit || 0)), 1);
+  const hasData = rows.some((r) => Number(r.sales || 0) > 0 || Number(r.grossProfit || 0) > 0 || Number(r.collections || 0) > 0 || Number(r.expenses || 0) > 0);
 
   if (!rows.length) {
     return (
-      <div className="flex h-[260px] items-center justify-center rounded-2xl border border-dashed border-slate-200 bg-slate-50 text-center">
-        <div>
-          <p className="text-lg font-bold text-slate-950">No date range selected</p>
-          <p className="mt-2 text-sm text-slate-500">Choose dates and click Apply.</p>
-        </div>
+      <div className="flex h-[240px] items-center justify-center rounded-2xl border border-dashed border-slate-200 bg-slate-50 text-center">
+        <div><p className="text-lg font-bold text-slate-950">No date range selected</p><p className="mt-2 text-sm text-slate-500">Choose dates and click Apply.</p></div>
       </div>
     );
   }
+
+  const bars = [
+    { key: "sales", label: "Sales", color: "bg-emerald-500" },
+    { key: "collections", label: "Collections", color: "bg-blue-500" },
+    { key: "grossProfit", label: "Gross Profit", color: "bg-violet-500" },
+    { key: "expenses", label: "Expenses", color: "bg-orange-500" },
+  ] as const;
 
   return (
     <div className="rounded-2xl border border-slate-100 bg-slate-50 p-5">
       {!hasData ? <p className="mb-3 text-center text-sm font-semibold text-slate-500">No sales in this selected period yet.</p> : null}
       <div className="flex h-[220px] items-end gap-4 overflow-x-auto pb-2">
         {rows.map((r) => (
-          <div key={r.date} className="flex min-w-[80px] flex-1 flex-col items-center justify-end gap-2">
-            <div className="flex h-[180px] items-end gap-2">
-              <div className="w-5 rounded-t-lg bg-emerald-500" style={{ height: `${Math.max((r.sales / max) * 180, hasData ? 2 : 0)}px` }} />
-              <div className="w-5 rounded-t-lg bg-blue-500" style={{ height: `${Math.max((r.grossProfit / max) * 180, hasData ? 2 : 0)}px` }} />
+          <div key={r.date} className="flex min-w-[90px] flex-1 flex-col items-center justify-end gap-2">
+            <div className="flex h-[170px] items-end gap-1.5">
+              {bars.map((bar) => <div key={bar.key} className={`w-4 rounded-t-lg ${bar.color}`} style={{ height: `${Math.max((Number(r[bar.key] || 0) / max) * 170, hasData ? 2 : 0)}px` }} />)}
             </div>
             <p className="text-xs font-semibold text-slate-500">{r.date.slice(5)}</p>
           </div>
         ))}
       </div>
-      <div className="mt-3 flex gap-5 text-xs font-semibold text-slate-500">
-        <span className="inline-flex items-center gap-2"><span className="h-3 w-3 rounded bg-emerald-500" />Sales</span>
-        <span className="inline-flex items-center gap-2"><span className="h-3 w-3 rounded bg-blue-500" />Gross Profit</span>
+      <div className="mt-3 flex flex-wrap gap-4 text-xs font-semibold text-slate-500">
+        {bars.map((bar) => <span key={bar.key} className="inline-flex items-center gap-2"><span className={`h-3 w-3 rounded ${bar.color}`} />{bar.label}</span>)}
       </div>
     </div>
   );
@@ -220,11 +217,11 @@ export default function HomePage() {
   const [rangeEnd, setRangeEnd] = useState(initialRange.end);
   const [loading, setLoading] = useState(false);
 
-  async function fetchReports(start: string, end: string) {
+  async function fetchReports(start: string, end: string): Promise<ReportsData> {
     const days = dateRange(start, end);
     if (!days.length) return emptyReports();
     const responses = await Promise.all(days.map((day) => fetch(`/api/reports?mode=daily&date=${day}`, { cache: "no-store" }).then((r) => r.json())));
-    return combineReports(responses.filter((item) => item && !item.error), days);
+    return combineReports(responses.filter((item: ReportsData) => item && !item.error), days);
   }
 
   async function loadDashboard(start = rangeStart, end = rangeEnd) {
@@ -240,7 +237,7 @@ export default function HomePage() {
       const activityData = await activityRes.json();
       const productData = await productsRes.json();
       setData(dashboardData && !dashboardData.error ? dashboardData : null);
-      setReports(reportsData && !reportsData.error ? reportsData : null);
+      setReports(reportsData);
       setActivities(Array.isArray(activityData) ? activityData : []);
       setTopProducts(Array.isArray(productData) ? productData : []);
     } finally {
@@ -294,33 +291,20 @@ export default function HomePage() {
     { label: "Expenses", value: peso(expenses), change: expenses ? "Recorded" : "Zero state", helper: "manual + supplier costs", tone: expenses ? "orange" : "slate", icon: icons.money },
     { label: "Receivables", value: peso(receivables), change: receivables ? "Open balances" : "Clear", helper: "all unpaid balances", tone: receivables ? "orange" : "emerald", icon: icons.money },
     { label: "Orders", value: num(totalOrders), change: totalOrders ? "Live" : "Zero state", helper: `${num(unitsSold)} confirmed units sold`, tone: "blue", icon: icons.orders },
-    { label: "Low Stock", value: num(lowStockItems), change: lowStockItems ? "Needs review" : "Clear", helper: "live inventory", tone: "orange", icon: icons.lowStock },
+    { label: "Low Stock", value: num(lowStockItems), change: lowStockItems ? "Needs review" : "Clear", helper: "live inventory", tone: "orange", icon: icons.orders },
   ], [totalSales, collections, netCash, cashReceived, changeGiven, netProfit, expenses, grossProfit, receivables, totalOrders, unitsSold, lowStockItems, periodMode]);
 
   return (
     <section className="space-y-6">
       <div className="flex items-start justify-between gap-4">
-        <div>
-          <h1 className="text-3xl font-bold tracking-tight text-slate-950">Dashboard</h1>
-          <p className="mt-1 text-sm font-medium text-slate-500">Live business snapshot from the same totals used in Reports.</p>
-        </div>
-        <button onClick={() => loadDashboard(rangeStart, rangeEnd).catch(console.error)} className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-bold text-slate-700 shadow-sm">
-          {loading ? "Refreshing..." : "Refresh"}
-        </button>
+        <div><h1 className="text-3xl font-bold tracking-tight text-slate-950">Dashboard</h1><p className="mt-1 text-sm font-medium text-slate-500">Live business snapshot from the same totals used in Reports.</p></div>
+        <button onClick={() => loadDashboard(rangeStart, rangeEnd).catch(console.error)} className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-bold text-slate-700 shadow-sm">{loading ? "Refreshing..." : "Refresh"}</button>
       </div>
 
       <div className="grid grid-cols-1 gap-5 md:grid-cols-2 xl:grid-cols-4">
         {kpis.map((item) => (
           <div key={item.label} className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-            <div className="flex items-center gap-4">
-              <IconCircle icon={item.icon} tone={item.tone} />
-              <div>
-                <p className="text-sm font-semibold text-slate-500">{item.label}</p>
-                <p className="mt-2 text-2xl font-bold tracking-tight text-slate-950">{item.value}</p>
-                <p className={`mt-2 text-sm font-bold ${item.tone === "rose" ? "text-rose-600" : item.tone === "orange" ? "text-orange-600" : "text-emerald-600"}`}>{item.change}</p>
-                <p className="mt-1 text-sm text-slate-500">{item.helper}</p>
-              </div>
-            </div>
+            <div className="flex items-center gap-4"><IconCircle icon={item.icon} tone={item.tone} /><div><p className="text-sm font-semibold text-slate-500">{item.label}</p><p className="mt-2 text-2xl font-bold tracking-tight text-slate-950">{item.value}</p><p className={`mt-2 text-sm font-bold ${item.tone === "rose" ? "text-rose-600" : item.tone === "orange" ? "text-orange-600" : "text-emerald-600"}`}>{item.change}</p><p className="mt-1 text-sm text-slate-500">{item.helper}</p></div></div>
           </div>
         ))}
       </div>
@@ -328,55 +312,27 @@ export default function HomePage() {
       <div className="grid grid-cols-1 gap-5 xl:grid-cols-[minmax(0,1.15fr)_minmax(420px,0.85fr)]">
         <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
           <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
-            <div>
-              <h2 className="text-lg font-bold text-slate-950">Sales Overview</h2>
-              <p className="mt-1 text-xs font-semibold text-slate-500">Showing {rangeStart} to {rangeEnd}</p>
-            </div>
+            <div><h2 className="text-lg font-bold text-slate-950">Sales Overview</h2><p className="mt-1 text-xs font-semibold text-slate-500">Showing {rangeStart} to {rangeEnd}</p></div>
             <div className="flex flex-wrap items-center gap-2">
               <div className="flex rounded-xl border border-slate-200 bg-white p-1 shadow-sm">
-                {(["daily", "weekly", "monthly", "yearly", "custom"] as PeriodMode[]).map((mode) => (
-                  <button key={mode} onClick={() => selectPreset(mode)} className={`rounded-lg px-3 py-1.5 text-sm font-bold ${periodMode === mode ? "bg-emerald-600 text-white" : "text-slate-600 hover:bg-slate-50"}`}>{title(mode)}</button>
-                ))}
+                {(["daily", "weekly", "monthly", "yearly", "custom"] as PeriodMode[]).map((mode) => <button key={mode} onClick={() => selectPreset(mode)} className={`rounded-lg px-3 py-1.5 text-sm font-bold ${periodMode === mode ? "bg-emerald-600 text-white" : "text-slate-600 hover:bg-slate-50"}`}>{title(mode)}</button>)}
               </div>
-              <div className="flex flex-wrap items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 p-2">
-                <input type="date" value={rangeStart} onChange={(e) => { setRangeStart(e.target.value); setPeriodMode("custom"); }} className="rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-xs font-semibold text-slate-700" />
-                <span className="text-xs font-bold text-slate-400">to</span>
-                <input type="date" value={rangeEnd} onChange={(e) => { setRangeEnd(e.target.value); setPeriodMode("custom"); }} className="rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-xs font-semibold text-slate-700" />
-                <button onClick={applyCustomRange} className="rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-bold text-white">Apply</button>
-              </div>
+              <div className="flex flex-wrap items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 p-2"><input type="date" value={rangeStart} onChange={(e) => { setRangeStart(e.target.value); setPeriodMode("custom"); }} className="rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-xs font-semibold text-slate-700" /><span className="text-xs font-bold text-slate-400">to</span><input type="date" value={rangeEnd} onChange={(e) => { setRangeEnd(e.target.value); setPeriodMode("custom"); }} className="rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-xs font-semibold text-slate-700" /><button onClick={applyCustomRange} className="rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-bold text-white">Apply</button></div>
             </div>
           </div>
-
           <MiniChart rows={reports?.dailyTrend || []} />
-
-          <div className="mt-4 grid grid-cols-2 gap-4 md:grid-cols-4 md:divide-x md:divide-slate-200">
+          <div className="mt-4 grid grid-cols-2 gap-4 md:grid-cols-5 md:divide-x md:divide-slate-200">
             <div className="md:px-4 md:first:pl-0"><p className="text-lg font-bold text-slate-950">{peso(totalSales)}</p><p className="text-sm text-slate-500">Sales</p></div>
             <div className="md:px-4"><p className="text-lg font-bold text-slate-950">{peso(collections)}</p><p className="text-sm text-slate-500">Collections</p></div>
+            <div className="md:px-4"><p className="text-lg font-bold text-slate-950">{peso(expenses)}</p><p className="text-sm text-slate-500">Expenses</p></div>
             <div className="md:px-4"><p className="text-lg font-bold text-slate-950">{peso(grossProfit)}</p><p className="text-sm text-slate-500">Gross Profit</p></div>
             <div className="md:px-4"><p className={`text-lg font-bold ${netProfit < 0 ? "text-rose-600" : "text-emerald-600"}`}>{peso(netProfit)}</p><p className="text-sm text-slate-500">Net Profit</p></div>
           </div>
         </div>
 
         <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-          <div className="mb-5 flex items-center justify-between">
-            <h2 className="text-lg font-bold text-slate-950">Recent Activities</h2>
-            <button onClick={() => go("/reports")} className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-bold text-slate-700 shadow-sm">View All</button>
-          </div>
-          {activities.length ? (
-            <div className="divide-y divide-slate-100">
-              {activities.slice(0, 5).map((item) => (
-                <div key={item.id || item.title} className="flex items-center gap-4 py-4 first:pt-0 last:pb-0">
-                  <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-emerald-50 text-emerald-600">
-                    <svg viewBox="0 0 24 24" className="h-6 w-6" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d={icons.activity} /></svg>
-                  </span>
-                  <div className="min-w-0 flex-1"><p className="font-bold text-slate-950">{item.title}</p><p className="text-sm text-slate-500">{item.note}</p></div>
-                  <p className="text-sm text-slate-500">{item.time}</p>
-                </div>
-              ))}
-            </div>
-          ) : (
-            <div className="flex h-[260px] items-center justify-center rounded-2xl border border-dashed border-slate-200 bg-slate-50 text-center"><div><p className="font-bold text-slate-950">No recent activities</p><p className="mt-1 text-sm text-slate-500">Activity will appear after testing begins.</p></div></div>
-          )}
+          <div className="mb-5 flex items-center justify-between"><h2 className="text-lg font-bold text-slate-950">Recent Activities</h2><button onClick={() => go("/reports")} className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-bold text-slate-700 shadow-sm">View All</button></div>
+          {activities.length ? <div className="divide-y divide-slate-100">{activities.slice(0, 5).map((item) => <div key={item.id || item.title} className="flex items-center gap-4 py-4 first:pt-0 last:pb-0"><span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-emerald-50 text-emerald-600"><svg viewBox="0 0 24 24" className="h-6 w-6" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d={icons.activity} /></svg></span><div className="min-w-0 flex-1"><p className="font-bold text-slate-950">{item.title}</p><p className="text-sm text-slate-500">{item.note}</p></div><p className="text-sm text-slate-500">{item.time}</p></div>)}</div> : <div className="flex h-[240px] items-center justify-center rounded-2xl border border-dashed border-slate-200 bg-slate-50 text-center"><div><p className="font-bold text-slate-950">No recent activities</p><p className="mt-1 text-sm text-slate-500">Activity will appear after testing begins.</p></div></div>}
         </div>
       </div>
 
@@ -393,11 +349,7 @@ export default function HomePage() {
 
         <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
           <div className="mb-5 flex items-center justify-between"><h2 className="text-lg font-bold text-slate-950">Top Selling Products</h2><button onClick={() => go("/reports")} className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-bold text-slate-700 shadow-sm">View Report</button></div>
-          {topProducts.length ? (
-            <div className="space-y-4">
-              {topProducts.slice(0, 5).map((item, index) => <div key={item.name} className="flex items-center justify-between gap-4"><div className="flex items-center gap-3"><span className="flex h-7 w-7 items-center justify-center rounded-full bg-emerald-50 text-xs font-bold text-emerald-700">{index + 1}</span><p className="font-bold text-slate-950">{item.name}</p></div><p className="text-sm font-semibold text-slate-500">{num(item.sold)} sold</p></div>)}
-            </div>
-          ) : <p className="text-sm text-slate-500">No product sales yet.</p>}
+          {topProducts.length ? <div className="space-y-4">{topProducts.slice(0, 5).map((item, index) => <div key={item.name} className="flex items-center justify-between gap-4"><div className="flex items-center gap-3"><span className="flex h-7 w-7 items-center justify-center rounded-full bg-emerald-50 text-xs font-bold text-emerald-700">{index + 1}</span><p className="font-bold text-slate-950">{item.name}</p></div><p className="text-sm font-semibold text-slate-500">{num(item.sold)} sold</p></div>)}</div> : <p className="text-sm text-slate-500">No product sales yet.</p>}
         </div>
       </div>
     </section>
