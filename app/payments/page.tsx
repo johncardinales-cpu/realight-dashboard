@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 
 type PaymentSummary = {
   key: string;
+  saleId?: string;
   saleDate: string;
   salesRefNo: string;
   groupRef: string;
@@ -63,19 +64,24 @@ export default function PaymentsPage() {
   const [paymentMethod, setPaymentMethod] = useState("Cash");
   const [amountPaidPhp, setAmountPaidPhp] = useState(0);
   const [transactionRef, setTransactionRef] = useState("");
-  const [cashierName, setCashierName] = useState("");
+  const [cashierName, setCashierName] = useState("Admin");
   const [notes, setNotes] = useState("");
   const [message, setMessage] = useState("");
+  const [isError, setIsError] = useState(false);
   const [saving, setSaving] = useState(false);
 
   async function loadPayments() {
     const res = await fetch(`/api/payments?t=${Date.now()}`, { cache: "no-store" });
     const data = await res.json();
+    if (!res.ok) throw new Error(data?.error || "Failed to load payment balances.");
     setRows(Array.isArray(data) ? data : []);
   }
 
   useEffect(() => {
-    loadPayments().catch(console.error);
+    loadPayments().catch((error) => {
+      setIsError(true);
+      setMessage(error?.message || "Failed to load payment balances.");
+    });
   }, []);
 
   const openBalances = useMemo(() => rows.filter(isOpenBalance), [rows]);
@@ -87,6 +93,8 @@ export default function PaymentsPage() {
     const sale = openBalances.find((row) => row.key === key);
     setSelectedKey(key);
     setAmountPaidPhp(sale?.balancePhp || 0);
+    setCashierName((current) => current || "Admin");
+    setIsError(false);
     setMessage("");
   }
 
@@ -96,13 +104,14 @@ export default function PaymentsPage() {
     setPaymentMethod("Cash");
     setAmountPaidPhp(0);
     setTransactionRef("");
-    setCashierName("");
+    setCashierName("Admin");
     setNotes("");
   }
 
   async function savePayment(e: React.FormEvent) {
     e.preventDefault();
     setSaving(true);
+    setIsError(false);
     setMessage("");
 
     try {
@@ -110,29 +119,34 @@ export default function PaymentsPage() {
       if (paymentAmount <= 0) throw new Error("Payment amount must be greater than zero.");
       if (paymentAmount > selectedSale.balancePhp) throw new Error(`Payment cannot exceed balance of ${money(selectedSale.balancePhp)}.`);
 
+      const payload = {
+        key: selectedSale.key,
+        saleId: selectedSale.saleId || selectedSale.key,
+        salesRefNo: selectedSale.salesRefNo,
+        groupRef: selectedSale.groupRef,
+        paymentDate,
+        paymentMethod,
+        amountPaidPhp: paymentAmount,
+        transactionRef,
+        cashierName: cashierName.trim() || "Admin",
+        notes,
+      };
+
       const res = await fetch("/api/payments", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          key: selectedSale.key,
-          salesRefNo: selectedSale.salesRefNo,
-          groupRef: selectedSale.groupRef,
-          paymentDate,
-          paymentMethod,
-          amountPaidPhp: paymentAmount,
-          transactionRef,
-          cashierName,
-          notes,
-        }),
+        body: JSON.stringify(payload),
       });
 
       const data = await res.json();
       if (!res.ok) throw new Error(data?.error || "Failed to save payment.");
 
+      setIsError(false);
       setMessage(`Payment saved. ${data.paymentStatus} - remaining balance ${money(data.balancePhp)}.`);
       resetPaymentForm();
       await loadPayments();
     } catch (error: any) {
+      setIsError(true);
       setMessage(error?.message || "Failed to save payment.");
     } finally {
       setSaving(false);
@@ -147,9 +161,9 @@ export default function PaymentsPage() {
             <h1 className="text-3xl font-semibold text-slate-900">Payments</h1>
             <p className="mt-1 text-sm text-slate-600">Complete partial payments by selecting an existing sale, recording the payment, and updating the balance.</p>
           </div>
-          <button type="button" onClick={() => loadPayments().catch(console.error)} className="rounded-xl border border-slate-300 px-4 py-2 text-sm font-bold text-slate-700">Refresh</button>
+          <button type="button" onClick={() => loadPayments().catch((error) => { setIsError(true); setMessage(error?.message || "Refresh failed."); })} className="rounded-xl border border-slate-300 px-4 py-2 text-sm font-bold text-slate-700">Refresh</button>
         </div>
-        {message ? <p className="mt-3 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-semibold text-slate-700">{message}</p> : null}
+        {message ? <p className={`mt-3 rounded-2xl border px-4 py-3 text-sm font-semibold ${isError ? "border-rose-200 bg-rose-50 text-rose-700" : "border-emerald-200 bg-emerald-50 text-emerald-700"}`}>{message}</p> : null}
       </div>
 
       <div className="grid gap-6 xl:grid-cols-[1.2fr_0.8fr]">
