@@ -19,14 +19,16 @@ const AUDIT_HEADERS = ["Audit ID","Created At","Module","Action","Record ID","Re
 
 function toNumber(value: unknown) { return Number(String(value || "").replace(/[^0-9.-]/g, "")) || 0; }
 function text(value: unknown) { return String(value || "").trim(); }
+function norm(value: unknown) { return text(value).toLowerCase(); }
+function roundMoney(value: number) { return Math.round((Number(value) || 0) * 100) / 100; }
 function columnLetter(index: number) { let column = ""; let current = index; while (current > 0) { const remainder = (current - 1) % 26; column = String.fromCharCode(65 + remainder) + column; current = Math.floor((current - 1) / 26); } return column; }
 function today() { return new Date().toISOString().slice(0, 10); }
 function makeId(prefix: string) { const stamp = new Date().toISOString().replace(/[-:.TZ]/g, "").slice(0, 14); const random = Math.random().toString(36).slice(2, 8).toUpperCase(); return `${prefix}_${stamp}_${random}`; }
-function saleKey(salesRefNo: string, groupRef: string, saleId?: string) { return text(saleId) || text(groupRef) || text(salesRefNo); }
+function saleKey(salesRefNo: string, groupRef: string, saleId?: string) { return text(groupRef) || text(saleId) || text(salesRefNo); }
 function lineGrandTotal(row: string[]) { return toNumber(row[28] || row[7]); }
-function getPaymentStatus(totalPaid: number, totalDue: number) { if (totalDue <= 0 || totalPaid <= 0) return "Pending"; if (totalPaid >= totalDue) return "Paid"; return "Partial"; }
-function isVoidPayment(row: string[]) { return ["voided", "cancelled", "canceled"].includes(text(row[12]).toLowerCase()); }
-function isCancelledSale(row: string[]) { return ["cancelled", "canceled", "voided"].includes(text(row[20]).toLowerCase()); }
+function getPaymentStatus(totalPaid: number, totalDue: number) { if (totalDue <= 0 || totalPaid <= 0) return "Pending"; if (totalPaid + 0.009 >= totalDue) return "Paid"; return "Partial"; }
+function isVoidPayment(row: string[]) { return ["voided", "cancelled", "canceled"].includes(norm(row[12])); }
+function isCancelledSale(row: string[]) { return ["cancelled", "canceled", "voided"].includes(norm(row[20])); }
 
 async function ensureSheetExists(sheets: any, title: string, headers: string[]) {
   const meta = await sheets.spreadsheets.get({ spreadsheetId: SHEET_ID });
@@ -43,8 +45,8 @@ async function appendAuditLog(sheets: any, entry: { module: string; action: stri
 async function readSalesRows(sheets: any) { const response = await sheets.spreadsheets.values.get({ spreadsheetId: SHEET_ID, range: `${SALES_SHEET}!A:AJ` }); return (response.data.values || []) as string[][]; }
 async function readPaymentRows(sheets: any) { await ensureSheetExists(sheets, PAYMENTS_SHEET, PAYMENT_HEADERS); const response = await sheets.spreadsheets.values.get({ spreadsheetId: SHEET_ID, range: `${PAYMENTS_SHEET}!A:O` }); return (response.data.values || []) as string[][]; }
 
-function matchKeys(row: string[]) { return [saleKey(text(row[1]), text(row[14]), text(row[22])), text(row[22]), text(row[14]), text(row[1])].filter(Boolean); }
-function paymentMatchKeys(row: string[]) { return [saleKey(text(row[1]), text(row[2]), text(row[11])), text(row[11]), text(row[2]), text(row[1])].filter(Boolean); }
+function matchKeys(row: string[]) { return [saleKey(text(row[1]), text(row[14]), text(row[22])), text(row[14]), text(row[22]), text(row[1])].filter(Boolean); }
+function paymentMatchKeys(row: string[]) { return [saleKey(text(row[1]), text(row[2]), text(row[11])), text(row[2]), text(row[11]), text(row[1])].filter(Boolean); }
 
 function buildPaymentTotals(paymentRows: string[][]) {
   const totals = new Map<string, number>();
@@ -54,7 +56,7 @@ function buildPaymentTotals(paymentRows: string[][]) {
     const amount = toNumber(row[5]);
     if (amount <= 0) return;
     paymentMatchKeys(row).forEach((key) => {
-      totals.set(key, (totals.get(key) || 0) + amount);
+      totals.set(key, roundMoney((totals.get(key) || 0) + amount));
       counts.set(key, (counts.get(key) || 0) + 1);
     });
   });
@@ -77,16 +79,18 @@ function buildSaleSummaries(salesRows: string[][], paymentRows: string[][]) {
     const saleStatus = text(row[20]) || "Draft";
     if (!key || !saleDate || !customerName || due <= 0) return;
     const current = map.get(key) || { key, salesRefNo, groupRef, saleId, customerName, saleDate, grandTotalPhp: 0, initialPaidPhp: 0, saleStatus, rows: [] };
-    current.grandTotalPhp += due;
-    current.initialPaidPhp += initialPaid;
+    current.grandTotalPhp = roundMoney(current.grandTotalPhp + due);
+    current.initialPaidPhp = roundMoney(current.initialPaidPhp + initialPaid);
     current.rows.push({ rowNumber: index + 2, row });
+    if (!current.saleId && saleId) current.saleId = saleId;
+    if (!current.groupRef && groupRef) current.groupRef = groupRef;
     map.set(key, current);
   });
   return Array.from(map.values()).map((sale) => {
-    const followUpPaid = paymentTotals.get(sale.saleId) || paymentTotals.get(sale.groupRef) || paymentTotals.get(sale.salesRefNo) || paymentTotals.get(sale.key) || 0;
-    const paymentCount = paymentCounts.get(sale.saleId) || paymentCounts.get(sale.groupRef) || paymentCounts.get(sale.salesRefNo) || paymentCounts.get(sale.key) || 0;
-    const totalPaid = sale.initialPaidPhp + followUpPaid;
-    const balance = Math.max(sale.grandTotalPhp - totalPaid, 0);
+    const followUpPaid = paymentTotals.get(sale.key) || paymentTotals.get(sale.groupRef) || paymentTotals.get(sale.saleId) || paymentTotals.get(sale.salesRefNo) || 0;
+    const paymentCount = paymentCounts.get(sale.key) || paymentCounts.get(sale.groupRef) || paymentCounts.get(sale.saleId) || paymentCounts.get(sale.salesRefNo) || 0;
+    const totalPaid = roundMoney(sale.initialPaidPhp + followUpPaid);
+    const balance = roundMoney(Math.max(sale.grandTotalPhp - totalPaid, 0));
     return { ...sale, totalSalePhp: sale.grandTotalPhp, totalPaidPhp: totalPaid, legacyAmountPaidPhp: sale.initialPaidPhp, paymentLedgerPaidPhp: followUpPaid, balancePhp: balance, paymentStatus: getPaymentStatus(totalPaid, sale.grandTotalPhp), paymentCount };
   });
 }
@@ -98,8 +102,8 @@ async function updateSalePaymentFields(sheets: any, salesRows: string[][], key: 
     if (!matchKeys(row).includes(key)) return [];
     const due = lineGrandTotal(row);
     const share = totalDueForKey > 0 ? due / totalDueForKey : 0;
-    const linePaid = Math.min(due, totalPaid * share);
-    const lineBalance = Math.max(due - linePaid, 0);
+    const linePaid = roundMoney(Math.min(due, totalPaid * share));
+    const lineBalance = roundMoney(Math.max(due - linePaid, 0));
     const rowNumber = index + 2;
     return [{ range: `${SALES_SHEET}!L${rowNumber}`, values: [[paymentStatus]] }, { range: `${SALES_SHEET}!Q${rowNumber}:R${rowNumber}`, values: [[linePaid, lineBalance]] }];
   });
@@ -110,9 +114,7 @@ async function voidPaymentRowsForKey(sheets: any, paymentRows: string[][], key: 
   const stamp = new Date().toISOString();
   const matches = paymentRows.slice(1).map((row, index) => ({ row, rowNumber: index + 2 })).filter(({ row }) => !isVoidPayment(row) && paymentMatchKeys(row).includes(key));
   if (!matches.length) return { voidedCount: 0, voidedAmount: 0 };
-  await sheets.spreadsheets.values.batchUpdate({ spreadsheetId: SHEET_ID, requestBody: { valueInputOption: "USER_ENTERED", data: matches.flatMap(({ rowNumber }) => [
-    { range: `${PAYMENTS_SHEET}!M${rowNumber}:O${rowNumber}`, values: [["Voided", stamp, reason]] },
-  ]) } });
+  await sheets.spreadsheets.values.batchUpdate({ spreadsheetId: SHEET_ID, requestBody: { valueInputOption: "USER_ENTERED", data: matches.flatMap(({ rowNumber }) => [{ range: `${PAYMENTS_SHEET}!M${rowNumber}:O${rowNumber}`, values: [["Voided", stamp, reason]] }]) } });
   const voidedAmount = matches.reduce((sum, item) => sum + toNumber(item.row[5]), 0);
   await appendAuditLog(sheets, { module: "Payments", action: "VOID_PAYMENT", recordId: key, recordRef: key, actor, summary: `Voided ${matches.length} payment record(s), amount ${voidedAmount}, reason: ${reason}`, before: { paymentCount: matches.length, amount: voidedAmount }, after: { paymentStatus: "Voided", voidedAt: stamp, reason } });
   return { voidedCount: matches.length, voidedAmount };
@@ -134,7 +136,7 @@ export async function GET() {
 export async function PATCH(req: Request) {
   try {
     const body = await req.json();
-    const action = text(body?.action || "void-sale-payments").toLowerCase();
+    const action = norm(body?.action || "void-sale-payments");
     const key = text(body?.key || saleKey(text(body?.salesRefNo), text(body?.groupRef), text(body?.saleId)));
     const actor = text(body?.actor || body?.cashierName || "Admin");
     const reason = text(body?.reason || "Payment voided by user");
@@ -162,27 +164,51 @@ export async function POST(req: Request) {
     const saleId = text(body?.saleId);
     const key = text(body?.key || saleKey(salesRefNo, groupRef, saleId));
     const paymentDate = text(body?.paymentDate || today());
-    const paymentMethod = text(body?.paymentMethod);
-    const amountPaidPhp = toNumber(body?.amountPaidPhp);
+    const paymentMethod = text(body?.paymentMethod || "Cash");
+    let amountPaidPhp = toNumber(body?.amountPaidPhp);
     const transactionRef = text(body?.transactionRef);
-    const cashierName = text(body?.cashierName);
+    const cashierName = text(body?.cashierName || "Admin");
     const notes = text(body?.notes);
-    if (!key) return NextResponse.json({ error: "Sales Ref No. is required" }, { status: 400 });
-    if (!paymentMethod) return NextResponse.json({ error: "Payment Method is required" }, { status: 400 });
-    if (amountPaidPhp <= 0) return NextResponse.json({ error: "Payment amount must be greater than zero" }, { status: 400 });
-    if (!cashierName) return NextResponse.json({ error: "Cashier Name is required" }, { status: 400 });
+
+    if (!key && !salesRefNo && !groupRef && !saleId) {
+      console.error("PAYMENTS POST 400 missing key", { body });
+      return NextResponse.json({ error: "Sale reference is required. Select the sale again and retry." }, { status: 400 });
+    }
+    if (amountPaidPhp <= 0) {
+      console.error("PAYMENTS POST 400 invalid amount", { amountPaidPhp, body });
+      return NextResponse.json({ error: "Payment amount must be greater than zero" }, { status: 400 });
+    }
+
     const client = await auth.getClient();
     const sheets = google.sheets({ version: "v4", auth: client as any });
     await ensureSheetExists(sheets, PAYMENTS_SHEET, PAYMENT_HEADERS);
     await ensureSheetExists(sheets, AUDIT_LOG_SHEET, AUDIT_HEADERS);
     const [salesRows, paymentRows] = await Promise.all([readSalesRows(sheets), readPaymentRows(sheets)]);
-    const summary = buildSaleSummaries(salesRows, paymentRows).find((item) => item.key === key || item.saleId === key || item.salesRefNo === key || item.groupRef === key);
-    if (!summary) return NextResponse.json({ error: "Sale reference was not found" }, { status: 404 });
-    if (amountPaidPhp > summary.balancePhp) return NextResponse.json({ error: `Payment exceeds balance. Remaining balance is PHP ${summary.balancePhp.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` }, { status: 400 });
+    const summaries = buildSaleSummaries(salesRows, paymentRows);
+    const candidates = [key, groupRef, saleId, salesRefNo].filter(Boolean).map(norm);
+    const summary = summaries.find((item) => [item.key, item.groupRef, item.saleId, item.salesRefNo].some((value) => candidates.includes(norm(value))));
+
+    if (!summary) {
+      console.error("PAYMENTS POST 404 sale not found", { body, candidates, available: summaries.map((item) => ({ key: item.key, groupRef: item.groupRef, saleId: item.saleId, salesRefNo: item.salesRefNo })) });
+      return NextResponse.json({ error: "Sale reference was not found. Refresh Payments and select the sale again." }, { status: 404 });
+    }
+
+    if (summary.balancePhp <= 0) {
+      return NextResponse.json({ error: "This sale has no remaining balance." }, { status: 400 });
+    }
+
+    if (amountPaidPhp > summary.balancePhp && amountPaidPhp <= summary.balancePhp + 0.99) {
+      amountPaidPhp = summary.balancePhp;
+    }
+    if (amountPaidPhp > summary.balancePhp) {
+      console.error("PAYMENTS POST 400 exceeds balance", { amountPaidPhp, balancePhp: summary.balancePhp, body, summary });
+      return NextResponse.json({ error: `Payment exceeds balance. Remaining balance is PHP ${summary.balancePhp.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` }, { status: 400 });
+    }
+
     const paymentId = makeId("PAY");
     await sheets.spreadsheets.values.append({ spreadsheetId: SHEET_ID, range: `${PAYMENTS_SHEET}!A:O`, valueInputOption: "USER_ENTERED", insertDataOption: "INSERT_ROWS", requestBody: { values: [[paymentDate, summary.salesRefNo, summary.groupRef, summary.customerName, paymentMethod, amountPaidPhp, transactionRef, cashierName, notes, new Date().toISOString(), paymentId, summary.saleId || "", "Active", "", ""]] } });
-    const newTotalPaid = summary.totalPaidPhp + amountPaidPhp;
-    const newBalance = Math.max(summary.grandTotalPhp - newTotalPaid, 0);
+    const newTotalPaid = roundMoney(summary.totalPaidPhp + amountPaidPhp);
+    const newBalance = roundMoney(Math.max(summary.grandTotalPhp - newTotalPaid, 0));
     const newPaymentStatus = getPaymentStatus(newTotalPaid, summary.grandTotalPhp);
     await updateSalePaymentFields(sheets, salesRows, summary.key, newTotalPaid, newPaymentStatus);
     await appendAuditLog(sheets, { module: "Payments", action: "CREATE_PAYMENT", recordId: paymentId, recordRef: summary.salesRefNo, actor: cashierName, summary: `Recorded payment ${amountPaidPhp} for ${summary.salesRefNo}`, before: { totalPaidPhp: summary.totalPaidPhp, balancePhp: summary.balancePhp, paymentStatus: summary.paymentStatus }, after: { totalPaidPhp: newTotalPaid, balancePhp: newBalance, paymentStatus: newPaymentStatus, paymentMethod, transactionRef } });
