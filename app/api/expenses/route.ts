@@ -1,63 +1,14 @@
 import { NextResponse } from "next/server";
-import { google } from "googleapis";
+import { getSheetsClient, SHEET_ID } from "@/lib/sheets";
 
-const SHEET_ID = process.env.GOOGLE_SHEET_ID as string;
 const EXPENSES_SHEET = "Expenses";
 const SUPPLIER_COSTS_SHEET = "Supplier_Invoice_Costs";
 const AUDIT_LOG_SHEET = "Audit_Log";
 const SALES_SHEET = "Sales";
 
-const auth = new google.auth.GoogleAuth({
-  credentials: {
-    client_email: process.env.GOOGLE_CLIENT_EMAIL,
-    private_key: process.env.GOOGLE_PRIVATE_KEY?.replace(/\\n/g, "\n"),
-  },
-  scopes: ["https://www.googleapis.com/auth/spreadsheets"],
-});
-
-const EXPENSE_HEADERS = [
-  "Expense Date",
-  "Category",
-  "Description",
-  "Base Amount",
-  "Tax / VAT / Fee",
-  "Total Amount",
-  "Payment Method",
-  "Reference No.",
-  "Related Sales Ref No.",
-  "Payee",
-  "Notes",
-  "Created At",
-  "Expense ID",
-];
-
-const SUPPLIER_HEADERS = [
-  "Upload Date",
-  "Supplier",
-  "Batch / Reference",
-  "Invoice No.",
-  "Invoice Valid",
-  "Product Subtotal",
-  "Freight Cost",
-  "Delivery Cost",
-  "Customs Cost",
-  "Other Cost",
-  "Total Invoice Cost",
-  "Notes",
-];
-
-const AUDIT_HEADERS = [
-  "Audit ID",
-  "Created At",
-  "Module",
-  "Action",
-  "Record ID",
-  "Record Ref",
-  "Actor",
-  "Summary",
-  "Before JSON",
-  "After JSON",
-];
+const EXPENSE_HEADERS = ["Expense Date", "Category", "Description", "Base Amount", "Tax / VAT / Fee", "Total Amount", "Payment Method", "Reference No.", "Related Sales Ref No.", "Payee", "Notes", "Created At", "Expense ID"];
+const SUPPLIER_HEADERS = ["Upload Date", "Supplier", "Batch / Reference", "Invoice No.", "Invoice Valid", "Product Subtotal", "Freight Cost", "Delivery Cost", "Customs Cost", "Other Cost", "Total Invoice Cost", "Notes"];
+const AUDIT_HEADERS = ["Audit ID", "Created At", "Module", "Action", "Record ID", "Record Ref", "Actor", "Summary", "Before JSON", "After JSON"];
 
 function toNumber(value: string | number | undefined) {
   return Number(String(value || "").replace(/[^0-9.-]/g, "")) || 0;
@@ -65,6 +16,23 @@ function toNumber(value: string | number | undefined) {
 
 function safeText(value: unknown) {
   return String(value || "").trim();
+}
+
+function normalizeDate(value: unknown) {
+  const raw = safeText(value);
+  if (!raw) return "";
+  if (/^\d{4}-\d{2}-\d{2}/.test(raw)) return raw.slice(0, 10);
+  if (/^\d{1,2}\/\d{1,2}\/\d{2,4}$/.test(raw)) {
+    const [month, day, yearRaw] = raw.split("/").map(Number);
+    const year = yearRaw < 100 ? 2000 + yearRaw : yearRaw;
+    return `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+  }
+  if (/^\d+(\.\d+)?$/.test(raw)) {
+    const serial = Number(raw);
+    if (serial > 20000 && serial < 90000) return new Date(Math.floor(serial - 25569) * 86400 * 1000).toISOString().slice(0, 10);
+  }
+  const parsed = new Date(raw);
+  return Number.isNaN(parsed.getTime()) ? raw : parsed.toISOString().slice(0, 10);
 }
 
 function normalizeRef(value: unknown) {
@@ -131,8 +99,7 @@ async function getSalesRefSet(sheets: any) {
 function parseExpenseRow(row: string[], header: string[]) {
   const map: Record<string, string> = {};
   header.forEach((h, i) => { map[safeText(h)] = safeText(row[i]); });
-
-  const date = map["Expense Date"] || map["Date"] || map["Upload Date"] || "";
+  const date = normalizeDate(map["Expense Date"] || map["Date"] || map["Upload Date"] || map["Created At"] || "");
   const category = map["Category"] || "General Expense";
   const description = map["Description"] || map["Expense"] || "";
   const legacyAmount = toNumber(map["Amount"] || map["Total"] || map["Expense Amount"]);
@@ -145,28 +112,12 @@ function parseExpenseRow(row: string[], header: string[]) {
   const relatedSalesRefNo = map["Related Sales Ref No."] || "";
   const payee = map["Payee"] || "";
   const expenseId = map["Expense ID"] || "";
-
   if (!date && !description && !totalAmount) return null;
-
-  return {
-    Date: date,
-    Category: category,
-    Description: description,
-    BaseAmount: baseAmount,
-    TaxFee: taxFee,
-    Amount: totalAmount,
-    PaymentMethod: paymentMethod,
-    Reference: reference,
-    RelatedSalesRefNo: relatedSalesRefNo,
-    Payee: payee,
-    Source: "Expenses",
-    Notes: notes,
-    ExpenseID: expenseId,
-  };
+  return { Date: date, Category: category, Description: description, BaseAmount: baseAmount, TaxFee: taxFee, Amount: totalAmount, PaymentMethod: paymentMethod, Reference: reference, RelatedSalesRefNo: relatedSalesRefNo, Payee: payee, Source: "Expenses", Notes: notes, ExpenseID: expenseId };
 }
 
 function parseSupplierRow(row: string[]) {
-  const date = safeText(row[0]);
+  const date = normalizeDate(row[0]);
   const supplier = safeText(row[1]);
   const batchReference = safeText(row[2]);
   const invoiceNo = safeText(row[3]);
@@ -180,21 +131,7 @@ function parseSupplierRow(row: string[]) {
   const taxFee = customsCost + otherCost;
   const baseAmount = productSubtotal + freightCost + deliveryCost;
   if (!date && !supplier && !totalInvoiceCost) return null;
-  return {
-    Date: date,
-    Category: "Supplier Invoice Cost",
-    Description: supplier,
-    BaseAmount: baseAmount || totalInvoiceCost,
-    TaxFee: taxFee,
-    Amount: totalInvoiceCost,
-    PaymentMethod: "",
-    Reference: invoiceNo || batchReference,
-    RelatedSalesRefNo: "",
-    Payee: supplier,
-    Source: "Supplier_Invoice_Costs",
-    Notes: notes,
-    ExpenseID: "",
-  };
+  return { Date: date, Category: "Supplier Invoice Cost", Description: supplier, BaseAmount: baseAmount || totalInvoiceCost, TaxFee: taxFee, Amount: totalInvoiceCost, PaymentMethod: "", Reference: invoiceNo || batchReference, RelatedSalesRefNo: "", Payee: supplier, Source: "Supplier_Invoice_Costs", Notes: notes, ExpenseID: "" };
 }
 
 async function ensureSupplierSheetExists(sheets: any) {
@@ -203,8 +140,7 @@ async function ensureSupplierSheetExists(sheets: any) {
 
 export async function GET() {
   try {
-    const client = await auth.getClient();
-    const sheets = google.sheets({ version: "v4", auth: client as any });
+    const sheets = await getSheetsClient();
     await ensureSheetExists(sheets, EXPENSES_SHEET, EXPENSE_HEADERS);
     await ensureSupplierSheetExists(sheets);
     const [expensesRes, supplierRes] = await Promise.all([
@@ -233,7 +169,7 @@ export async function GET() {
 export async function POST(req: Request) {
   try {
     const body = await req.json();
-    const expenseDate = safeText(body?.expenseDate || new Date().toISOString().slice(0, 10));
+    const expenseDate = normalizeDate(body?.expenseDate || new Date().toISOString().slice(0, 10));
     const category = safeText(body?.category || "Miscellaneous");
     const description = safeText(body?.description);
     const baseAmount = toNumber(body?.baseAmount ?? body?.amount);
@@ -245,14 +181,11 @@ export async function POST(req: Request) {
     const payee = safeText(body?.payee);
     const notes = safeText(body?.notes);
     const actor = safeText(body?.actor || "Admin");
-
     if (!expenseDate) return NextResponse.json({ error: "Expense Date is required" }, { status: 400 });
     if (!category) return NextResponse.json({ error: "Category is required" }, { status: 400 });
     if (!description) return NextResponse.json({ error: "Description is required" }, { status: 400 });
     if (totalAmount <= 0) return NextResponse.json({ error: "Total Amount must be greater than zero" }, { status: 400 });
-
-    const client = await auth.getClient();
-    const sheets = google.sheets({ version: "v4", auth: client as any });
+    const sheets = await getSheetsClient();
     await ensureSheetExists(sheets, EXPENSES_SHEET, EXPENSE_HEADERS);
     await ensureSheetExists(sheets, AUDIT_LOG_SHEET, AUDIT_HEADERS);
     if (relatedSalesRefNo) {
