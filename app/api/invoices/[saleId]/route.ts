@@ -16,6 +16,10 @@ function same(value: unknown, target: string) {
   return txt(value).toLowerCase() === target.toLowerCase();
 }
 
+function inactive(value: unknown) {
+  return ["cancelled", "canceled", "voided"].includes(txt(value).toLowerCase());
+}
+
 function moneyRound(value: number) {
   return Math.round((Number(value) || 0) * 100) / 100;
 }
@@ -95,6 +99,16 @@ function parseCustomer(row: string[]) {
   };
 }
 
+function resolveInvoiceLines(allLines: ReturnType<typeof parseSaleLine>[], target: string) {
+  const exactSaleId = allLines.filter((line) => same(line.saleId, target));
+  if (exactSaleId.length) return exactSaleId;
+
+  const activeByGroupOrRef = allLines.filter((line) => !inactive(line.saleStatus) && (same(line.groupRef, target) || same(line.salesRefNo, target)));
+  if (activeByGroupOrRef.length) return activeByGroupOrRef;
+
+  return allLines.filter((line) => same(line.groupRef, target) || same(line.salesRefNo, target));
+}
+
 export async function GET(_req: Request, { params }: { params: Promise<{ saleId: string }> }) {
   try {
     const { saleId } = await params;
@@ -107,10 +121,8 @@ export async function GET(_req: Request, { params }: { params: Promise<{ saleId:
       sheets.spreadsheets.values.get({ spreadsheetId: SHEET_ID, range: `${CUSTOMERS_SHEET}!A:J` }).catch(() => ({ data: { values: [] } })),
     ]);
 
-    const saleLines = ((salesRes.data.values || []) as string[][])
-      .slice(1)
-      .map(parseSaleLine)
-      .filter((line) => same(line.saleId, target) || same(line.groupRef, target) || same(line.salesRefNo, target));
+    const allSaleLines = ((salesRes.data.values || []) as string[][]).slice(1).map(parseSaleLine);
+    const saleLines = resolveInvoiceLines(allSaleLines, target);
 
     if (!saleLines.length) return NextResponse.json({ error: "Invoice sale not found" }, { status: 404 });
 
@@ -143,7 +155,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ saleId:
     }, { productSubtotalPhp: 0, deliveryFeePhp: 0, installationFeePhp: 0, otherChargePhp: 0, discountPhp: 0, taxAmountPhp: 0, grandTotalPhp: 0, paidPhp: 0, balancePhp: 0, grossProfitPhp: 0, tenderedAmountPhp: 0, changeDuePhp: 0 });
 
     Object.keys(totals).forEach((key) => ((totals as any)[key] = moneyRound((totals as any)[key])));
-    totals.balancePhp = moneyRound(Math.max(totals.grandTotalPhp - totals.paidPhp, totals.balancePhp, 0));
+    totals.balancePhp = moneyRound(Math.max(totals.grandTotalPhp - totals.paidPhp, 0));
 
     const paymentStatus = paymentStatusFromTotals(totals.paidPhp, totals.grandTotalPhp);
     const transactionRef = saleLines.find((line) => txt(line.transactionRef))?.transactionRef || "";
@@ -151,7 +163,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ saleId:
     const salesperson = saleLines.find((line) => txt(line.salesperson))?.salesperson || "";
 
     return NextResponse.json({
-      invoiceNo: first.salesRefNo || first.groupRef || first.saleId || target,
+      invoiceNo: first.saleId || first.salesRefNo || first.groupRef || target,
       saleDate: first.saleDate,
       saleStatus: first.saleStatus,
       paymentStatus,
