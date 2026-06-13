@@ -46,6 +46,23 @@ function today() {
   return new Date().toISOString().slice(0, 10);
 }
 
+function normalizeDate(value: unknown) {
+  const raw = String(value || "").trim();
+  if (!raw) return "";
+  if (/^\d{4}-\d{2}-\d{2}/.test(raw)) return raw.slice(0, 10);
+  if (/^\d{1,2}\/\d{1,2}\/\d{2,4}$/.test(raw)) {
+    const [month, day, yearRaw] = raw.split("/").map(Number);
+    const year = yearRaw < 100 ? 2000 + yearRaw : yearRaw;
+    return `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+  }
+  if (/^\d+(\.\d+)?$/.test(raw)) {
+    const serial = Number(raw);
+    if (serial > 20000 && serial < 90000) return new Date(Math.floor(serial - 25569) * 86400 * 1000).toISOString().slice(0, 10);
+  }
+  const parsed = new Date(raw);
+  return Number.isNaN(parsed.getTime()) ? raw : parsed.toISOString().slice(0, 10);
+}
+
 function Field({ label, children, className = "" }: { label: string; children: React.ReactNode; className?: string }) {
   return <label className={`block space-y-1 ${className}`}><span className="block text-xs font-bold uppercase tracking-wide text-slate-600">{label}</span>{children}</label>;
 }
@@ -172,7 +189,7 @@ export default function ExpensesPage() {
             <tbody>
               {rows.map((row, index) => (
                 <tr key={`${row.Source}-${row.Reference}-${row.ExpenseID || index}`} className="border-t border-slate-100 align-top">
-                  <td className="px-4 py-3 text-slate-700">{row.Date}</td><td className="px-4 py-3 text-slate-700">{row.Category}</td><td className="px-4 py-3 text-slate-700">{row.Description}</td><td className="px-4 py-3 text-slate-700">{currency(Number(row.BaseAmount ?? row.Amount) || 0)}</td><td className="px-4 py-3 text-slate-700">{currency(Number(row.TaxFee) || 0)}</td><td className="px-4 py-3 font-semibold text-slate-800">{currency(Number(row.Amount) || 0)}</td><td className="px-4 py-3 text-slate-700">{row.PaymentMethod || "-"}</td><td className="px-4 py-3 text-slate-700">{row.Reference || "-"}</td><td className="px-4 py-3 text-slate-700">{row.RelatedSalesRefNo || "-"}</td><td className="px-4 py-3 text-slate-700">{row.Payee || "-"}</td><td className="px-4 py-3 text-slate-700">{row.Source}</td><td className="px-4 py-3 text-slate-700">{row.Notes}</td>
+                  <td className="px-4 py-3 text-slate-700">{normalizeDate(row.Date)}</td><td className="px-4 py-3 text-slate-700">{row.Category}</td><td className="px-4 py-3 text-slate-700">{row.Description}</td><td className="px-4 py-3 text-slate-700">{currency(Number(row.BaseAmount ?? row.Amount) || 0)}</td><td className="px-4 py-3 text-slate-700">{currency(Number(row.TaxFee) || 0)}</td><td className="px-4 py-3 font-semibold text-slate-800">{currency(Number(row.Amount) || 0)}</td><td className="px-4 py-3 text-slate-700">{row.PaymentMethod || "-"}</td><td className="px-4 py-3 text-slate-700">{row.Reference || "-"}</td><td className="px-4 py-3 text-slate-700">{row.RelatedSalesRefNo || "-"}</td><td className="px-4 py-3 text-slate-700">{row.Payee || "-"}</td><td className="px-4 py-3 text-slate-700">{row.Source}</td><td className="px-4 py-3 text-slate-700">{row.Notes}</td>
                 </tr>
               ))}
               {!rows.length && <tr><td colSpan={12} className="px-4 py-8 text-center text-slate-500">No expenses recorded yet.</td></tr>}
