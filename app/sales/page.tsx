@@ -9,7 +9,10 @@ type SavedSale = {
   saleDate: string; salesRefNo: string; customerName: string; customerId?: string; description: string; specification: string; qty: number; unitPricePhp: number;
   totalSalePhp: number; costPricePhp: number; totalCostPhp: number; grossProfitPhp: number; paymentStatus: string; salesperson: string; notes: string;
   groupRef: string; paymentMethod: string; amountPaidPhp: number; balancePhp: number; transactionRef: string; cashierName: string; saleStatus: string; confirmedAt: string;
-  productSubtotalPhp?: number; taxRatePct?: number; taxAmountPhp?: number; grandTotalPhp?: number; deliveryFeePhp?: number; installationFeePhp?: number; otherChargePhp?: number; discountPhp?: number;
+  saleId?: string; productSubtotalPhp?: number; taxRatePct?: number; taxAmountPhp?: number; grandTotalPhp?: number; deliveryFeePhp?: number; installationFeePhp?: number; otherChargePhp?: number; discountPhp?: number;
+};
+type SaleSummary = {
+  key: string; saleDate: string; salesRefNo: string; customerName: string; totalSalePhp: number; paidPhp: number; balancePhp: number; paymentStatus: string; saleStatus: string; paymentMethod: string; lineCount: number; deliveryFeePhp: number; installationFeePhp: number; otherChargePhp: number; discountPhp: number; taxAmountPhp: number; grossProfitPhp: number; sampleRow: SavedSale;
 };
 type InventoryRow = Record<string, string | number>;
 type AlertState = { type: "success" | "warning" | "error"; title: string; message: string; detail?: string };
@@ -26,6 +29,7 @@ function productLabel(row: PriceRow) { return `${row.description} | ${row.specif
 function customerLabel(row: CustomerRow) { return `${row.customerName}${row.phone ? ` | ${row.phone}` : ""}${row.customerType ? ` | ${row.customerType}` : ""}`; }
 function invoiceKey(row: SavedSale) { return encodeURIComponent(row.groupRef || row.salesRefNo); }
 function openInvoice(row: SavedSale) { window.open(`/invoices/${invoiceKey(row)}`, "_blank", "noopener,noreferrer"); }
+function paymentStatusFromAmounts(paid: number, total: number) { if (total <= 0 || paid <= 0) return "Pending"; return paid >= total ? "Paid" : "Partial"; }
 
 function formatApiError(message: string): AlertState {
   const stockPrefix = "Insufficient confirmed stock.";
@@ -55,6 +59,48 @@ function StatusPill({ value, kind }: { value: string; kind: "sale" | "payment" }
   const normalized = value.toLowerCase();
   const color = normalized === "confirmed" || normalized === "paid" ? "bg-emerald-50 text-emerald-700" : normalized === "partial" ? "bg-amber-50 text-amber-700" : normalized === "cancelled" ? "bg-rose-50 text-rose-700" : "bg-slate-100 text-slate-700";
   return <span className={`rounded-full px-2.5 py-1 text-xs font-bold ${color}`}>{value || (kind === "sale" ? "Draft" : "Pending")}</span>;
+}
+
+function summarizeSavedSales(rows: SavedSale[]) {
+  const map = new Map<string, SaleSummary>();
+  rows.forEach((row) => {
+    const key = row.saleId || row.groupRef || row.salesRefNo || `${row.saleDate}-${row.customerName}`;
+    const current = map.get(key) || {
+      key,
+      saleDate: row.saleDate,
+      salesRefNo: row.salesRefNo,
+      customerName: row.customerName,
+      totalSalePhp: 0,
+      paidPhp: 0,
+      balancePhp: 0,
+      paymentStatus: row.paymentStatus || "Pending",
+      saleStatus: row.saleStatus || "Draft",
+      paymentMethod: row.paymentMethod || "",
+      lineCount: 0,
+      deliveryFeePhp: 0,
+      installationFeePhp: 0,
+      otherChargePhp: 0,
+      discountPhp: 0,
+      taxAmountPhp: 0,
+      grossProfitPhp: 0,
+      sampleRow: row,
+    };
+    current.totalSalePhp += Number(row.grandTotalPhp ?? row.totalSalePhp) || 0;
+    current.paidPhp += Number(row.amountPaidPhp) || 0;
+    current.balancePhp += Number(row.balancePhp) || 0;
+    current.deliveryFeePhp += Number(row.deliveryFeePhp) || 0;
+    current.installationFeePhp += Number(row.installationFeePhp) || 0;
+    current.otherChargePhp += Number(row.otherChargePhp) || 0;
+    current.discountPhp += Number(row.discountPhp) || 0;
+    current.taxAmountPhp += Number(row.taxAmountPhp) || 0;
+    current.grossProfitPhp += Number(row.grossProfitPhp) || 0;
+    current.lineCount += 1;
+    current.paymentStatus = paymentStatusFromAmounts(current.paidPhp, current.totalSalePhp);
+    current.saleStatus = row.saleStatus || current.saleStatus;
+    if (!current.paymentMethod && row.paymentMethod) current.paymentMethod = row.paymentMethod;
+    map.set(key, current);
+  });
+  return Array.from(map.values()).sort((a, b) => `${b.saleDate}-${b.salesRefNo}`.localeCompare(`${a.saleDate}-${a.salesRefNo}`));
 }
 
 export default function SalesPage() {
@@ -102,6 +148,7 @@ export default function SalesPage() {
 
   const productOptions = useMemo(() => pricing.map(productLabel), [pricing]);
   const customerOptions = useMemo(() => customers.map(customerLabel), [customers]);
+  const saleSummaries = useMemo(() => summarizeSavedSales(rows), [rows]);
 
   function findProduct(value: string) { const query = value.trim().toLowerCase(); if (!query) return null; return pricing.find((row) => productLabel(row).toLowerCase() === query) || pricing.find((row) => productLabel(row).toLowerCase().includes(query)) || null; }
   function findCustomer(value: string) { const query = value.trim().toLowerCase(); if (!query) return null; return customers.find((row) => customerLabel(row).toLowerCase() === query) || customers.find((row) => customerLabel(row).toLowerCase().includes(query) || row.customerName.toLowerCase().includes(query)) || null; }
@@ -208,7 +255,18 @@ export default function SalesPage() {
         <div className="flex gap-3"><button type="submit" disabled={saving} className="rounded-xl bg-emerald-600 px-5 py-3 text-sm font-bold text-white disabled:opacity-60">{saving ? "Saving..." : "Save Sale"}</button><button type="button" onClick={resetForm} className="rounded-xl border border-slate-300 px-5 py-3 text-sm font-bold text-slate-700">Clear</button></div>
       </form>
 
-      <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm"><h2 className="mb-4 text-xl font-semibold text-slate-900">Sales Ledger</h2><div className="overflow-x-auto rounded-2xl border border-slate-200"><table className="w-full text-sm"><thead className="bg-slate-100 text-slate-700"><tr>{["Date","Sales Ref","Invoice","Customer","Description","Specification","Qty","Unit Price","Subtotal","Delivery","Install","Other","Discount","Tax","Grand Total","Cost Price","Gross Profit","Payment Status","Method","Paid","Balance","Sale Status"].map((head) => <th key={head} className="whitespace-nowrap px-4 py-3 text-left font-medium">{head}</th>)}</tr></thead><tbody>{rows.map((row, index) => <tr key={`${row.groupRef}-${index}`} className="border-t border-slate-100"><td className="px-4 py-3 text-slate-700">{row.saleDate}</td><td className="px-4 py-3 text-slate-700">{row.salesRefNo}</td><td className="px-4 py-3 text-slate-700"><button type="button" onClick={() => openInvoice(row)} className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-xs font-bold text-emerald-700 hover:bg-emerald-100">View Invoice</button></td><td className="px-4 py-3 text-slate-700">{row.customerName}</td><td className="px-4 py-3 text-slate-700">{row.description}</td><td className="px-4 py-3 text-slate-700">{row.specification}</td><td className="px-4 py-3 text-slate-700">{row.qty}</td><td className="px-4 py-3 text-slate-700">{money(row.unitPricePhp)}</td><td className="px-4 py-3 text-slate-700">{money(row.productSubtotalPhp ?? row.totalSalePhp)}</td><td className="px-4 py-3 text-slate-700">{money(row.deliveryFeePhp ?? 0)}</td><td className="px-4 py-3 text-slate-700">{money(row.installationFeePhp ?? 0)}</td><td className="px-4 py-3 text-slate-700">{money(row.otherChargePhp ?? 0)}</td><td className="px-4 py-3 text-slate-700">{money(row.discountPhp ?? 0)}</td><td className="px-4 py-3 text-slate-700">{money(row.taxAmountPhp ?? 0)}</td><td className="px-4 py-3 text-slate-700">{money(row.grandTotalPhp ?? row.totalSalePhp)}</td><td className="px-4 py-3 text-slate-700">{money(row.costPricePhp)}</td><td className="px-4 py-3 text-slate-700">{money(row.grossProfitPhp)}</td><td className="px-4 py-3 text-slate-700"><StatusPill value={row.paymentStatus} kind="payment" /></td><td className="px-4 py-3 text-slate-700">{row.paymentMethod}</td><td className="px-4 py-3 text-slate-700">{money(row.amountPaidPhp)}</td><td className="px-4 py-3 text-slate-700">{money(row.balancePhp)}</td><td className="px-4 py-3 text-slate-700"><StatusPill value={row.saleStatus} kind="sale" /></td></tr>)}{!rows.length && <tr><td colSpan={22} className="px-4 py-8 text-center text-slate-500">No sales recorded yet.</td></tr>}</tbody></table></div></div>
+      <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
+        <h2 className="mb-2 text-xl font-semibold text-slate-900">Sales Payment Summary</h2>
+        <p className="mb-4 text-xs text-slate-500">One row per sale. Use this to quickly see how much a customer has paid and the remaining balance.</p>
+        <div className="overflow-x-auto rounded-2xl border border-slate-200">
+          <table className="w-full text-sm">
+            <thead className="bg-slate-100 text-slate-700"><tr>{["Date", "Sales Ref", "Invoice", "Customer", "Lines", "Grand Total", "Paid", "Balance", "Payment", "Method", "Sale", "Delivery", "Gross Profit"].map((head) => <th key={head} className="whitespace-nowrap px-4 py-3 text-left font-medium">{head}</th>)}</tr></thead>
+            <tbody>{saleSummaries.map((sale) => <tr key={sale.key} className="border-t border-slate-100"><td className="px-4 py-3 text-slate-700">{sale.saleDate}</td><td className="px-4 py-3 text-slate-700">{sale.salesRefNo}</td><td className="px-4 py-3 text-slate-700"><button type="button" onClick={() => openInvoice(sale.sampleRow)} className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-xs font-bold text-emerald-700 hover:bg-emerald-100">View Invoice</button></td><td className="px-4 py-3 text-slate-700">{sale.customerName}</td><td className="px-4 py-3 text-slate-700">{sale.lineCount}</td><td className="px-4 py-3 font-semibold text-slate-900">{money(sale.totalSalePhp)}</td><td className="px-4 py-3 font-semibold text-emerald-700">{money(sale.paidPhp)}</td><td className="px-4 py-3 font-semibold text-rose-700">{money(sale.balancePhp)}</td><td className="px-4 py-3"><StatusPill value={sale.paymentStatus} kind="payment" /></td><td className="px-4 py-3 text-slate-700">{sale.paymentMethod || "-"}</td><td className="px-4 py-3"><StatusPill value={sale.saleStatus} kind="sale" /></td><td className="px-4 py-3 text-slate-700">{money(sale.deliveryFeePhp)}</td><td className="px-4 py-3 text-slate-700">{money(sale.grossProfitPhp)}</td></tr>)}{!saleSummaries.length && <tr><td colSpan={13} className="px-4 py-8 text-center text-slate-500">No sales recorded yet.</td></tr>}</tbody>
+          </table>
+        </div>
+      </div>
+
+      <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm"><h2 className="mb-4 text-xl font-semibold text-slate-900">Sales Line Ledger</h2><div className="overflow-x-auto rounded-2xl border border-slate-200"><table className="w-full text-sm"><thead className="bg-slate-100 text-slate-700"><tr>{["Date","Sales Ref","Invoice","Customer","Description","Specification","Qty","Unit Price","Subtotal","Delivery","Install","Other","Discount","Tax","Grand Total","Cost Price","Gross Profit","Payment Status","Method","Paid","Balance","Sale Status"].map((head) => <th key={head} className="whitespace-nowrap px-4 py-3 text-left font-medium">{head}</th>)}</tr></thead><tbody>{rows.map((row, index) => <tr key={`${row.groupRef}-${index}`} className="border-t border-slate-100"><td className="px-4 py-3 text-slate-700">{row.saleDate}</td><td className="px-4 py-3 text-slate-700">{row.salesRefNo}</td><td className="px-4 py-3 text-slate-700"><button type="button" onClick={() => openInvoice(row)} className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-xs font-bold text-emerald-700 hover:bg-emerald-100">View Invoice</button></td><td className="px-4 py-3 text-slate-700">{row.customerName}</td><td className="px-4 py-3 text-slate-700">{row.description}</td><td className="px-4 py-3 text-slate-700">{row.specification}</td><td className="px-4 py-3 text-slate-700">{row.qty}</td><td className="px-4 py-3 text-slate-700">{money(row.unitPricePhp)}</td><td className="px-4 py-3 text-slate-700">{money(row.productSubtotalPhp ?? row.totalSalePhp)}</td><td className="px-4 py-3 text-slate-700">{money(row.deliveryFeePhp ?? 0)}</td><td className="px-4 py-3 text-slate-700">{money(row.installationFeePhp ?? 0)}</td><td className="px-4 py-3 text-slate-700">{money(row.otherChargePhp ?? 0)}</td><td className="px-4 py-3 text-slate-700">{money(row.discountPhp ?? 0)}</td><td className="px-4 py-3 text-slate-700">{money(row.taxAmountPhp ?? 0)}</td><td className="px-4 py-3 text-slate-700">{money(row.grandTotalPhp ?? row.totalSalePhp)}</td><td className="px-4 py-3 text-slate-700">{money(row.costPricePhp)}</td><td className="px-4 py-3 text-slate-700">{money(row.grossProfitPhp)}</td><td className="px-4 py-3 text-slate-700"><StatusPill value={row.paymentStatus} kind="payment" /></td><td className="px-4 py-3 text-slate-700">{row.paymentMethod}</td><td className="px-4 py-3 text-slate-700">{money(row.amountPaidPhp)}</td><td className="px-4 py-3 text-slate-700">{money(row.balancePhp)}</td><td className="px-4 py-3 text-slate-700"><StatusPill value={row.saleStatus} kind="sale" /></td></tr>)}{!rows.length && <tr><td colSpan={22} className="px-4 py-8 text-center text-slate-500">No sales recorded yet.</td></tr>}</tbody></table></div></div>
     </section>
   );
 }
