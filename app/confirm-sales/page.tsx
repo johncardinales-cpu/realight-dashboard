@@ -220,8 +220,8 @@ export default function ConfirmSalesPage() {
     const isUndo = action === "undo";
     const edit = getPaymentEdit(sale);
     const prompt = isUndo
-      ? `Undo confirmation for ${sale.salesRefNo || sale.groupRef}?\n\nThis will return the sale to Draft and restore inventory calculations.`
-      : `Confirm sale ${sale.salesRefNo || sale.groupRef}?\n\nThis will mark the sale Paid and deduct inventory.`;
+      ? `Undo confirmation for ${sale.salesRefNo || sale.groupRef}?\n\nThis will return the sale to Draft and restore inventory calculations. Payment values will stay unchanged.`
+      : `Confirm sale ${sale.salesRefNo || sale.groupRef}?\n\nThis will deduct inventory and include the sale in reports. It will NOT mark a partial balance as paid.`;
     if (!window.confirm(prompt)) return;
     setWorkingKey(`${action}-${sale.key}`);
     setMessage("");
@@ -232,9 +232,6 @@ export default function ConfirmSalesPage() {
         body: JSON.stringify({
           action,
           ...targetPayload(sale),
-          paymentMethod: edit.paymentMethod,
-          transactionRef: edit.transactionRef,
-          cashierName: edit.cashierName,
           actor: edit.cashierName || sale.cashierName || "Admin",
         }),
       });
@@ -262,7 +259,7 @@ export default function ConfirmSalesPage() {
         <div className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
           <div>
             <h1 className="text-3xl font-semibold text-slate-900">Confirm Sales</h1>
-            <p className="mt-1 text-sm text-slate-600">Confirm an existing sale to mark it Paid and make it count for inventory deduction. Unconfirmed draft/partial sales can be voided here.</p>
+            <p className="mt-1 text-sm text-slate-600">Confirm an existing sale for inventory deduction and reporting. Payment balances are preserved unless you save a payment update.</p>
           </div>
           <button type="button" onClick={loadSales} disabled={loading} className="rounded-xl border border-slate-300 px-4 py-2 text-sm font-bold text-slate-700 disabled:opacity-60">{loading ? "Loading..." : "Refresh"}</button>
         </div>
@@ -302,7 +299,7 @@ export default function ConfirmSalesPage() {
                         </div>
                       </div>
                     </td>
-                    <td className="px-4 py-3"><div className="flex flex-col gap-2">{isConfirmed ? <button type="button" onClick={() => updateConfirmation(sale, "undo")} disabled={workingKey === `undo-${sale.key}`} className="rounded-xl bg-amber-500 px-3 py-2 text-xs font-bold text-white disabled:bg-slate-300 disabled:text-slate-600">{workingKey === `undo-${sale.key}` ? "Undoing..." : "Undo Confirm"}</button> : <><button type="button" onClick={() => updateConfirmation(sale, "confirm")} disabled={workingKey === `confirm-${sale.key}`} className="rounded-xl bg-emerald-600 px-3 py-2 text-xs font-bold text-white disabled:bg-slate-300 disabled:text-slate-600">{workingKey === `confirm-${sale.key}` ? "Confirming..." : "Confirm + Mark Paid"}</button><button type="button" onClick={() => cancelDraftSale(sale)} disabled={workingKey === `cancel-${sale.key}`} className="rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-bold text-rose-700 disabled:opacity-50">{workingKey === `cancel-${sale.key}` ? "Voiding..." : hasPayment ? "Void Sale + Payment" : "Void / Cancel"}</button></>}</div></td>
+                    <td className="px-4 py-3"><div className="flex flex-col gap-2">{isConfirmed ? <button type="button" onClick={() => updateConfirmation(sale, "undo")} disabled={workingKey === `undo-${sale.key}`} className="rounded-xl bg-amber-500 px-3 py-2 text-xs font-bold text-white disabled:bg-slate-300 disabled:text-slate-600">{workingKey === `undo-${sale.key}` ? "Undoing..." : "Undo Confirm"}</button> : <><button type="button" onClick={() => updateConfirmation(sale, "confirm")} disabled={workingKey === `confirm-${sale.key}`} className="rounded-xl bg-emerald-600 px-3 py-2 text-xs font-bold text-white disabled:bg-slate-300 disabled:text-slate-600">{workingKey === `confirm-${sale.key}` ? "Confirming..." : "Confirm Sale"}</button><button type="button" onClick={() => cancelDraftSale(sale)} disabled={workingKey === `cancel-${sale.key}`} className="rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-bold text-rose-700 disabled:opacity-50">{workingKey === `cancel-${sale.key}` ? "Voiding..." : hasPayment ? "Void Sale + Payment" : "Void / Cancel"}</button></>}</div></td>
                   </tr>
                 );
               })}
@@ -310,7 +307,7 @@ export default function ConfirmSalesPage() {
             </tbody>
           </table>
         </div>
-        <p className="mt-4 text-xs leading-6 text-slate-500">Rule: Confirmed sales use Undo Confirm first. Unconfirmed Draft or Partial sales use Void / Cancel, which voids linked payments and keeps no inventory/report impact.</p>
+        <p className="mt-4 text-xs leading-6 text-slate-500">Rule: Confirming deducts inventory and includes the sale in reports. It does not clear unpaid balances. Use Save in Payment Edit or Payments page when the customer actually pays.</p>
       </div>
     </section>
   );
