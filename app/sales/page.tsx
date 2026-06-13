@@ -24,10 +24,12 @@ function customerLabel(row: CustomerRow) { return `${row.customerName}${row.phon
 function invoiceKey(row: SavedSale) { return encodeURIComponent(row.groupRef || row.salesRefNo); }
 function openInvoice(row: SavedSale) { window.open(`/invoices/${invoiceKey(row)}`, "_blank", "noopener,noreferrer"); }
 function paymentStatusFromAmounts(paid: number, total: number) { if (total <= 0 || paid <= 0) return "Pending"; return paid >= total ? "Paid" : "Partial"; }
-function today() { return new Date().toISOString().slice(0, 10); }
-function normDate(value: string) { const raw = String(value || "").trim(); if (!raw) return ""; if (/^\d{4}-\d{2}-\d{2}/.test(raw)) return raw.slice(0, 10); const parsed = new Date(raw); return Number.isNaN(parsed.getTime()) ? raw.slice(0, 10) : parsed.toISOString().slice(0, 10); }
-function toDate(value: string) { const d = new Date(`${normDate(value)}T00:00:00`); return Number.isNaN(d.getTime()) ? null : d; }
-function periodRange(mode: PeriodMode, value: string) { const base = toDate(value) || new Date(); const start = new Date(base); const end = new Date(base); if (mode === "weekly") { const day = start.getDay(); const offset = day === 0 ? -6 : 1 - day; start.setDate(start.getDate() + offset); end.setTime(start.getTime()); end.setDate(start.getDate() + 6); } if (mode === "monthly") { start.setDate(1); end.setMonth(start.getMonth() + 1, 0); } return { start: start.toISOString().slice(0, 10), end: end.toISOString().slice(0, 10) }; }
+function padDatePart(value: number) { return String(value).padStart(2, "0"); }
+function formatLocalDate(date: Date) { return `${date.getFullYear()}-${padDatePart(date.getMonth() + 1)}-${padDatePart(date.getDate())}`; }
+function today() { return formatLocalDate(new Date()); }
+function normDate(value: string) { const raw = String(value || "").trim(); if (!raw) return ""; if (/^\d{4}-\d{2}-\d{2}/.test(raw)) return raw.slice(0, 10); const parsed = new Date(raw); return Number.isNaN(parsed.getTime()) ? raw.slice(0, 10) : formatLocalDate(parsed); }
+function toDate(value: string) { const d = normDate(value); const [year, month, day] = d.split("-").map(Number); if (!year || !month || !day) return null; return new Date(year, month - 1, day); }
+function periodRange(mode: PeriodMode, value: string) { const base = toDate(value) || new Date(); const start = new Date(base.getFullYear(), base.getMonth(), base.getDate()); const end = new Date(start); if (mode === "weekly") { const day = start.getDay(); const offset = day === 0 ? -6 : 1 - day; start.setDate(start.getDate() + offset); end.setTime(start.getTime()); end.setDate(start.getDate() + 6); } if (mode === "monthly") { start.setDate(1); end.setTime(start.getTime()); end.setMonth(start.getMonth() + 1, 0); } return { start: formatLocalDate(start), end: formatLocalDate(end) }; }
 function inPeriod(date: string, start: string, end: string) { const d = normDate(date); return d >= start && d <= end; }
 function titleForMode(mode: PeriodMode) { if (mode === "weekly") return "Weekly"; if (mode === "monthly") return "Monthly"; return "Daily"; }
 
