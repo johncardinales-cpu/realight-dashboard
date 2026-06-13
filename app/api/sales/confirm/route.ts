@@ -104,7 +104,7 @@ async function appendAuditLog(sheets: any, entry: { action: string; recordId: st
 }
 
 async function readSalesRows(sheets: any) {
-  const response = await sheets.spreadsheets.values.get({ spreadsheetId: SHEET_ID, range: `${SALES_SHEET}!A:Y` });
+  const response = await sheets.spreadsheets.values.get({ spreadsheetId: SHEET_ID, range: `${SALES_SHEET}!A:AJ` });
   return (response.data.values || []) as string[][];
 }
 
@@ -212,16 +212,23 @@ async function validateStock(sheets: any, salesRows: string[][], target: ReturnT
   return insufficient.length ? `Insufficient confirmed stock. ${insufficient.join("; ")}` : "";
 }
 
+function clampPaid(totalPaid: number, totalSale: number) {
+  return roundMoney(Math.min(Math.max(totalPaid, 0), totalSale));
+}
+
 function makePaymentUpdates(targetRows: Array<{ row: string[]; rowNumber: number }>, totalPaid: number, paymentMethod: string, transactionRef: string, cashierName: string) {
   const totalSale = roundMoney(targetRows.reduce((sum, item) => sum + toNumber(item.row[7]), 0));
-  const paidAmount = roundMoney(Math.min(Math.max(totalPaid, 0), totalSale));
+  const paidAmount = clampPaid(totalPaid, totalSale);
   const status = paymentStatusFromAmounts(paidAmount, totalSale);
 
   return targetRows.flatMap(({ row, rowNumber }, index) => {
     const lineTotal = toNumber(row[7]);
     const lineShare = totalSale > 0 ? lineTotal / totalSale : 0;
+    const previousLinesPaid = targetRows
+      .slice(0, index)
+      .reduce((sum, item) => sum + roundMoney(paidAmount * (toNumber(item.row[7]) / totalSale)), 0);
     const linePaid = index === targetRows.length - 1
-      ? roundMoney(paidAmount - targetRows.slice(0, -1).reduce((sum, item) => sum + roundMoney(paidAmount * (toNumber(item.row[7]) / totalSale)), 0))
+      ? roundMoney(paidAmount - previousLinesPaid)
       : roundMoney(paidAmount * lineShare);
     const lineBalance = roundMoney(Math.max(lineTotal - linePaid, 0));
     return [
@@ -256,8 +263,8 @@ export async function PATCH(req: Request) {
       const transactionRef = safeText(body?.transactionRef || target.transactionRef);
       const cashierName = safeText(body?.cashierName || target.cashierName || actor);
       const updateData = makePaymentUpdates(targetRows, requestedPaid, paymentMethod, transactionRef, cashierName);
-      const finalStatus = paymentStatusFromAmounts(requestedPaid, target.totalSale);
-      const finalPaid = roundMoney(Math.min(Math.max(requestedPaid, 0), target.totalSale));
+      const finalPaid = clampPaid(requestedPaid, target.totalSale);
+      const finalStatus = paymentStatusFromAmounts(finalPaid, target.totalSale);
       const finalBalance = roundMoney(Math.max(target.totalSale - finalPaid, 0));
 
       await sheets.spreadsheets.values.batchUpdate({ spreadsheetId: SHEET_ID, requestBody: { valueInputOption: "USER_ENTERED", data: updateData } });
@@ -291,7 +298,7 @@ export async function PATCH(req: Request) {
     }
 
     if (normalizedSaleStatus === "confirmed") return NextResponse.json({ ok: true, message: "Sale is already confirmed", sale: target });
-    if (normalizedSaleStatus === "cancelled") return NextResponse.json({ error: "Cancelled sales cannot be confirmed" }, { status: 400 });
+    if (["cancelled", "canceled", "voided"].includes(normalizedSaleStatus)) return NextResponse.json({ error: "Cancelled or voided sales cannot be confirmed" }, { status: 400 });
 
     const stockError = await validateStock(sheets, salesRows, target);
     if (stockError) return NextResponse.json({ error: stockError }, { status: 409 });
@@ -300,10 +307,12 @@ export async function PATCH(req: Request) {
     const transactionRef = safeText(body?.transactionRef || target.transactionRef);
     const cashierName = safeText(body?.cashierName || target.cashierName || actor);
     const confirmedAt = new Date().toISOString();
-    const finalPaymentStatus = paymentStatusFromAmounts(target.paid, target.totalSale);
-    const finalBalance = roundMoney(Math.max(target.totalSale - target.paid, 0));
+    const requestedPaid = body?.amountPaidPhp === undefined ? target.totalSale : toNumber(body?.amountPaidPhp);
+    const finalPaid = clampPaid(requestedPaid, target.totalSale);
+    const finalPaymentStatus = paymentStatusFromAmounts(finalPaid, target.totalSale);
+    const finalBalance = roundMoney(Math.max(target.totalSale - finalPaid, 0));
     const updateData = [
-      ...makePaymentUpdates(targetRows, target.paid, paymentMethod, transactionRef, cashierName),
+      ...makePaymentUpdates(targetRows, finalPaid, paymentMethod, transactionRef, cashierName),
       ...targetRows.map(({ rowNumber }) => ({ range: `${SALES_SHEET}!U${rowNumber}:V${rowNumber}`, values: [["Confirmed", confirmedAt]] })),
     ];
 
@@ -315,14 +324,14 @@ export async function PATCH(req: Request) {
       actor,
       summary: `Confirmed sale ${target.salesRefNo || target.groupRef} with payment ${finalPaymentStatus} and balance ${finalBalance}`,
       before: { saleStatus: target.saleStatus, paymentStatus: target.paymentStatus, balance: target.balance, paid: target.paid, totalSale: target.totalSale },
-      after: { saleStatus: "Confirmed", confirmedAt, paymentStatus: finalPaymentStatus, balance: finalBalance, paid: target.paid, totalSale: target.totalSale, paymentMethod, transactionRef, cashierName },
+      after: { saleStatus: "Confirmed", confirmedAt, paymentStatus: finalPaymentStatus, balance: finalBalance, paid: finalPaid, totalSale: target.totalSale, paymentMethod, transactionRef, cashierName },
     });
 
     return NextResponse.json({
       ok: true,
       message: `Sale confirmed successfully. Payment status ${finalPaymentStatus}.`,
       confirmedAt,
-      sale: { ...target, saleStatus: "Confirmed", confirmedAt, paymentStatus: finalPaymentStatus, paid: target.paid, balance: finalBalance, paymentMethod, transactionRef, cashierName },
+      sale: { ...target, saleStatus: "Confirmed", confirmedAt, paymentStatus: finalPaymentStatus, paid: finalPaid, balance: finalBalance, paymentMethod, transactionRef, cashierName },
     });
   } catch (error: any) {
     console.error("CONFIRM SALE ERROR:", error);
