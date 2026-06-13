@@ -20,6 +20,14 @@ function moneyRound(value: number) {
   return Math.round((Number(value) || 0) * 100) / 100;
 }
 
+function paymentStatusFromTotals(paid: number, total: number) {
+  const paidAmount = moneyRound(paid);
+  const totalAmount = moneyRound(total);
+  if (totalAmount > 0 && paidAmount + 0.009 >= totalAmount) return "Paid";
+  if (paidAmount > 0) return "Partial";
+  return "Pending";
+}
+
 function parseSaleLine(row: string[]) {
   const saleDate = txt(row[0]);
   const salesRefNo = txt(row[1]);
@@ -33,8 +41,11 @@ function parseSaleLine(row: string[]) {
   const installationFeePhp = num(row[30]);
   const otherChargePhp = num(row[31]);
   const discountPhp = num(row[32]);
-  const tenderedAmountPhp = num(row[34]) || num(row[16]);
+  const amountPaidPhp = num(row[16]);
+  const balancePhp = num(row[17]);
+  const tenderedAmountPhp = num(row[34]) || amountPaidPhp;
   const changeDuePhp = num(row[35]);
+
   return {
     saleDate,
     salesRefNo,
@@ -44,18 +55,21 @@ function parseSaleLine(row: string[]) {
     qty: num(row[5]),
     unitPricePhp: num(row[6]),
     subtotalPhp: num(row[7]),
-    costPricePhp: num(row[9]),
+    costPricePhp: num(row[8]),
+    totalCostPhp: num(row[9]),
     grossProfitPhp: num(row[10]),
-    paymentStatus: txt(row[11]) || "Pending",
+    paymentStatus: txt(row[11]) || paymentStatusFromTotals(amountPaidPhp, grandTotalPhp),
+    salesperson: txt(row[12]),
+    notes: txt(row[13]),
     paymentMethod: txt(row[15]) || "Unspecified",
-    paidPhp: num(row[16]),
-    balancePhp: num(row[17]),
-    cashierName: txt(row[18]),
-    transactionRef: txt(row[19]),
+    paidPhp: amountPaidPhp,
+    balancePhp,
+    transactionRef: txt(row[18]),
+    cashierName: txt(row[19]),
     saleStatus: txt(row[20]) || "Draft",
+    confirmedAt: txt(row[21]),
     groupRef,
     saleId,
-    salesperson: txt(row[24]),
     productSubtotalPhp,
     taxAmountPhp,
     grandTotalPhp,
@@ -129,16 +143,22 @@ export async function GET(_req: Request, { params }: { params: Promise<{ saleId:
     }, { productSubtotalPhp: 0, deliveryFeePhp: 0, installationFeePhp: 0, otherChargePhp: 0, discountPhp: 0, taxAmountPhp: 0, grandTotalPhp: 0, paidPhp: 0, balancePhp: 0, grossProfitPhp: 0, tenderedAmountPhp: 0, changeDuePhp: 0 });
 
     Object.keys(totals).forEach((key) => ((totals as any)[key] = moneyRound((totals as any)[key])));
+    totals.balancePhp = moneyRound(Math.max(totals.grandTotalPhp - totals.paidPhp, totals.balancePhp, 0));
+
+    const paymentStatus = paymentStatusFromTotals(totals.paidPhp, totals.grandTotalPhp);
+    const transactionRef = saleLines.find((line) => txt(line.transactionRef))?.transactionRef || "";
+    const cashierName = saleLines.find((line) => txt(line.cashierName))?.cashierName || "";
+    const salesperson = saleLines.find((line) => txt(line.salesperson))?.salesperson || "";
 
     return NextResponse.json({
       invoiceNo: first.salesRefNo || first.groupRef || first.saleId || target,
       saleDate: first.saleDate,
       saleStatus: first.saleStatus,
-      paymentStatus: first.paymentStatus,
+      paymentStatus,
       paymentMethod: first.paymentMethod,
-      transactionRef: first.transactionRef,
-      cashierName: first.cashierName,
-      salesperson: first.salesperson,
+      transactionRef,
+      cashierName,
+      salesperson,
       customer,
       lines: saleLines,
       totals,
