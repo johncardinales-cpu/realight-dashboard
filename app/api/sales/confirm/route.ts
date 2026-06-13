@@ -43,10 +43,14 @@ function columnLetter(index: number) {
   return column;
 }
 
+function lineGrandTotal(row: string[]) {
+  return toNumber(row[28] || row[7]);
+}
+
 function paymentStatusFromAmounts(paid: number, total: number) {
   const paidAmount = roundMoney(toNumber(paid));
   const totalAmount = roundMoney(toNumber(total));
-  if (totalAmount > 0 && paidAmount >= totalAmount) return "Paid";
+  if (totalAmount > 0 && paidAmount + 0.009 >= totalAmount) return "Paid";
   if (paidAmount > 0) return "Partial";
   return "Pending";
 }
@@ -60,6 +64,25 @@ function isValidSalesRow(row: string[]) {
     toNumber(row[5]) > 0 &&
     safeText(row[0]).toLowerCase() !== "date"
   );
+}
+
+function validateRequestedPaymentStatus(requestedStatus: string, requestedPaid: number, totalSale: number, paymentMethod: string) {
+  const status = safeText(requestedStatus).toLowerCase();
+  const method = safeText(paymentMethod).toLowerCase();
+  const paid = roundMoney(requestedPaid);
+  const total = roundMoney(totalSale);
+  const balance = roundMoney(Math.max(total - paid, 0));
+
+  if (!status) return "";
+  if (!["pending", "partial", "paid"].includes(status)) return "Payment Status must be Pending, Partial, or Paid.";
+  if (status === "pending" && paid > 0) return "Payment Status is Pending but paid amount is greater than zero. Use Partial or Paid.";
+  if (status === "partial") {
+    if (paid <= 0) return "Payment Status is Partial but paid amount is zero. Enter a partial amount or use Pending.";
+    if (paid + 0.009 >= total) return "Payment Status is Partial but paid amount already covers the full total. Use Paid.";
+    if (method === "cash") return "Partial payment cannot use plain Cash in Confirm Sales. Use Installment, Mixed Payment, Bank Transfer, GCash, Maya, Check, or Credit.";
+  }
+  if (status === "paid" && paid + 0.009 < total) return `Payment Status is Paid but paid amount is short by PHP ${balance.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}. Use Partial or enter the full paid amount.`;
+  return "";
 }
 
 async function ensureSheetExists(sheets: any, title: string, headers: string[]) {
@@ -165,7 +188,7 @@ function findTargetRows(salesRows: string[][], body: any) {
 
 function summarizeTarget(targetRows: Array<{ row: string[]; rowNumber: number }>) {
   const first = targetRows[0]?.row || [];
-  const totalSale = roundMoney(targetRows.reduce((sum, item) => sum + toNumber(item.row[7]), 0));
+  const totalSale = roundMoney(targetRows.reduce((sum, item) => sum + lineGrandTotal(item.row), 0));
   const paid = roundMoney(targetRows.reduce((sum, item) => sum + toNumber(item.row[16]), 0));
   const balance = roundMoney(Math.max(totalSale - paid, 0));
   const saleStatus = safeText(first[20]) || "Draft";
@@ -217,16 +240,16 @@ function clampPaid(totalPaid: number, totalSale: number) {
 }
 
 function makePaymentUpdates(targetRows: Array<{ row: string[]; rowNumber: number }>, totalPaid: number, paymentMethod: string, transactionRef: string, cashierName: string) {
-  const totalSale = roundMoney(targetRows.reduce((sum, item) => sum + toNumber(item.row[7]), 0));
+  const totalSale = roundMoney(targetRows.reduce((sum, item) => sum + lineGrandTotal(item.row), 0));
   const paidAmount = clampPaid(totalPaid, totalSale);
   const status = paymentStatusFromAmounts(paidAmount, totalSale);
 
   return targetRows.flatMap(({ row, rowNumber }, index) => {
-    const lineTotal = toNumber(row[7]);
+    const lineTotal = lineGrandTotal(row);
     const lineShare = totalSale > 0 ? lineTotal / totalSale : 0;
     const previousLinesPaid = targetRows
       .slice(0, index)
-      .reduce((sum, item) => sum + roundMoney(paidAmount * (toNumber(item.row[7]) / totalSale)), 0);
+      .reduce((sum, item) => sum + roundMoney(paidAmount * (lineGrandTotal(item.row) / totalSale)), 0);
     const linePaid = index === targetRows.length - 1
       ? roundMoney(paidAmount - previousLinesPaid)
       : roundMoney(paidAmount * lineShare);
@@ -259,9 +282,12 @@ export async function PATCH(req: Request) {
 
     if (action === "update-payment") {
       const requestedPaid = toNumber(body?.amountPaidPhp);
+      const requestedStatus = safeText(body?.paymentStatus);
       const paymentMethod = safeText(body?.paymentMethod || target.paymentMethod);
       const transactionRef = safeText(body?.transactionRef || target.transactionRef);
       const cashierName = safeText(body?.cashierName || target.cashierName || actor);
+      const ruleError = validateRequestedPaymentStatus(requestedStatus, requestedPaid, target.totalSale, paymentMethod);
+      if (ruleError) return NextResponse.json({ error: `Payment procedure review: ${ruleError}` }, { status: 400 });
       const updateData = makePaymentUpdates(targetRows, requestedPaid, paymentMethod, transactionRef, cashierName);
       const finalPaid = clampPaid(requestedPaid, target.totalSale);
       const finalStatus = paymentStatusFromAmounts(finalPaid, target.totalSale);
