@@ -8,13 +8,15 @@ const SUPPLIER_COSTS_SHEET = "Supplier_Invoice_Costs";
 
 function txt(v: unknown) { return String(v || "").trim(); }
 function num(v: unknown) { return Number(String(v || "").replace(/[^0-9.-]/g, "")) || 0; }
-function today() { return new Date().toISOString().slice(0, 10); }
-function fmt(d: Date) { return d.toISOString().slice(0, 10); }
+function pad(n: number) { return String(n).padStart(2, "0"); }
+function localDate(d: Date) { return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`; }
+function today() { return localDate(new Date()); }
+function fmt(d: Date) { return localDate(d); }
 function key(ref: string, group: string, id?: string) { return txt(id) || txt(group) || txt(ref); }
 function finalSale(status: unknown) { return txt(status).toLowerCase() === "confirmed"; }
 function inactive(status: unknown) { return ["voided", "cancelled", "canceled"].includes(txt(status).toLowerCase()); }
 function activePayment(row: string[]) { return !inactive(row[12]) && num(row[5]) > 0; }
-function payStatus(paid: number, total: number) { if (total <= 0 || paid <= 0) return "Pending"; return paid >= total ? "Paid" : "Partial"; }
+function payStatus(paid: number, total: number) { if (total <= 0 || paid <= 0) return "Pending"; return paid + 0.009 >= total ? "Paid" : "Partial"; }
 function round(value: number) { return Math.round((Number(value) || 0) * 100) / 100; }
 function uniqueKeys(values: string[]) { return Array.from(new Set(values.map(txt).filter(Boolean))); }
 
@@ -32,12 +34,14 @@ function normDate(v: unknown) {
     if (serial > 20000 && serial < 90000) return new Date(Math.floor(serial - 25569) * 86400 * 1000).toISOString().slice(0, 10);
   }
   const parsed = new Date(s);
-  return Number.isNaN(parsed.getTime()) ? s.slice(0, 10) : parsed.toISOString().slice(0, 10);
+  return Number.isNaN(parsed.getTime()) ? s.slice(0, 10) : localDate(parsed);
 }
 
 function toDate(v: string) {
-  const d = new Date(`${normDate(v)}T00:00:00`);
-  return Number.isNaN(d.getTime()) ? null : d;
+  const d = normDate(v);
+  const [year, month, day] = d.split("-").map(Number);
+  if (!year || !month || !day) return null;
+  return new Date(year, month - 1, day);
 }
 function inRange(v: unknown, a: string, b: string) {
   const d = normDate(v);
@@ -46,8 +50,8 @@ function inRange(v: unknown, a: string, b: string) {
 function period(mode: string, value: string) {
   const base = toDate(value) || (toDate(today()) as Date);
   const m = ["daily", "weekly", "monthly"].includes(mode) ? mode : "daily";
-  const start = new Date(base);
-  const end = new Date(base);
+  const start = new Date(base.getFullYear(), base.getMonth(), base.getDate());
+  const end = new Date(start);
   if (m === "weekly") {
     const day = start.getDay();
     const off = day === 0 ? -6 : 1 - day;
@@ -57,6 +61,7 @@ function period(mode: string, value: string) {
   }
   if (m === "monthly") {
     start.setDate(1);
+    end.setTime(start.getTime());
     end.setMonth(start.getMonth() + 1, 0);
   }
   return { mode: m, startDate: fmt(start), endDate: fmt(end) };
@@ -117,6 +122,7 @@ function salesSummary(salesRows: string[][], paymentRows: string[][]) {
       totalSalePhp: 0,
       grossProfitPhp: 0,
       salesSheetPaidPhp: 0,
+      salesSheetBalancePhp: 0,
       salesSheetTenderedPhp: 0,
       initialChangeDuePhp: 0,
       initialPaymentMethod: txt(r[15]) || "Unspecified",
@@ -137,6 +143,7 @@ function salesSummary(salesRows: string[][], paymentRows: string[][]) {
     current.totalSalePhp += total;
     current.grossProfitPhp += num(r[10]);
     current.salesSheetPaidPhp += linePaid;
+    current.salesSheetBalancePhp += num(r[17]);
     current.salesSheetTenderedPhp += lineTendered;
     current.initialChangeDuePhp += num(r[35]);
     map.set(k, current);
@@ -144,7 +151,10 @@ function salesSummary(salesRows: string[][], paymentRows: string[][]) {
 
   return Array.from(map.values()).map((s) => {
     const followUpPaidPhp = round(followUpForSale(ledger, s));
-    const totalPaidPhp = round(Math.min(Math.max(s.salesSheetPaidPhp, 0), s.totalSalePhp));
+    const paidFromSheetBalance = round(Math.max(s.totalSalePhp - Math.max(s.salesSheetBalancePhp, 0), 0));
+    const paidFromSheet = round(Math.max(s.salesSheetPaidPhp, 0));
+    const paidFromSheetPlusLedger = round(Math.max(s.salesSheetPaidPhp + followUpPaidPhp, 0));
+    const totalPaidPhp = round(Math.min(Math.max(paidFromSheetBalance, paidFromSheet, paidFromSheetPlusLedger), s.totalSalePhp));
     const initialCollectionPhp = round(Math.max(totalPaidPhp - followUpPaidPhp, 0));
     const initialTenderedPhp = s.initialChangeDuePhp > 0 ? round(Math.max(s.salesSheetTenderedPhp - followUpPaidPhp, initialCollectionPhp)) : initialCollectionPhp;
     const totalTenderedPhp = round(initialTenderedPhp + followUpPaidPhp);
