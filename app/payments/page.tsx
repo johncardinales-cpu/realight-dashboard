@@ -17,6 +17,28 @@ type PaymentSummary = {
   paymentCount: number;
 };
 
+type PaymentHistory = {
+  entryType: string;
+  paymentDate: string;
+  salesRefNo: string;
+  groupRef: string;
+  customerName: string;
+  paymentMethod: string;
+  amountPaidPhp: number;
+  transactionRef: string;
+  cashierName: string;
+  notes: string;
+  paymentStatus: string;
+  totalSalePhp: number;
+  runningPaidPhp: number;
+  balanceAfterPhp: number;
+  saleStatus: string;
+  createdAt: string;
+  paymentId: string;
+  voidedAt?: string;
+  voidReason?: string;
+};
+
 const paymentMethodOptions = ["Cash", "Bank Transfer", "GCash", "Maya", "Check", "Credit", "Installment", "Mixed Payment"];
 
 function money(value: number) {
@@ -24,16 +46,20 @@ function money(value: number) {
 }
 
 function today() {
-  return new Date().toISOString().slice(0, 10);
+  const date = new Date();
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
 }
 
 function norm(value: string) {
   return String(value || "").trim().toLowerCase();
 }
 
+function isInactive(value: string) {
+  return ["voided", "cancelled", "canceled"].includes(norm(value));
+}
+
 function isOpenBalance(row: PaymentSummary) {
-  const sale = norm(row.saleStatus);
-  if (["voided", "cancelled", "canceled"].includes(sale)) return false;
+  if (isInactive(row.saleStatus)) return false;
   return Number(row.balancePhp || 0) > 0;
 }
 
@@ -47,12 +73,13 @@ function displayPaymentStatus(row: PaymentSummary) {
 
 function StatusPill({ value }: { value: string }) {
   const normalized = value.toLowerCase();
-  const color = normalized === "paid" ? "bg-emerald-50 text-emerald-700" : normalized === "partial" ? "bg-amber-50 text-amber-700" : normalized === "confirmed" ? "bg-emerald-50 text-emerald-700" : normalized === "cancelled" ? "bg-rose-50 text-rose-700" : "bg-slate-100 text-slate-700";
+  const color = normalized === "paid" || normalized === "active" ? "bg-emerald-50 text-emerald-700" : normalized === "partial" ? "bg-amber-50 text-amber-700" : normalized === "confirmed" ? "bg-emerald-50 text-emerald-700" : isInactive(value) ? "bg-rose-50 text-rose-700" : "bg-slate-100 text-slate-700";
   return <span className={`rounded-full px-2.5 py-1 text-xs font-bold ${color}`}>{value}</span>;
 }
 
 export default function PaymentsPage() {
   const [rows, setRows] = useState<PaymentSummary[]>([]);
+  const [history, setHistory] = useState<PaymentHistory[]>([]);
   const [selectedKey, setSelectedKey] = useState("");
   const [paymentDate, setPaymentDate] = useState(today());
   const [paymentMethod, setPaymentMethod] = useState("Cash");
@@ -66,10 +93,16 @@ export default function PaymentsPage() {
   const [refreshing, setRefreshing] = useState(false);
 
   async function loadPayments() {
-    const res = await fetch(`/api/payments?t=${Date.now()}`, { cache: "no-store" });
-    const data = await res.json();
-    if (!res.ok) throw new Error(data?.error || "Failed to load payment balances.");
-    setRows(Array.isArray(data) ? data : []);
+    const [summaryRes, historyRes] = await Promise.all([
+      fetch(`/api/payments?t=${Date.now()}`, { cache: "no-store" }),
+      fetch(`/api/payments?history=1&t=${Date.now()}`, { cache: "no-store" }),
+    ]);
+    const summaryData = await summaryRes.json();
+    const historyData = await historyRes.json();
+    if (!summaryRes.ok) throw new Error(summaryData?.error || "Failed to load payment balances.");
+    if (!historyRes.ok) throw new Error(historyData?.error || "Failed to load payment history.");
+    setRows(Array.isArray(summaryData) ? summaryData : []);
+    setHistory(Array.isArray(historyData) ? historyData : []);
   }
 
   async function refreshPayments() {
@@ -150,11 +183,13 @@ export default function PaymentsPage() {
           <div>
             <h1 className="text-3xl font-semibold text-slate-900">Payments</h1>
             <p className="mt-1 text-sm text-slate-600">Complete partial payments by selecting an existing sale, recording the payment, and updating the balance.</p>
+            <p className="mt-1 text-xs text-slate-500">Payment history below keeps installment records for audit and receivable review.</p>
           </div>
           <button type="button" onClick={refreshPayments} disabled={refreshing} className="rounded-xl border border-slate-300 px-4 py-2 text-sm font-bold text-slate-700 disabled:cursor-not-allowed disabled:opacity-50">{refreshing ? "Refreshing..." : "Refresh"}</button>
         </div>
         {message ? <p className={`mt-3 rounded-2xl border px-4 py-3 text-sm font-semibold ${isError ? "border-rose-200 bg-rose-50 text-rose-700" : "border-emerald-200 bg-emerald-50 text-emerald-700"}`}>{message}</p> : null}
       </div>
+
       <div className="grid gap-6 xl:grid-cols-[1.2fr_0.8fr]">
         <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
           <h2 className="mb-4 text-xl font-semibold text-slate-900">Open Balances</h2>
@@ -172,6 +207,17 @@ export default function PaymentsPage() {
           <input className="w-full rounded-xl border border-slate-300 px-3 py-2" placeholder="Notes" value={notes} onChange={(e) => setNotes(e.target.value)} />
           <button type="submit" disabled={saving || !selectedSale} className="w-full rounded-xl bg-emerald-600 px-4 py-3 text-sm font-bold text-white disabled:opacity-60">{saving ? "Saving Payment..." : "Save Payment"}</button>
         </form>
+      </div>
+
+      <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
+        <h2 className="text-xl font-semibold text-slate-900">Payment / Installment History</h2>
+        <p className="mt-1 text-xs text-slate-500">Shows initial sale payments and every follow-up installment from the Payments ledger. Use this for audit trail and customer receivable history.</p>
+        <div className="mt-4 overflow-x-auto rounded-2xl border border-slate-200">
+          <table className="w-full text-sm">
+            <thead className="bg-slate-100 text-slate-700"><tr>{["Date", "Sales Ref", "Customer", "Type", "Method", "Amount", "Running Paid", "Balance After", "Status", "Reference", "Cashier", "Notes"].map((head) => <th key={head} className="px-4 py-3 text-left font-medium whitespace-nowrap">{head}</th>)}</tr></thead>
+            <tbody>{history.slice(0, 80).map((entry) => <tr key={`${entry.paymentId}-${entry.entryType}`} className="border-t border-slate-100"><td className="px-4 py-3 text-slate-700">{entry.paymentDate}</td><td className="px-4 py-3 text-slate-700">{entry.salesRefNo}</td><td className="px-4 py-3 text-slate-700">{entry.customerName}</td><td className="px-4 py-3 text-slate-700">{entry.entryType}</td><td className="px-4 py-3 text-slate-700">{entry.paymentMethod}</td><td className="px-4 py-3 font-semibold text-slate-900">{money(entry.amountPaidPhp)}</td><td className="px-4 py-3 text-slate-700">{money(entry.runningPaidPhp)}</td><td className="px-4 py-3 font-semibold text-slate-900">{money(entry.balanceAfterPhp)}</td><td className="px-4 py-3"><StatusPill value={entry.paymentStatus} /></td><td className="px-4 py-3 text-slate-700">{entry.transactionRef || "-"}</td><td className="px-4 py-3 text-slate-700">{entry.cashierName || "-"}</td><td className="px-4 py-3 text-slate-700">{entry.notes || "-"}</td></tr>)}{!history.length && <tr><td colSpan={12} className="px-4 py-8 text-center text-slate-500">No payment history yet.</td></tr>}</tbody>
+          </table>
+        </div>
       </div>
     </section>
   );
