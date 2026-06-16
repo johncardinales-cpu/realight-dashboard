@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import RecentPaymentActivities from "./recent-payment-activities";
 
 type PaymentSummary = {
   key: string;
@@ -295,6 +296,8 @@ export default function PaymentsPage() {
           </table>
         </div>
       </div>
+
+      <RecentPaymentActivities />
     </section>
   );
 }
