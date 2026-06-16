@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import RecentPaymentActivities from "./recent-payment-activities";
+import PaymentActivityRows from "./payment-activity-rows";
 
 type PaymentSummary = {
   key: string;
@@ -292,12 +292,10 @@ export default function PaymentsPage() {
         <div className="mt-4 overflow-x-auto rounded-2xl border border-slate-200">
           <table className="w-full text-sm">
             <thead className="bg-slate-100 text-slate-700"><tr>{["Date", "Sales Ref", "Customer", "Type", "Method", "Amount", "Running Paid", "Balance After", "Status", "Reference", "Cashier", "Notes"].map((head) => <th key={head} className="px-4 py-3 text-left font-medium whitespace-nowrap">{head}</th>)}</tr></thead>
-            <tbody>{filteredHistory.map((entry, index) => <tr key={`${entry.paymentId}-${entry.entryType}-${index}`} className="border-t border-slate-100"><td className="px-4 py-3 text-slate-700">{entry.paymentDate}</td><td className="px-4 py-3 text-slate-700">{entry.salesRefNo}</td><td className="px-4 py-3 text-slate-700">{entry.customerName}</td><td className="px-4 py-3 text-slate-700">{entry.entryType}</td><td className="px-4 py-3 text-slate-700">{entry.paymentMethod}</td><td className="px-4 py-3 font-semibold text-slate-900">{money(entry.amountPaidPhp)}</td><td className="px-4 py-3 text-slate-700">{money(entry.runningPaidPhp)}</td><td className="px-4 py-3 font-semibold text-slate-900">{money(entry.balanceAfterPhp)}</td><td className="px-4 py-3"><StatusPill value={entry.paymentStatus} /></td><td className="px-4 py-3 text-slate-700">{entry.transactionRef || "-"}</td><td className="px-4 py-3 text-slate-700">{entry.cashierName || "-"}</td><td className="px-4 py-3 text-slate-700">{entry.notes || "-"}</td></tr>)}{!filteredHistory.length && <tr><td colSpan={12} className="px-4 py-8 text-center text-slate-500">No payment history for this selected period.</td></tr>}</tbody>
+            <tbody>{filteredHistory.map((entry, index) => <tr key={`${entry.paymentId}-${entry.entryType}-${index}`} className="border-t border-slate-100"><td className="px-4 py-3 text-slate-700">{entry.paymentDate}</td><td className="px-4 py-3 text-slate-700">{entry.salesRefNo}</td><td className="px-4 py-3 text-slate-700">{entry.customerName}</td><td className="px-4 py-3 text-slate-700">{entry.entryType}</td><td className="px-4 py-3 text-slate-700">{entry.paymentMethod}</td><td className="px-4 py-3 font-semibold text-slate-900">{money(entry.amountPaidPhp)}</td><td className="px-4 py-3 text-slate-700">{money(entry.runningPaidPhp)}</td><td className="px-4 py-3 font-semibold text-slate-900">{money(entry.balanceAfterPhp)}</td><td className="px-4 py-3"><StatusPill value={entry.paymentStatus} /></td><td className="px-4 py-3 text-slate-700">{entry.transactionRef || "-"}</td><td className="px-4 py-3 text-slate-700">{entry.cashierName || "-"}</td><td className="px-4 py-3 text-slate-700">{entry.notes || "-"}</td></tr>)}<PaymentActivityRows start={activeHistoryRange.start} end={activeHistoryRange.end} />{!filteredHistory.length && <tr><td colSpan={12} className="px-4 py-8 text-center text-slate-500">No payment history for this selected period.</td></tr>}</tbody>
           </table>
         </div>
       </div>
-
-      <RecentPaymentActivities />
     </section>
   );
 }
