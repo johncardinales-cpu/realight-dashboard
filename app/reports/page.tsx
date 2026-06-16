@@ -3,50 +3,10 @@
 import { useEffect, useMemo, useState } from "react";
 
 type ReportMode = "daily" | "weekly" | "monthly";
-
-type MoneyBreakdown = {
-  productSubtotalPhp: number;
-  deliveryFeePhp: number;
-  installationFeePhp: number;
-  otherChargePhp: number;
-  discountPhp: number;
-  taxAmountPhp: number;
-  grandTotalPhp: number;
-  grossProfitPhp?: number;
-  linkedExpensesPhp?: number;
-  totalExpensesPhp?: number;
-  netProfitPhp?: number;
-};
-
+type MoneyBreakdown = { productSubtotalPhp: number; deliveryFeePhp: number; installationFeePhp: number; otherChargePhp: number; discountPhp: number; taxAmountPhp: number; grandTotalPhp: number; grossProfitPhp?: number; linkedExpensesPhp?: number; totalExpensesPhp?: number; netProfitPhp?: number };
 type ReportData = {
-  reportDate: string;
-  mode: ReportMode;
-  startDate: string;
-  endDate: string;
-  summary: {
-    totalSalesToday: number;
-    confirmedSalesToday: number;
-    grossProfitToday: number;
-    expensesToday: number;
-    netProfitToday: number;
-    initialCollectionsToday: number;
-    followUpCollectionsToday: number;
-    collectionsToday: number;
-    cashReceivedToday?: number;
-    changeGivenToday?: number;
-    netCashAfterChangeToday?: number;
-    newReceivablesToday: number;
-    endingReceivables: number;
-    dailySaleCount: number;
-    paymentStatusCounts: Record<string, number>;
-    productSubtotalPhp?: number;
-    deliveryFeePhp?: number;
-    installationFeePhp?: number;
-    otherChargePhp?: number;
-    discountPhp?: number;
-    taxAmountPhp?: number;
-    grandTotalPhp?: number;
-  };
+  reportDate: string; mode: ReportMode; startDate: string; endDate: string;
+  summary: { totalSalesToday: number; confirmedSalesToday: number; grossProfitToday: number; expensesToday: number; netProfitToday: number; initialCollectionsToday: number; followUpCollectionsToday: number; collectionsToday: number; cashReceivedToday?: number; changeGivenToday?: number; netCashAfterChangeToday?: number; newReceivablesToday: number; endingReceivables: number; dailySaleCount: number; paymentStatusCounts: Record<string, number>; productSubtotalPhp?: number; deliveryFeePhp?: number; installationFeePhp?: number; otherChargePhp?: number; discountPhp?: number; taxAmountPhp?: number; grandTotalPhp?: number };
   accountingBreakdown?: MoneyBreakdown;
   collectionsByMethod: Array<{ method: string; amount: number }>;
   cashByMethod?: Array<{ method: string; amount: number }>;
@@ -57,215 +17,76 @@ type ReportData = {
   dailyExpenses: Array<{ date: string; category: string; description: string; amount: number; source: string }>;
   openReceivables: Array<{ saleDate: string; salesRefNo: string; customerName: string; totalSalePhp: number; totalPaidPhp: number; tenderedAmountPhp?: number; changeDuePhp?: number; balancePhp: number; paymentStatus: string; saleStatus: string }>;
 };
+type PaymentSummary = { key: string; saleId?: string; saleDate: string; salesRefNo: string; groupRef: string; customerName: string; totalSalePhp: number; totalPaidPhp: number; balancePhp: number; paymentStatus: string; saleStatus: string };
 
-function money(value: number) {
-  return `₱${(Number(value) || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-}
+function money(value: number) { return `₱${(Number(value) || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`; }
+function today() { return new Date().toISOString().slice(0, 10); }
+function titleForMode(mode: ReportMode) { return mode === "weekly" ? "Weekly" : mode === "monthly" ? "Monthly" : "Daily"; }
+function csvEscape(value: string | number) { const text = String(value ?? ""); return `"${text.replace(/"/g, '""')}"`; }
+function downloadCsv(filename: string, rows: Array<Array<string | number>>) { const csv = rows.map((row) => row.map(csvEscape).join(",")).join("\n"); const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" }); const url = URL.createObjectURL(blob); const link = document.createElement("a"); link.href = url; link.download = filename; document.body.appendChild(link); link.click(); document.body.removeChild(link); URL.revokeObjectURL(url); }
+function norm(value: unknown) { return String(value || "").trim().toLowerCase(); }
+function inactive(value: unknown) { return ["voided", "cancelled", "canceled"].includes(norm(value)); }
+function round(value: number) { return Math.round((Number(value) || 0) * 100) / 100; }
+function approx(a: number, b: number) { return Math.abs((Number(a) || 0) - (Number(b) || 0)) < 0.05; }
+function payStatus(paid: number, total: number) { if ((Number(total) || 0) <= 0 || (Number(paid) || 0) <= 0) return "Pending"; return paid + 0.009 >= total ? "Paid" : "Partial"; }
+function inPeriod(date: string, start: string, end: string) { return date >= start && date <= end; }
+function findPaymentForSale(payments: PaymentSummary[], sale: ReportData["dailySales"][number]) { return payments.find((p) => !inactive(p.saleStatus) && norm(p.salesRefNo) === norm(sale.salesRefNo) && norm(p.customerName) === norm(sale.customerName) && approx(p.totalSalePhp, sale.totalSalePhp)) || payments.find((p) => !inactive(p.saleStatus) && norm(p.salesRefNo) === norm(sale.salesRefNo) && norm(p.customerName) === norm(sale.customerName)); }
 
-function today() {
-  return new Date().toISOString().slice(0, 10);
-}
-
-function titleForMode(mode: ReportMode) {
-  if (mode === "weekly") return "Weekly";
-  if (mode === "monthly") return "Monthly";
-  return "Daily";
-}
-
-function csvEscape(value: string | number) {
-  const text = String(value ?? "");
-  return `"${text.replace(/"/g, '""')}"`;
-}
-
-function downloadCsv(filename: string, rows: Array<Array<string | number>>) {
-  const csv = rows.map((row) => row.map(csvEscape).join(",")).join("\n");
-  const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement("a");
-  link.href = url;
-  link.download = filename;
-  document.body.appendChild(link);
-  link.click();
-  document.body.removeChild(link);
-  URL.revokeObjectURL(url);
-}
-
-function StatCard({ label, value, helper }: { label: string; value: string; helper?: string }) {
-  return (
-    <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
-      <p className="text-sm font-medium text-slate-500">{label}</p>
-      <p className="mt-2 text-2xl font-bold tracking-tight text-slate-950">{value}</p>
-      {helper ? <p className="mt-1 text-xs text-slate-500">{helper}</p> : null}
-    </div>
-  );
-}
-
-function StatusPill({ value }: { value: string }) {
-  const normalized = value.toLowerCase();
-  const color = normalized === "paid" || normalized === "confirmed"
-    ? "bg-emerald-50 text-emerald-700"
-    : normalized === "partial"
-      ? "bg-amber-50 text-amber-700"
-      : normalized === "cancelled"
-        ? "bg-rose-50 text-rose-700"
-        : "bg-slate-100 text-slate-700";
-  return <span className={`rounded-full px-2.5 py-1 text-xs font-bold ${color}`}>{value}</span>;
-}
-
-function BreakdownRow({ label, value, helper, strong = false }: { label: string; value: number; helper?: string; strong?: boolean }) {
-  return (
-    <tr className="border-t border-slate-100">
-      <td className={`px-4 py-3 ${strong ? "font-bold text-slate-950" : "text-slate-700"}`}>{label}</td>
-      <td className={`px-4 py-3 text-right ${strong ? "font-bold text-slate-950" : "font-semibold text-slate-800"}`}>{money(value)}</td>
-      <td className="px-4 py-3 text-xs text-slate-500">{helper || ""}</td>
-    </tr>
-  );
-}
+function StatCard({ label, value, helper }: { label: string; value: string; helper?: string }) { return <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm"><p className="text-sm font-medium text-slate-500">{label}</p><p className="mt-2 text-2xl font-bold tracking-tight text-slate-950">{value}</p>{helper ? <p className="mt-1 text-xs text-slate-500">{helper}</p> : null}</div>; }
+function StatusPill({ value }: { value: string }) { const normalized = value.toLowerCase(); const color = normalized === "paid" || normalized === "confirmed" ? "bg-emerald-50 text-emerald-700" : normalized === "partial" ? "bg-amber-50 text-amber-700" : normalized === "cancelled" ? "bg-rose-50 text-rose-700" : "bg-slate-100 text-slate-700"; return <span className={`rounded-full px-2.5 py-1 text-xs font-bold ${color}`}>{value}</span>; }
+function BreakdownRow({ label, value, helper, strong = false }: { label: string; value: number; helper?: string; strong?: boolean }) { return <tr className="border-t border-slate-100"><td className={`px-4 py-3 ${strong ? "font-bold text-slate-950" : "text-slate-700"}`}>{label}</td><td className={`px-4 py-3 text-right ${strong ? "font-bold text-slate-950" : "font-semibold text-slate-800"}`}>{money(value)}</td><td className="px-4 py-3 text-xs text-slate-500">{helper || ""}</td></tr>; }
 
 export default function ReportsPage() {
   const [reportDate, setReportDate] = useState(today());
   const [mode, setMode] = useState<ReportMode>("daily");
   const [data, setData] = useState<ReportData | null>(null);
+  const [payments, setPayments] = useState<PaymentSummary[]>([]);
   const [message, setMessage] = useState("");
   const [loading, setLoading] = useState(false);
 
   async function loadReport(date: string, selectedMode: ReportMode) {
-    setLoading(true);
-    setMessage("");
+    setLoading(true); setMessage("");
     try {
-      const res = await fetch(`/api/reports?date=${date}&mode=${selectedMode}`, { cache: "no-store" });
-      const json = await res.json();
-      if (!res.ok) throw new Error(json?.error || "Failed to load report");
-      setData(json);
-    } catch (error: any) {
-      setMessage(error?.message || "Failed to load report.");
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  function exportSummary() {
-    if (!data) return;
-    const s = data.summary;
-    const b = data.accountingBreakdown;
-    downloadCsv(`realights-${data.mode}-summary-${data.startDate}-to-${data.endDate}.csv`, [
-      ["Report Mode", data.mode], ["Start Date", data.startDate], ["End Date", data.endDate],
-      ["Product Sales", b?.productSubtotalPhp ?? s.productSubtotalPhp ?? 0],
-      ["Customer Delivery Fee", b?.deliveryFeePhp ?? s.deliveryFeePhp ?? 0],
-      ["Customer Installation Fee", b?.installationFeePhp ?? s.installationFeePhp ?? 0],
-      ["Other Customer Charges", b?.otherChargePhp ?? s.otherChargePhp ?? 0],
-      ["Discount", b?.discountPhp ?? s.discountPhp ?? 0],
-      ["Tax", b?.taxAmountPhp ?? s.taxAmountPhp ?? 0],
-      ["Grand Total Sales", s.totalSalesToday],
-      ["Confirmed Sales", s.confirmedSalesToday], ["Collections / Applied Payment", s.collectionsToday],
-      ["Cash Received / Tendered", s.cashReceivedToday || s.collectionsToday], ["Change Given", s.changeGivenToday || 0],
-      ["Net Cash After Change", s.netCashAfterChangeToday || s.collectionsToday], ["Gross Profit", s.grossProfitToday],
-      ["Expenses", s.expensesToday], ["Net Profit", s.netProfitToday], ["New Receivables", s.newReceivablesToday],
-      ["Ending Receivables", s.endingReceivables], ["Sale Count", s.dailySaleCount],
-    ]);
-  }
-
-  function exportSales() {
-    if (!data) return;
-    downloadCsv(`realights-${data.mode}-sales-${data.startDate}-to-${data.endDate}.csv`, [
-      ["Date", "Sales Ref", "Customer", "Product Sales", "Delivery Fee", "Installation Fee", "Other Charge", "Discount", "Tax", "Grand Total", "Paid / Applied", "Cash Received", "Change Given", "Net Cash After Change", "Balance", "Gross Profit", "Payment Status", "Sale Status"],
-      ...data.dailySales.map((sale) => [sale.saleDate, sale.salesRefNo, sale.customerName, sale.productSubtotalPhp || 0, sale.deliveryFeePhp || 0, sale.installationFeePhp || 0, sale.otherChargePhp || 0, sale.discountPhp || 0, sale.taxAmountPhp || 0, sale.totalSalePhp, sale.totalPaidPhp, sale.tenderedAmountPhp || sale.totalPaidPhp, sale.changeDuePhp || 0, sale.netCollectionPhp || sale.totalPaidPhp, sale.balancePhp, sale.grossProfitPhp, sale.paymentStatus, sale.saleStatus]),
-    ]);
-  }
-
-  function exportCollections() {
-    if (!data) return;
-    downloadCsv(`realights-${data.mode}-collections-${data.startDate}-to-${data.endDate}.csv`, [["Method", "Applied Collection"], ...data.collectionsByMethod.map((item) => [item.method, item.amount])]);
-  }
-
-  function exportReceivables() {
-    if (!data) return;
-    downloadCsv(`realights-open-receivables-${data.startDate}-to-${data.endDate}.csv`, [["Date", "Sales Ref", "Customer", "Total Sale", "Paid", "Cash Received", "Change Given", "Balance", "Payment Status", "Sale Status"], ...data.openReceivables.map((sale) => [sale.saleDate, sale.salesRefNo, sale.customerName, sale.totalSalePhp, sale.totalPaidPhp, sale.tenderedAmountPhp || sale.totalPaidPhp, sale.changeDuePhp || 0, sale.balancePhp, sale.paymentStatus, sale.saleStatus])]);
-  }
-
-  function exportExpenses() {
-    if (!data) return;
-    downloadCsv(`realights-${data.mode}-expenses-${data.startDate}-to-${data.endDate}.csv`, [["Date", "Category", "Description", "Amount", "Source"], ...data.dailyExpenses.map((expense) => [expense.date, expense.category, expense.description, expense.amount, expense.source])]);
-  }
-
-  function exportProductMovement() {
-    if (!data) return;
-    downloadCsv(`realights-${data.mode}-product-movement-${data.startDate}-to-${data.endDate}.csv`, [["Description", "Specification", "Qty Sold", "Confirmed Qty", "Total Sale", "Gross Profit"], ...data.productMovement.map((item) => [item.description, item.specification, item.qty, item.confirmedQty, item.totalSalePhp, item.grossProfitPhp])]);
+      const [reportRes, paymentRes] = await Promise.all([fetch(`/api/reports?date=${date}&mode=${selectedMode}&t=${Date.now()}`, { cache: "no-store" }), fetch(`/api/payments?t=${Date.now()}`, { cache: "no-store" })]);
+      const reportJson = await reportRes.json();
+      const paymentJson = await paymentRes.json();
+      if (!reportRes.ok) throw new Error(reportJson?.error || "Failed to load report");
+      if (!paymentRes.ok) throw new Error(paymentJson?.error || "Failed to load reconciled payments");
+      setData(reportJson);
+      setPayments(Array.isArray(paymentJson) ? paymentJson : []);
+    } catch (error: any) { setMessage(error?.message || "Failed to load report."); } finally { setLoading(false); }
   }
 
   useEffect(() => { loadReport(reportDate, mode).catch(console.error); }, []);
 
-  const summary = data?.summary;
+  const reconciledSales = useMemo(() => {
+    if (!data) return [];
+    return data.dailySales.map((sale) => {
+      const payment = findPaymentForSale(payments, sale);
+      if (!payment) return sale;
+      const totalPaidPhp = round(payment.totalPaidPhp);
+      const balancePhp = round(payment.balancePhp);
+      return { ...sale, totalPaidPhp, balancePhp, tenderedAmountPhp: totalPaidPhp, netCollectionPhp: totalPaidPhp, paymentStatus: payStatus(totalPaidPhp, payment.totalSalePhp || sale.totalSalePhp), saleStatus: payment.saleStatus || sale.saleStatus };
+    });
+  }, [data, payments]);
+
+  const reconciledOpenReceivables = useMemo(() => payments.filter((p) => !inactive(p.saleStatus) && Number(p.balancePhp || 0) > 0).map((p) => ({ saleDate: p.saleDate, salesRefNo: p.salesRefNo, customerName: p.customerName, totalSalePhp: p.totalSalePhp, totalPaidPhp: p.totalPaidPhp, tenderedAmountPhp: p.totalPaidPhp, changeDuePhp: 0, balancePhp: p.balancePhp, paymentStatus: p.paymentStatus || payStatus(p.totalPaidPhp, p.totalSalePhp), saleStatus: p.saleStatus })).sort((a, b) => b.balancePhp - a.balancePhp), [payments]);
+  const periodOpenReceivables = useMemo(() => data ? reconciledOpenReceivables.filter((r) => inPeriod(r.saleDate, data.startDate, data.endDate)) : [], [data, reconciledOpenReceivables]);
+  const reconciledTrend = useMemo(() => data ? data.dailyTrend.map((row) => ({ ...row, receivables: round(reconciledSales.filter((sale) => sale.saleDate === row.date).reduce((sum, sale) => sum + (sale.balancePhp || 0), 0)) })) : [], [data, reconciledSales]);
+  const reconciledSummary = useMemo(() => data ? { ...data.summary, newReceivablesToday: round(periodOpenReceivables.reduce((sum, sale) => sum + (sale.balancePhp || 0), 0)), endingReceivables: round(reconciledOpenReceivables.reduce((sum, sale) => sum + (sale.balancePhp || 0), 0)) } : null, [data, periodOpenReceivables, reconciledOpenReceivables]);
+
+  const summary = reconciledSummary;
   const breakdown = data?.accountingBreakdown;
   const collectionMethodTotal = useMemo(() => data?.collectionsByMethod.reduce((sum, item) => sum + item.amount, 0) || 0, [data]);
   const periodTitle = data ? `${titleForMode(data.mode)} Report: ${data.startDate} to ${data.endDate}` : "Reports";
   const customerCharges = (breakdown?.deliveryFeePhp || 0) + (breakdown?.installationFeePhp || 0) + (breakdown?.otherChargePhp || 0);
 
-  return (
-    <section className="space-y-6">
-      <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
-        <div className="flex flex-col gap-4 xl:flex-row xl:items-end xl:justify-between">
-          <div>
-            <h1 className="text-3xl font-semibold text-slate-900">Reports</h1>
-            <p className="mt-1 text-sm text-slate-600">Sales use Sale Date. Cash received, customer charges, change given, and collections are separated for audit.</p>
-            {data ? <p className="mt-2 text-sm font-semibold text-slate-800">{periodTitle}</p> : null}
-          </div>
-          <form className="flex flex-wrap gap-3" onSubmit={(e) => { e.preventDefault(); loadReport(reportDate, mode).catch(console.error); }}>
-            <select className="rounded-xl border border-slate-300 px-3 py-2" value={mode} onChange={(e) => setMode(e.target.value as ReportMode)}><option value="daily">Daily</option><option value="weekly">Weekly</option><option value="monthly">Monthly</option></select>
-            <input className="rounded-xl border border-slate-300 px-3 py-2" type="date" value={reportDate} onChange={(e) => setReportDate(e.target.value)} />
-            <button type="submit" disabled={loading} className="rounded-xl bg-emerald-600 px-4 py-2 text-sm font-bold text-white disabled:opacity-60">{loading ? "Loading..." : "Load Report"}</button>
-          </form>
-        </div>
-        {data ? <div className="mt-4 flex flex-wrap gap-2"><button type="button" onClick={exportSummary} className="rounded-xl border border-slate-300 px-3 py-2 text-xs font-bold text-slate-700 hover:bg-slate-50">Export Summary CSV</button><button type="button" onClick={exportSales} className="rounded-xl border border-slate-300 px-3 py-2 text-xs font-bold text-slate-700 hover:bg-slate-50">Export Sales CSV</button><button type="button" onClick={exportCollections} className="rounded-xl border border-slate-300 px-3 py-2 text-xs font-bold text-slate-700 hover:bg-slate-50">Export Collections CSV</button><button type="button" onClick={exportReceivables} className="rounded-xl border border-slate-300 px-3 py-2 text-xs font-bold text-slate-700 hover:bg-slate-50">Export Receivables CSV</button><button type="button" onClick={exportExpenses} className="rounded-xl border border-slate-300 px-3 py-2 text-xs font-bold text-slate-700 hover:bg-slate-50">Export Expenses CSV</button><button type="button" onClick={exportProductMovement} className="rounded-xl border border-slate-300 px-3 py-2 text-xs font-bold text-slate-700 hover:bg-slate-50">Export Product Movement CSV</button></div> : null}
-        {message ? <p className="mt-3 rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm font-semibold text-rose-700">{message}</p> : null}
-      </div>
+  function exportSummary() { if (!data || !summary) return; const s = summary; const b = data.accountingBreakdown; downloadCsv(`realights-${data.mode}-summary-${data.startDate}-to-${data.endDate}.csv`, [["Report Mode", data.mode], ["Start Date", data.startDate], ["End Date", data.endDate], ["Product Sales", b?.productSubtotalPhp ?? s.productSubtotalPhp ?? 0], ["Customer Delivery Fee", b?.deliveryFeePhp ?? s.deliveryFeePhp ?? 0], ["Customer Installation Fee", b?.installationFeePhp ?? s.installationFeePhp ?? 0], ["Other Customer Charges", b?.otherChargePhp ?? s.otherChargePhp ?? 0], ["Discount", b?.discountPhp ?? s.discountPhp ?? 0], ["Tax", b?.taxAmountPhp ?? s.taxAmountPhp ?? 0], ["Grand Total Sales", s.totalSalesToday], ["Confirmed Sales", s.confirmedSalesToday], ["Collections / Applied Payment", s.collectionsToday], ["Cash Received / Tendered", s.cashReceivedToday || s.collectionsToday], ["Change Given", s.changeGivenToday || 0], ["Net Cash After Change", s.netCashAfterChangeToday || s.collectionsToday], ["Gross Profit", s.grossProfitToday], ["Expenses", s.expensesToday], ["Net Profit", s.netProfitToday], ["New Receivables", s.newReceivablesToday], ["Ending Receivables", s.endingReceivables], ["Sale Count", s.dailySaleCount]]); }
+  function exportSales() { if (!data) return; downloadCsv(`realights-${data.mode}-sales-${data.startDate}-to-${data.endDate}.csv`, [["Date", "Sales Ref", "Customer", "Product Sales", "Delivery Fee", "Installation Fee", "Other Charge", "Discount", "Tax", "Grand Total", "Paid / Applied", "Cash Received", "Change Given", "Net Cash After Change", "Balance", "Gross Profit", "Payment Status", "Sale Status"], ...reconciledSales.map((sale) => [sale.saleDate, sale.salesRefNo, sale.customerName, sale.productSubtotalPhp || 0, sale.deliveryFeePhp || 0, sale.installationFeePhp || 0, sale.otherChargePhp || 0, sale.discountPhp || 0, sale.taxAmountPhp || 0, sale.totalSalePhp, sale.totalPaidPhp, sale.tenderedAmountPhp || sale.totalPaidPhp, sale.changeDuePhp || 0, sale.netCollectionPhp || sale.totalPaidPhp, sale.balancePhp, sale.grossProfitPhp, sale.paymentStatus, sale.saleStatus])]); }
+  function exportCollections() { if (!data) return; downloadCsv(`realights-${data.mode}-collections-${data.startDate}-to-${data.endDate}.csv`, [["Method", "Applied Collection"], ...data.collectionsByMethod.map((item) => [item.method, item.amount])]); }
+  function exportReceivables() { if (!data) return; downloadCsv(`realights-open-receivables-${data.startDate}-to-${data.endDate}.csv`, [["Date", "Sales Ref", "Customer", "Total Sale", "Paid", "Cash Received", "Change Given", "Balance", "Payment Status", "Sale Status"], ...reconciledOpenReceivables.map((sale) => [sale.saleDate, sale.salesRefNo, sale.customerName, sale.totalSalePhp, sale.totalPaidPhp, sale.tenderedAmountPhp || sale.totalPaidPhp, sale.changeDuePhp || 0, sale.balancePhp, sale.paymentStatus, sale.saleStatus])]); }
+  function exportExpenses() { if (!data) return; downloadCsv(`realights-${data.mode}-expenses-${data.startDate}-to-${data.endDate}.csv`, [["Date", "Category", "Description", "Amount", "Source"], ...data.dailyExpenses.map((expense) => [expense.date, expense.category, expense.description, expense.amount, expense.source])]); }
+  function exportProductMovement() { if (!data) return; downloadCsv(`realights-${data.mode}-product-movement-${data.startDate}-to-${data.endDate}.csv`, [["Description", "Specification", "Qty Sold", "Confirmed Qty", "Total Sale", "Gross Profit"], ...data.productMovement.map((item) => [item.description, item.specification, item.qty, item.confirmedQty, item.totalSalePhp, item.grossProfitPhp])]); }
 
-      {summary ? <>
-        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-          <StatCard label={`${titleForMode(data!.mode)} Sales`} value={money(summary.totalSalesToday)} helper={`${summary.dailySaleCount} sale transaction(s)`} />
-          <StatCard label="Customer Charges" value={money(customerCharges)} helper="Delivery + installation + other" />
-          <StatCard label={`${titleForMode(data!.mode)} Collections`} value={money(summary.collectionsToday)} helper="Applied to sales only" />
-          <StatCard label="Cash Received" value={money(summary.cashReceivedToday || summary.collectionsToday)} helper="Total tendered before change" />
-          <StatCard label="Change Given" value={money(summary.changeGivenToday || 0)} helper="Returned to customers" />
-          <StatCard label="Net Cash After Change" value={money(summary.netCashAfterChangeToday || summary.collectionsToday)} helper="Cash received minus change" />
-          <StatCard label="Gross Profit" value={money(summary.grossProfitToday)} helper="Based on sale date" />
-          <StatCard label="Net Profit" value={money(summary.netProfitToday)} helper="Gross profit minus expenses" />
-          <StatCard label="Confirmed Sales" value={money(summary.confirmedSalesToday)} helper="Inventory-affecting sales" />
-          <StatCard label="Expenses" value={money(summary.expensesToday)} helper="Manual + supplier costs" />
-          <StatCard label="New Receivables" value={money(summary.newReceivablesToday)} helper="Balances from period sales" />
-          <StatCard label="Ending Receivables" value={money(summary.endingReceivables)} helper="All open balances" />
-        </div>
-
-        {breakdown ? <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
-          <h2 className="text-xl font-semibold text-slate-900">Sales Breakdown / Customer Charges</h2>
-          <p className="mt-1 text-xs text-slate-500">Customer-paid delivery, installation, and other charges are revenue charges included in Grand Total Sales. They are not manual expenses.</p>
-          <div className="mt-4 overflow-x-auto rounded-2xl border border-slate-200">
-            <table className="w-full text-sm">
-              <thead className="bg-slate-100 text-slate-700"><tr><th className="px-4 py-3 text-left font-medium">Line</th><th className="px-4 py-3 text-right font-medium">Amount</th><th className="px-4 py-3 text-left font-medium">Audit Meaning</th></tr></thead>
-              <tbody>
-                <BreakdownRow label="Product Sales" value={breakdown.productSubtotalPhp} helper="Products/items only before customer charges" />
-                <BreakdownRow label="Customer Charges" value={customerCharges} helper="Delivery + installation + other charges billed to customer" strong />
-                <BreakdownRow label="- Delivery Fee" value={breakdown.deliveryFeePhp} helper="Customer-paid delivery charge" />
-                <BreakdownRow label="- Installation Fee" value={breakdown.installationFeePhp} helper="Customer-paid installation/service charge" />
-                <BreakdownRow label="- Other Charge" value={breakdown.otherChargePhp} helper="Other customer-billed charge" />
-                <BreakdownRow label="Discount" value={breakdown.discountPhp} helper="Deduction given to customer" />
-                <BreakdownRow label="Tax" value={breakdown.taxAmountPhp} helper="Tax or VAT charged to customer" />
-                <BreakdownRow label="Grand Total Sales" value={breakdown.grandTotalPhp} helper="Product sales + customer charges - discount + tax" strong />
-              </tbody>
-            </table>
-          </div>
-        </div> : null}
-
-        <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm"><h2 className="mb-4 text-xl font-semibold text-slate-900">Daily Trend</h2><div className="overflow-x-auto rounded-2xl border border-slate-200"><table className="w-full text-sm"><thead className="bg-slate-100 text-slate-700"><tr>{["Date", "Sales", "Collections", "Cash Received", "Change", "Expenses", "Gross Profit", "Net Profit", "Receivables"].map((h) => <th key={h} className="px-4 py-3 text-left font-medium whitespace-nowrap">{h}</th>)}</tr></thead><tbody>{data!.dailyTrend.map((row) => <tr key={row.date} className="border-t border-slate-100"><td className="px-4 py-3 text-slate-700">{row.date}</td><td className="px-4 py-3 text-slate-700">{money(row.sales)}</td><td className="px-4 py-3 text-slate-700">{money(row.collections)}</td><td className="px-4 py-3 text-slate-700">{money(row.cashReceived ?? row.collections)}</td><td className="px-4 py-3 text-slate-700">{money(row.changeGiven || 0)}</td><td className="px-4 py-3 text-slate-700">{money(row.expenses)}</td><td className="px-4 py-3 text-slate-700">{money(row.grossProfit)}</td><td className="px-4 py-3 font-semibold text-slate-900">{money(row.netProfit)}</td><td className="px-4 py-3 text-slate-700">{money(row.receivables)}</td></tr>)}{!data!.dailyTrend.length && <tr><td colSpan={9} className="px-4 py-8 text-center text-slate-500">No activity for this period.</td></tr>}</tbody></table></div></div>
-
-        <div className="grid gap-6 xl:grid-cols-2"><div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm"><h2 className="text-xl font-semibold text-slate-900">Collections Breakdown</h2><p className="mt-1 text-xs text-slate-500">Applied sale collection. Cash received and change are shown in Sales Detail.</p><div className="mt-4 overflow-x-auto rounded-2xl border border-slate-200"><table className="w-full text-sm"><thead className="bg-slate-100 text-slate-700"><tr><th className="px-4 py-3 text-left font-medium">Method</th><th className="px-4 py-3 text-left font-medium">Amount</th><th className="px-4 py-3 text-left font-medium">Share</th></tr></thead><tbody>{data!.collectionsByMethod.map((item) => <tr key={item.method} className="border-t border-slate-100"><td className="px-4 py-3 text-slate-700">{item.method}</td><td className="px-4 py-3 font-semibold text-slate-900">{money(item.amount)}</td><td className="px-4 py-3 text-slate-700">{collectionMethodTotal ? `${((item.amount / collectionMethodTotal) * 100).toFixed(1)}%` : "0%"}</td></tr>)}{!data!.collectionsByMethod.length && <tr><td colSpan={3} className="px-4 py-8 text-center text-slate-500">No collections for this period.</td></tr>}</tbody></table></div></div><div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm"><h2 className="text-xl font-semibold text-slate-900">Expense Breakdown</h2><div className="mt-4 overflow-x-auto rounded-2xl border border-slate-200"><table className="w-full text-sm"><thead className="bg-slate-100 text-slate-700"><tr><th className="px-4 py-3 text-left font-medium">Category</th><th className="px-4 py-3 text-left font-medium">Amount</th></tr></thead><tbody>{data!.expensesByCategory.map((item) => <tr key={item.category} className="border-t border-slate-100"><td className="px-4 py-3 text-slate-700">{item.category}</td><td className="px-4 py-3 font-semibold text-slate-900">{money(item.amount)}</td></tr>)}{!data!.expensesByCategory.length && <tr><td colSpan={2} className="px-4 py-8 text-center text-slate-500">No expenses for this period.</td></tr>}</tbody></table></div></div></div>
-
-        <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm"><h2 className="mb-4 text-xl font-semibold text-slate-900">Product Movement Audit</h2><div className="overflow-x-auto rounded-2xl border border-slate-200"><table className="w-full text-sm"><thead className="bg-slate-100 text-slate-700"><tr>{["Description", "Specification", "Qty Sold", "Confirmed Qty", "Total Sale", "Gross Profit"].map((h) => <th key={h} className="px-4 py-3 text-left font-medium whitespace-nowrap">{h}</th>)}</tr></thead><tbody>{data!.productMovement.map((item) => <tr key={`${item.description}-${item.specification}`} className="border-t border-slate-100"><td className="px-4 py-3 text-slate-700">{item.description}</td><td className="px-4 py-3 text-slate-700">{item.specification}</td><td className="px-4 py-3 text-slate-700">{item.qty}</td><td className="px-4 py-3 font-semibold text-slate-900">{item.confirmedQty}</td><td className="px-4 py-3 text-slate-700">{money(item.totalSalePhp)}</td><td className="px-4 py-3 text-slate-700">{money(item.grossProfitPhp)}</td></tr>)}{!data!.productMovement.length && <tr><td colSpan={6} className="px-4 py-8 text-center text-slate-500">No product movement for this period.</td></tr>}</tbody></table></div></div>
-
-        <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm"><h2 className="mb-4 text-xl font-semibold text-slate-900">Sales Detail</h2><div className="overflow-x-auto rounded-2xl border border-slate-200"><table className="w-full text-sm"><thead className="bg-slate-100 text-slate-700"><tr>{["Date", "Sales Ref", "Customer", "Product Sales", "Delivery", "Install", "Other", "Discount", "Tax", "Grand Total", "Paid / Applied", "Cash Received", "Change", "Balance", "Gross Profit", "Payment", "Sale"].map((h) => <th key={h} className="px-4 py-3 text-left font-medium whitespace-nowrap">{h}</th>)}</tr></thead><tbody>{data!.dailySales.map((sale) => <tr key={`${sale.salesRefNo}-${sale.customerName}`} className="border-t border-slate-100"><td className="px-4 py-3 text-slate-700">{sale.saleDate}</td><td className="px-4 py-3 text-slate-700">{sale.salesRefNo}</td><td className="px-4 py-3 text-slate-700">{sale.customerName}</td><td className="px-4 py-3 text-slate-700">{money(sale.productSubtotalPhp || 0)}</td><td className="px-4 py-3 text-slate-700">{money(sale.deliveryFeePhp || 0)}</td><td className="px-4 py-3 text-slate-700">{money(sale.installationFeePhp || 0)}</td><td className="px-4 py-3 text-slate-700">{money(sale.otherChargePhp || 0)}</td><td className="px-4 py-3 text-slate-700">{money(sale.discountPhp || 0)}</td><td className="px-4 py-3 text-slate-700">{money(sale.taxAmountPhp || 0)}</td><td className="px-4 py-3 font-semibold text-slate-900">{money(sale.totalSalePhp)}</td><td className="px-4 py-3 text-slate-700">{money(sale.totalPaidPhp)}</td><td className="px-4 py-3 font-semibold text-slate-900">{money(sale.tenderedAmountPhp ?? sale.totalPaidPhp)}</td><td className="px-4 py-3 text-rose-700">{money(sale.changeDuePhp || 0)}</td><td className="px-4 py-3 font-semibold text-slate-900">{money(sale.balancePhp)}</td><td className="px-4 py-3 text-slate-700">{money(sale.grossProfitPhp)}</td><td className="px-4 py-3"><StatusPill value={sale.paymentStatus} /></td><td className="px-4 py-3"><StatusPill value={sale.saleStatus} /></td></tr>)}{!data!.dailySales.length && <tr><td colSpan={17} className="px-4 py-8 text-center text-slate-500">No sales for this period.</td></tr>}</tbody></table></div></div>
-
-        <div className="grid gap-6 xl:grid-cols-2"><div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm"><h2 className="mb-4 text-xl font-semibold text-slate-900">Open Receivables</h2><div className="overflow-x-auto rounded-2xl border border-slate-200"><table className="w-full text-sm"><thead className="bg-slate-100 text-slate-700"><tr>{["Date", "Sales Ref", "Customer", "Total", "Paid", "Cash Received", "Change", "Balance", "Status"].map((h) => <th key={h} className="px-4 py-3 text-left font-medium whitespace-nowrap">{h}</th>)}</tr></thead><tbody>{data!.openReceivables.slice(0, 20).map((sale) => <tr key={`${sale.salesRefNo}-${sale.customerName}`} className="border-t border-slate-100"><td className="px-4 py-3 text-slate-700">{sale.saleDate}</td><td className="px-4 py-3 text-slate-700">{sale.salesRefNo}</td><td className="px-4 py-3 text-slate-700">{sale.customerName}</td><td className="px-4 py-3 text-slate-700">{money(sale.totalSalePhp)}</td><td className="px-4 py-3 text-slate-700">{money(sale.totalPaidPhp)}</td><td className="px-4 py-3 text-slate-700">{money(sale.tenderedAmountPhp ?? sale.totalPaidPhp)}</td><td className="px-4 py-3 text-rose-700">{money(sale.changeDuePhp || 0)}</td><td className="px-4 py-3 font-semibold text-slate-900">{money(sale.balancePhp)}</td><td className="px-4 py-3"><StatusPill value={sale.paymentStatus} /></td></tr>)}{!data!.openReceivables.length && <tr><td colSpan={9} className="px-4 py-8 text-center text-slate-500">No open receivables.</td></tr>}</tbody></table></div></div><div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm"><h2 className="mb-4 text-xl font-semibold text-slate-900">Expense Detail</h2><div className="overflow-x-auto rounded-2xl border border-slate-200"><table className="w-full text-sm"><thead className="bg-slate-100 text-slate-700"><tr>{["Date", "Category", "Description", "Amount", "Source"].map((h) => <th key={h} className="px-4 py-3 text-left font-medium whitespace-nowrap">{h}</th>)}</tr></thead><tbody>{data!.dailyExpenses.map((expense, index) => <tr key={`${expense.source}-${index}`} className="border-t border-slate-100"><td className="px-4 py-3 text-slate-700">{expense.date}</td><td className="px-4 py-3 text-slate-700">{expense.category}</td><td className="px-4 py-3 text-slate-700">{expense.description}</td><td className="px-4 py-3 font-semibold text-slate-900">{money(expense.amount)}</td><td className="px-4 py-3 text-slate-700">{expense.source}</td></tr>)}{!data!.dailyExpenses.length && <tr><td colSpan={5} className="px-4 py-8 text-center text-slate-500">No expenses for this period.</td></tr>}</tbody></table></div></div></div>
-      </> : null}
-    </section>
-  );
+  return <section className="space-y-6"><div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm"><div className="flex flex-col gap-4 xl:flex-row xl:items-end xl:justify-between"><div><h1 className="text-3xl font-semibold text-slate-900">Reports</h1><p className="mt-1 text-sm text-slate-600">Sales use Sale Date. Cash received, customer charges, change given, and collections are separated for audit.</p>{data ? <p className="mt-2 text-sm font-semibold text-slate-800">{periodTitle}</p> : null}<p className="mt-1 text-xs text-slate-500">Open Receivables are reconciled from Payments so installment balances stay open.</p></div><form className="flex flex-wrap gap-3" onSubmit={(e) => { e.preventDefault(); loadReport(reportDate, mode).catch(console.error); }}><select className="rounded-xl border border-slate-300 px-3 py-2" value={mode} onChange={(e) => setMode(e.target.value as ReportMode)}><option value="daily">Daily</option><option value="weekly">Weekly</option><option value="monthly">Monthly</option></select><input className="rounded-xl border border-slate-300 px-3 py-2" type="date" value={reportDate} onChange={(e) => setReportDate(e.target.value)} /><button type="submit" disabled={loading} className="rounded-xl bg-emerald-600 px-4 py-2 text-sm font-bold text-white disabled:opacity-60">{loading ? "Loading..." : "Load Report"}</button></form></div>{data ? <div className="mt-4 flex flex-wrap gap-2"><button type="button" onClick={exportSummary} className="rounded-xl border border-slate-300 px-3 py-2 text-xs font-bold text-slate-700 hover:bg-slate-50">Export Summary CSV</button><button type="button" onClick={exportSales} className="rounded-xl border border-slate-300 px-3 py-2 text-xs font-bold text-slate-700 hover:bg-slate-50">Export Sales CSV</button><button type="button" onClick={exportCollections} className="rounded-xl border border-slate-300 px-3 py-2 text-xs font-bold text-slate-700 hover:bg-slate-50">Export Collections CSV</button><button type="button" onClick={exportReceivables} className="rounded-xl border border-slate-300 px-3 py-2 text-xs font-bold text-slate-700 hover:bg-slate-50">Export Receivables CSV</button><button type="button" onClick={exportExpenses} className="rounded-xl border border-slate-300 px-3 py-2 text-xs font-bold text-slate-700 hover:bg-slate-50">Export Expenses CSV</button><button type="button" onClick={exportProductMovement} className="rounded-xl border border-slate-300 px-3 py-2 text-xs font-bold text-slate-700 hover:bg-slate-50">Export Product Movement CSV</button></div> : null}{message ? <p className="mt-4 rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm font-semibold text-rose-700">{message}</p> : null}</div>{summary ? <><div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4"><StatCard label={`${titleForMode(data!.mode)} Sales`} value={money(summary.totalSalesToday)} helper={`${summary.dailySaleCount} sale transaction(s)`} /><StatCard label="Customer Charges" value={money(customerCharges)} helper="Delivery + installation + other" /><StatCard label={`${titleForMode(data!.mode)} Collections`} value={money(summary.collectionsToday)} helper="Applied to sales only" /><StatCard label="Cash Received" value={money(summary.cashReceivedToday || summary.collectionsToday)} helper="Total tendered before change" /><StatCard label="Change Given" value={money(summary.changeGivenToday || 0)} helper="Returned to customers" /><StatCard label="Net Cash After Change" value={money(summary.netCashAfterChangeToday || summary.collectionsToday)} helper="Cash received minus change" /><StatCard label="Gross Profit" value={money(summary.grossProfitToday)} helper="Based on sale date" /><StatCard label="Net Profit" value={money(summary.netProfitToday)} helper="Gross profit minus expenses" /><StatCard label="Confirmed Sales" value={money(summary.confirmedSalesToday)} helper="Inventory-affecting sales" /><StatCard label="Expenses" value={money(summary.expensesToday)} helper="Manual + supplier costs" /><StatCard label="New Receivables" value={money(summary.newReceivablesToday)} helper="Reconciled open balances from period sales" /><StatCard label="Ending Receivables" value={money(summary.endingReceivables)} helper="All open balances from Payments" /></div>{breakdown ? <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm"><h2 className="text-xl font-semibold text-slate-900">Sales Breakdown / Customer Charges</h2><p className="mt-1 text-xs text-slate-500">Customer-paid delivery, installation, and other charges are revenue charges included in Grand Total Sales. They are not manual expenses.</p><div className="mt-4 overflow-x-auto rounded-2xl border border-slate-200"><table className="w-full text-sm"><thead className="bg-slate-100 text-slate-700"><tr><th className="px-4 py-3 text-left font-medium">Line</th><th className="px-4 py-3 text-right font-medium">Amount</th><th className="px-4 py-3 text-left font-medium">Audit Meaning</th></tr></thead><tbody><BreakdownRow label="Product Sales" value={breakdown.productSubtotalPhp} helper="Products/items only before customer charges" /><BreakdownRow label="Customer Charges" value={customerCharges} helper="Delivery + installation + other charges billed to customer" strong /><BreakdownRow label="- Delivery Fee" value={breakdown.deliveryFeePhp} helper="Customer-paid delivery charge" /><BreakdownRow label="- Installation Fee" value={breakdown.installationFeePhp} helper="Customer-paid installation/service charge" /><BreakdownRow label="- Other Charge" value={breakdown.otherChargePhp} helper="Other customer-billed charge" /><BreakdownRow label="Discount" value={breakdown.discountPhp} helper="Deduction given to customer" /><BreakdownRow label="Tax" value={breakdown.taxAmountPhp} helper="Tax or VAT charged to customer" /><BreakdownRow label="Grand Total Sales" value={breakdown.grandTotalPhp} helper="Product sales + customer charges - discount + tax" strong /></tbody></table></div></div> : null}<div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm"><h2 className="mb-4 text-xl font-semibold text-slate-900">Daily Trend</h2><div className="overflow-x-auto rounded-2xl border border-slate-200"><table className="w-full text-sm"><thead className="bg-slate-100 text-slate-700"><tr>{["Date", "Sales", "Collections", "Cash Received", "Change", "Expenses", "Gross Profit", "Net Profit", "Receivables"].map((h) => <th key={h} className="px-4 py-3 text-left font-medium whitespace-nowrap">{h}</th>)}</tr></thead><tbody>{reconciledTrend.map((row) => <tr key={row.date} className="border-t border-slate-100"><td className="px-4 py-3 text-slate-700">{row.date}</td><td className="px-4 py-3 text-slate-700">{money(row.sales)}</td><td className="px-4 py-3 text-slate-700">{money(row.collections)}</td><td className="px-4 py-3 text-slate-700">{money(row.cashReceived ?? row.collections)}</td><td className="px-4 py-3 text-slate-700">{money(row.changeGiven || 0)}</td><td className="px-4 py-3 text-slate-700">{money(row.expenses)}</td><td className="px-4 py-3 text-slate-700">{money(row.grossProfit)}</td><td className="px-4 py-3 font-semibold text-slate-900">{money(row.netProfit)}</td><td className="px-4 py-3 text-slate-700">{money(row.receivables)}</td></tr>)}{!reconciledTrend.length && <tr><td colSpan={9} className="px-4 py-8 text-center text-slate-500">No activity for this period.</td></tr>}</tbody></table></div></div><div className="grid gap-6 xl:grid-cols-2"><div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm"><h2 className="text-xl font-semibold text-slate-900">Collections Breakdown</h2><p className="mt-1 text-xs text-slate-500">Applied sale collection. Cash received and change are shown in Sales Detail.</p><div className="mt-4 overflow-x-auto rounded-2xl border border-slate-200"><table className="w-full text-sm"><thead className="bg-slate-100 text-slate-700"><tr><th className="px-4 py-3 text-left font-medium">Method</th><th className="px-4 py-3 text-left font-medium">Amount</th><th className="px-4 py-3 text-left font-medium">Share</th></tr></thead><tbody>{data!.collectionsByMethod.map((item) => <tr key={item.method} className="border-t border-slate-100"><td className="px-4 py-3 text-slate-700">{item.method}</td><td className="px-4 py-3 font-semibold text-slate-900">{money(item.amount)}</td><td className="px-4 py-3 text-slate-700">{collectionMethodTotal ? `${((item.amount / collectionMethodTotal) * 100).toFixed(1)}%` : "0%"}</td></tr>)}{!data!.collectionsByMethod.length && <tr><td colSpan={3} className="px-4 py-8 text-center text-slate-500">No collections for this period.</td></tr>}</tbody></table></div></div><div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm"><h2 className="text-xl font-semibold text-slate-900">Expense Breakdown</h2><div className="mt-4 overflow-x-auto rounded-2xl border border-slate-200"><table className="w-full text-sm"><thead className="bg-slate-100 text-slate-700"><tr><th className="px-4 py-3 text-left font-medium">Category</th><th className="px-4 py-3 text-left font-medium">Amount</th></tr></thead><tbody>{data!.expensesByCategory.map((item) => <tr key={item.category} className="border-t border-slate-100"><td className="px-4 py-3 text-slate-700">{item.category}</td><td className="px-4 py-3 font-semibold text-slate-900">{money(item.amount)}</td></tr>)}{!data!.expensesByCategory.length && <tr><td colSpan={2} className="px-4 py-8 text-center text-slate-500">No expenses for this period.</td></tr>}</tbody></table></div></div></div><div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm"><h2 className="mb-4 text-xl font-semibold text-slate-900">Product Movement Audit</h2><div className="overflow-x-auto rounded-2xl border border-slate-200"><table className="w-full text-sm"><thead className="bg-slate-100 text-slate-700"><tr>{["Description", "Specification", "Qty Sold", "Confirmed Qty", "Total Sale", "Gross Profit"].map((h) => <th key={h} className="px-4 py-3 text-left font-medium whitespace-nowrap">{h}</th>)}</tr></thead><tbody>{data!.productMovement.map((item) => <tr key={`${item.description}-${item.specification}`} className="border-t border-slate-100"><td className="px-4 py-3 text-slate-700">{item.description}</td><td className="px-4 py-3 text-slate-700">{item.specification}</td><td className="px-4 py-3 text-slate-700">{item.qty}</td><td className="px-4 py-3 font-semibold text-slate-900">{item.confirmedQty}</td><td className="px-4 py-3 text-slate-700">{money(item.totalSalePhp)}</td><td className="px-4 py-3 text-slate-700">{money(item.grossProfitPhp)}</td></tr>)}{!data!.productMovement.length && <tr><td colSpan={6} className="px-4 py-8 text-center text-slate-500">No product movement for this period.</td></tr>}</tbody></table></div></div><div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm"><h2 className="mb-4 text-xl font-semibold text-slate-900">Sales Detail</h2><div className="overflow-x-auto rounded-2xl border border-slate-200"><table className="w-full text-sm"><thead className="bg-slate-100 text-slate-700"><tr>{["Date", "Sales Ref", "Customer", "Product Sales", "Delivery", "Install", "Other", "Discount", "Tax", "Grand Total", "Paid / Applied", "Cash Received", "Change", "Balance", "Gross Profit", "Payment", "Sale"].map((h) => <th key={h} className="px-4 py-3 text-left font-medium whitespace-nowrap">{h}</th>)}</tr></thead><tbody>{reconciledSales.map((sale) => <tr key={`${sale.salesRefNo}-${sale.customerName}`} className="border-t border-slate-100"><td className="px-4 py-3 text-slate-700">{sale.saleDate}</td><td className="px-4 py-3 text-slate-700">{sale.salesRefNo}</td><td className="px-4 py-3 text-slate-700">{sale.customerName}</td><td className="px-4 py-3 text-slate-700">{money(sale.productSubtotalPhp || 0)}</td><td className="px-4 py-3 text-slate-700">{money(sale.deliveryFeePhp || 0)}</td><td className="px-4 py-3 text-slate-700">{money(sale.installationFeePhp || 0)}</td><td className="px-4 py-3 text-slate-700">{money(sale.otherChargePhp || 0)}</td><td className="px-4 py-3 text-slate-700">{money(sale.discountPhp || 0)}</td><td className="px-4 py-3 text-slate-700">{money(sale.taxAmountPhp || 0)}</td><td className="px-4 py-3 font-semibold text-slate-900">{money(sale.totalSalePhp)}</td><td className="px-4 py-3 text-slate-700">{money(sale.totalPaidPhp)}</td><td className="px-4 py-3 font-semibold text-slate-900">{money(sale.tenderedAmountPhp ?? sale.totalPaidPhp)}</td><td className="px-4 py-3 text-rose-700">{money(sale.changeDuePhp || 0)}</td><td className="px-4 py-3 font-semibold text-slate-900">{money(sale.balancePhp)}</td><td className="px-4 py-3 text-slate-700">{money(sale.grossProfitPhp)}</td><td className="px-4 py-3"><StatusPill value={sale.paymentStatus} /></td><td className="px-4 py-3"><StatusPill value={sale.saleStatus} /></td></tr>)}{!reconciledSales.length && <tr><td colSpan={17} className="px-4 py-8 text-center text-slate-500">No sales for this period.</td></tr>}</tbody></table></div></div><div className="grid gap-6 xl:grid-cols-2"><div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm"><h2 className="mb-4 text-xl font-semibold text-slate-900">Open Receivables</h2><div className="overflow-x-auto rounded-2xl border border-slate-200"><table className="w-full text-sm"><thead className="bg-slate-100 text-slate-700"><tr>{["Date", "Sales Ref", "Customer", "Total", "Paid", "Cash Received", "Change", "Balance", "Status"].map((h) => <th key={h} className="px-4 py-3 text-left font-medium whitespace-nowrap">{h}</th>)}</tr></thead><tbody>{reconciledOpenReceivables.slice(0, 20).map((sale) => <tr key={`${sale.salesRefNo}-${sale.customerName}`} className="border-t border-slate-100"><td className="px-4 py-3 text-slate-700">{sale.saleDate}</td><td className="px-4 py-3 text-slate-700">{sale.salesRefNo}</td><td className="px-4 py-3 text-slate-700">{sale.customerName}</td><td className="px-4 py-3 text-slate-700">{money(sale.totalSalePhp)}</td><td className="px-4 py-3 text-slate-700">{money(sale.totalPaidPhp)}</td><td className="px-4 py-3 text-slate-700">{money(sale.tenderedAmountPhp ?? sale.totalPaidPhp)}</td><td className="px-4 py-3 text-rose-700">{money(sale.changeDuePhp || 0)}</td><td className="px-4 py-3 font-semibold text-slate-900">{money(sale.balancePhp)}</td><td className="px-4 py-3"><StatusPill value={sale.paymentStatus} /></td></tr>)}{!reconciledOpenReceivables.length && <tr><td colSpan={9} className="px-4 py-8 text-center text-slate-500">No open receivables.</td></tr>}</tbody></table></div></div><div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm"><h2 className="mb-4 text-xl font-semibold text-slate-900">Expense Detail</h2><div className="overflow-x-auto rounded-2xl border border-slate-200"><table className="w-full text-sm"><thead className="bg-slate-100 text-slate-700"><tr>{["Date", "Category", "Description", "Amount", "Source"].map((h) => <th key={h} className="px-4 py-3 text-left font-medium whitespace-nowrap">{h}</th>)}</tr></thead><tbody>{data!.dailyExpenses.map((expense, index) => <tr key={`${expense.source}-${index}`} className="border-t border-slate-100"><td className="px-4 py-3 text-slate-700">{expense.date}</td><td className="px-4 py-3 text-slate-700">{expense.category}</td><td className="px-4 py-3 text-slate-700">{expense.description}</td><td className="px-4 py-3 font-semibold text-slate-900">{money(expense.amount)}</td><td className="px-4 py-3 text-slate-700">{expense.source}</td></tr>)}{!data!.dailyExpenses.length && <tr><td colSpan={5} className="px-4 py-8 text-center text-slate-500">No expenses for this period.</td></tr>}</tbody></table></div></div></div></> : null}</section>;
 }
