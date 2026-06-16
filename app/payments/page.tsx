@@ -63,6 +63,7 @@ export default function PaymentsPage() {
   const [message, setMessage] = useState("");
   const [isError, setIsError] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
 
   async function loadPayments() {
     const res = await fetch(`/api/payments?t=${Date.now()}`, { cache: "no-store" });
@@ -71,8 +72,23 @@ export default function PaymentsPage() {
     setRows(Array.isArray(data) ? data : []);
   }
 
+  async function refreshPayments() {
+    setRefreshing(true);
+    setIsError(false);
+    setMessage("Refreshing payment balances...");
+    try {
+      await loadPayments();
+      setMessage("Payment balances refreshed.");
+    } catch (error: any) {
+      setIsError(true);
+      setMessage(error?.message || "Refresh failed.");
+    } finally {
+      setRefreshing(false);
+    }
+  }
+
   useEffect(() => {
-    loadPayments().catch((error) => {
+    refreshPayments().catch((error) => {
       setIsError(true);
       setMessage(error?.message || "Failed to load payment balances.");
     });
@@ -135,7 +151,7 @@ export default function PaymentsPage() {
             <h1 className="text-3xl font-semibold text-slate-900">Payments</h1>
             <p className="mt-1 text-sm text-slate-600">Complete partial payments by selecting an existing sale, recording the payment, and updating the balance.</p>
           </div>
-          <button type="button" onClick={() => loadPayments().catch((error) => { setIsError(true); setMessage(error?.message || "Refresh failed."); })} className="rounded-xl border border-slate-300 px-4 py-2 text-sm font-bold text-slate-700">Refresh</button>
+          <button type="button" onClick={refreshPayments} disabled={refreshing} className="rounded-xl border border-slate-300 px-4 py-2 text-sm font-bold text-slate-700 disabled:cursor-not-allowed disabled:opacity-50">{refreshing ? "Refreshing..." : "Refresh"}</button>
         </div>
         {message ? <p className={`mt-3 rounded-2xl border px-4 py-3 text-sm font-semibold ${isError ? "border-rose-200 bg-rose-50 text-rose-700" : "border-emerald-200 bg-emerald-50 text-emerald-700"}`}>{message}</p> : null}
       </div>
