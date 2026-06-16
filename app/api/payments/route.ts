@@ -90,7 +90,8 @@ function buildSaleSummaries(salesRows: string[][], paymentRows: string[][]) {
     const paidFromSheetBalance = sale.salesBalancePhp > 0 ? roundMoney(Math.max(sale.grandTotalPhp - sale.salesBalancePhp, 0)) : 0;
     const paidFromSales = roundMoney(Math.max(sale.salesPaidPhp, 0));
     const paidFromLedgerOnly = roundMoney(Math.max(followUpPaid, 0));
-    const totalPaid = roundMoney(Math.min(Math.max(paidFromSheetBalance, paidFromSales, paidFromLedgerOnly), sale.grandTotalPhp));
+    const paidFromSalesPlusLedger = roundMoney(Math.max(sale.salesPaidPhp + followUpPaid, 0));
+    const totalPaid = roundMoney(Math.min(Math.max(paidFromSheetBalance, paidFromSales, paidFromLedgerOnly, paidFromSalesPlusLedger), sale.grandTotalPhp));
     const balance = roundMoney(Math.max(sale.grandTotalPhp - totalPaid, 0));
     return { ...sale, totalSalePhp: sale.grandTotalPhp, totalPaidPhp: totalPaid, legacyAmountPaidPhp: sale.salesPaidPhp, paymentLedgerPaidPhp: followUpPaid, balancePhp: balance, paymentStatus: getPaymentStatus(totalPaid, sale.grandTotalPhp), paymentCount };
   });
