@@ -39,6 +39,8 @@ type PaymentHistory = {
   voidReason?: string;
 };
 
+type HistoryMode = "daily" | "weekly" | "monthly" | "custom";
+
 const paymentMethodOptions = ["Cash", "Bank Transfer", "GCash", "Maya", "Check", "Credit", "Installment", "Mixed Payment"];
 
 function money(value: number) {
@@ -52,6 +54,40 @@ function today() {
 
 function norm(value: string) {
   return String(value || "").trim().toLowerCase();
+}
+
+function toDate(value: string) {
+  const raw = String(value || today()).slice(0, 10);
+  const [year, month, day] = raw.split("-").map(Number);
+  const date = year && month && day ? new Date(year, month - 1, day) : new Date();
+  return Number.isNaN(date.getTime()) ? new Date() : date;
+}
+
+function fmt(date: Date) {
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+}
+
+function periodRange(mode: HistoryMode, anchorValue: string) {
+  const start = toDate(anchorValue);
+  const end = new Date(start);
+  if (mode === "weekly") {
+    const day = start.getDay();
+    const offset = day === 0 ? -6 : 1 - day;
+    start.setDate(start.getDate() + offset);
+    end.setTime(start.getTime());
+    end.setDate(start.getDate() + 6);
+  }
+  if (mode === "monthly") {
+    start.setDate(1);
+    end.setTime(start.getTime());
+    end.setMonth(start.getMonth() + 1, 0);
+  }
+  return { start: fmt(start), end: fmt(end) };
+}
+
+function inRange(date: string, start: string, end: string) {
+  const d = String(date || "").slice(0, 10);
+  return d >= start && d <= end;
 }
 
 function isInactive(value: string) {
@@ -78,6 +114,7 @@ function StatusPill({ value }: { value: string }) {
 }
 
 export default function PaymentsPage() {
+  const defaultHistoryRange = periodRange("monthly", today());
   const [rows, setRows] = useState<PaymentSummary[]>([]);
   const [history, setHistory] = useState<PaymentHistory[]>([]);
   const [selectedKey, setSelectedKey] = useState("");
@@ -91,6 +128,10 @@ export default function PaymentsPage() {
   const [isError, setIsError] = useState(false);
   const [saving, setSaving] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
+  const [historyMode, setHistoryMode] = useState<HistoryMode>("monthly");
+  const [historyDate, setHistoryDate] = useState(today());
+  const [historyStart, setHistoryStart] = useState(defaultHistoryRange.start);
+  const [historyEnd, setHistoryEnd] = useState(defaultHistoryRange.end);
 
   async function loadPayments() {
     const [summaryRes, historyRes] = await Promise.all([
@@ -131,6 +172,9 @@ export default function PaymentsPage() {
   const selectedSale = useMemo(() => openBalances.find((row) => row.key === selectedKey), [openBalances, selectedKey]);
   const paymentAmount = Number(amountPaidPhp) || 0;
   const balanceAfterPayment = Math.max((selectedSale?.balancePhp || 0) - paymentAmount, 0);
+  const activeHistoryRange = useMemo(() => historyMode === "custom" ? { start: historyStart, end: historyEnd } : periodRange(historyMode, historyDate), [historyMode, historyDate, historyStart, historyEnd]);
+  const filteredHistory = useMemo(() => history.filter((entry) => inRange(entry.paymentDate, activeHistoryRange.start, activeHistoryRange.end)), [history, activeHistoryRange.start, activeHistoryRange.end]);
+  const historyTotal = useMemo(() => filteredHistory.filter((entry) => !isInactive(entry.paymentStatus)).reduce((sum, entry) => sum + Number(entry.amountPaidPhp || 0), 0), [filteredHistory]);
 
   function selectSale(key: string) {
     const sale = openBalances.find((row) => row.key === key);
@@ -149,6 +193,24 @@ export default function PaymentsPage() {
     setTransactionRef("");
     setCashierName("Admin");
     setNotes("");
+  }
+
+  function changeHistoryMode(mode: HistoryMode) {
+    setHistoryMode(mode);
+    if (mode !== "custom") {
+      const range = periodRange(mode, historyDate);
+      setHistoryStart(range.start);
+      setHistoryEnd(range.end);
+    }
+  }
+
+  function changeHistoryDate(value: string) {
+    setHistoryDate(value);
+    if (historyMode !== "custom") {
+      const range = periodRange(historyMode, value);
+      setHistoryStart(range.start);
+      setHistoryEnd(range.end);
+    }
   }
 
   async function savePayment(e: React.FormEvent) {
@@ -183,7 +245,7 @@ export default function PaymentsPage() {
           <div>
             <h1 className="text-3xl font-semibold text-slate-900">Payments</h1>
             <p className="mt-1 text-sm text-slate-600">Complete partial payments by selecting an existing sale, recording the payment, and updating the balance.</p>
-            <p className="mt-1 text-xs text-slate-500">Payment history below keeps installment records for audit and receivable review.</p>
+            <p className="mt-1 text-xs text-slate-500">Payment history is filtered so installment records stay clean and easy to audit.</p>
           </div>
           <button type="button" onClick={refreshPayments} disabled={refreshing} className="rounded-xl border border-slate-300 px-4 py-2 text-sm font-bold text-slate-700 disabled:cursor-not-allowed disabled:opacity-50">{refreshing ? "Refreshing..." : "Refresh"}</button>
         </div>
@@ -210,12 +272,26 @@ export default function PaymentsPage() {
       </div>
 
       <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
-        <h2 className="text-xl font-semibold text-slate-900">Payment / Installment History</h2>
-        <p className="mt-1 text-xs text-slate-500">Shows initial sale payments and every follow-up installment from the Payments ledger. Use this for audit trail and customer receivable history.</p>
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div>
+            <h2 className="text-xl font-semibold text-slate-900">Payment / Installment History</h2>
+            <p className="mt-1 text-xs text-slate-500">Filtered audit trail for initial payments and installment collections.</p>
+            <p className="mt-1 text-xs font-semibold text-slate-600">Showing {activeHistoryRange.start} to {activeHistoryRange.end} • {filteredHistory.length} record(s) • {money(historyTotal)} collected</p>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <select value={historyMode} onChange={(e) => changeHistoryMode(e.target.value as HistoryMode)} className="rounded-xl border border-slate-300 px-3 py-2 text-sm font-semibold text-slate-700">
+              <option value="daily">Daily</option>
+              <option value="weekly">Weekly</option>
+              <option value="monthly">Monthly</option>
+              <option value="custom">Custom Range</option>
+            </select>
+            {historyMode === "custom" ? <><input type="date" value={historyStart} onChange={(e) => setHistoryStart(e.target.value)} className="rounded-xl border border-slate-300 px-3 py-2 text-sm font-semibold text-slate-700" /><span className="text-xs font-bold text-slate-400">to</span><input type="date" value={historyEnd} onChange={(e) => setHistoryEnd(e.target.value)} className="rounded-xl border border-slate-300 px-3 py-2 text-sm font-semibold text-slate-700" /></> : <input type="date" value={historyDate} onChange={(e) => changeHistoryDate(e.target.value)} className="rounded-xl border border-slate-300 px-3 py-2 text-sm font-semibold text-slate-700" />}
+          </div>
+        </div>
         <div className="mt-4 overflow-x-auto rounded-2xl border border-slate-200">
           <table className="w-full text-sm">
             <thead className="bg-slate-100 text-slate-700"><tr>{["Date", "Sales Ref", "Customer", "Type", "Method", "Amount", "Running Paid", "Balance After", "Status", "Reference", "Cashier", "Notes"].map((head) => <th key={head} className="px-4 py-3 text-left font-medium whitespace-nowrap">{head}</th>)}</tr></thead>
-            <tbody>{history.slice(0, 80).map((entry) => <tr key={`${entry.paymentId}-${entry.entryType}`} className="border-t border-slate-100"><td className="px-4 py-3 text-slate-700">{entry.paymentDate}</td><td className="px-4 py-3 text-slate-700">{entry.salesRefNo}</td><td className="px-4 py-3 text-slate-700">{entry.customerName}</td><td className="px-4 py-3 text-slate-700">{entry.entryType}</td><td className="px-4 py-3 text-slate-700">{entry.paymentMethod}</td><td className="px-4 py-3 font-semibold text-slate-900">{money(entry.amountPaidPhp)}</td><td className="px-4 py-3 text-slate-700">{money(entry.runningPaidPhp)}</td><td className="px-4 py-3 font-semibold text-slate-900">{money(entry.balanceAfterPhp)}</td><td className="px-4 py-3"><StatusPill value={entry.paymentStatus} /></td><td className="px-4 py-3 text-slate-700">{entry.transactionRef || "-"}</td><td className="px-4 py-3 text-slate-700">{entry.cashierName || "-"}</td><td className="px-4 py-3 text-slate-700">{entry.notes || "-"}</td></tr>)}{!history.length && <tr><td colSpan={12} className="px-4 py-8 text-center text-slate-500">No payment history yet.</td></tr>}</tbody>
+            <tbody>{filteredHistory.map((entry, index) => <tr key={`${entry.paymentId}-${entry.entryType}-${index}`} className="border-t border-slate-100"><td className="px-4 py-3 text-slate-700">{entry.paymentDate}</td><td className="px-4 py-3 text-slate-700">{entry.salesRefNo}</td><td className="px-4 py-3 text-slate-700">{entry.customerName}</td><td className="px-4 py-3 text-slate-700">{entry.entryType}</td><td className="px-4 py-3 text-slate-700">{entry.paymentMethod}</td><td className="px-4 py-3 font-semibold text-slate-900">{money(entry.amountPaidPhp)}</td><td className="px-4 py-3 text-slate-700">{money(entry.runningPaidPhp)}</td><td className="px-4 py-3 font-semibold text-slate-900">{money(entry.balanceAfterPhp)}</td><td className="px-4 py-3"><StatusPill value={entry.paymentStatus} /></td><td className="px-4 py-3 text-slate-700">{entry.transactionRef || "-"}</td><td className="px-4 py-3 text-slate-700">{entry.cashierName || "-"}</td><td className="px-4 py-3 text-slate-700">{entry.notes || "-"}</td></tr>)}{!filteredHistory.length && <tr><td colSpan={12} className="px-4 py-8 text-center text-slate-500">No payment history for this selected period.</td></tr>}</tbody>
           </table>
         </div>
       </div>
