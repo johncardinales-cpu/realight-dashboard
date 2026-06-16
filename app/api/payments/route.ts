@@ -22,6 +22,7 @@ function isCancelledSale(row: string[]) { return ["cancelled", "canceled", "void
 function keysForSale(row: string[]) { return [text(row[22]), text(row[14]), text(row[1])].filter(Boolean); }
 function keysForPayment(row: string[]) { return [text(row[11]), text(row[2]), text(row[1])].filter(Boolean); }
 function normalizeDate(value: unknown) { const raw = text(value); if (!raw) return ""; if (/^\d{4}-\d{2}-\d{2}/.test(raw)) return raw.slice(0, 10); const parsed = new Date(raw); if (Number.isNaN(parsed.getTime())) return raw.slice(0, 10); return `${parsed.getFullYear()}-${String(parsed.getMonth() + 1).padStart(2, "0")}-${String(parsed.getDate()).padStart(2, "0")}`; }
+function paymentIdentity(row: string[], index: number) { return text(row[10]) || `${normalizeDate(row[0])}-${text(row[1])}-${text(row[2])}-${text(row[11])}-${toNumber(row[5])}-${index}`; }
 
 async function ensureSheetExists(sheets: any, title: string, headers: string[]) {
   const meta = await sheets.spreadsheets.get({ spreadsheetId: SHEET_ID });
@@ -96,22 +97,37 @@ function buildSaleSummaries(salesRows: string[][], paymentRows: string[][]) {
   });
 }
 
+function saleMatchesPayment(sale: any, row: string[]) {
+  const saleKeys = [sale.saleId, sale.groupRef, sale.salesRefNo, sale.key].filter(Boolean).map(norm);
+  if (keysForPayment(row).some((key) => saleKeys.includes(norm(key)))) return true;
+  return !!text(row[1]) && !!text(row[3]) && norm(row[1]) === norm(sale.salesRefNo) && norm(row[3]) === norm(sale.customerName);
+}
+
 function buildPaymentHistory(salesRows: string[][], paymentRows: string[][]) {
   const sales = buildSaleSummaries(salesRows, paymentRows);
   const entries: any[] = [];
+  const seen = new Set<string>();
   sales.forEach((sale) => {
     let runningPaid = 0;
-    const keys = [sale.saleId, sale.groupRef, sale.salesRefNo, sale.key].filter(Boolean).map(norm);
     if (sale.initialPaidPhp > 0) {
       runningPaid = roundMoney(runningPaid + sale.initialPaidPhp);
       entries.push({ entryType: "Initial Sale Payment", paymentDate: normalizeDate(sale.saleDate), salesRefNo: sale.salesRefNo, groupRef: sale.groupRef, customerName: sale.customerName, paymentMethod: sale.initialPaymentMethod || "Unspecified", amountPaidPhp: sale.initialPaidPhp, transactionRef: "", cashierName: "", notes: "Initial payment recorded with sale", paymentStatus: "Active", totalSalePhp: sale.totalSalePhp, runningPaidPhp: runningPaid, balanceAfterPhp: roundMoney(Math.max(sale.totalSalePhp - runningPaid, 0)), saleStatus: sale.saleStatus, createdAt: sale.saleDate, paymentId: `${sale.key}-INITIAL` });
     }
-    const ledgerRows = paymentRows.slice(1).filter((row) => keysForPayment(row).some((key) => keys.includes(norm(key)))).sort((a, b) => `${normalizeDate(a[0])}-${text(a[9])}-${text(a[10])}`.localeCompare(`${normalizeDate(b[0])}-${text(b[9])}-${text(b[10])}`));
-    ledgerRows.forEach((row) => {
+    const ledgerRows = paymentRows.slice(1).map((row, index) => ({ row, index })).filter(({ row }) => saleMatchesPayment(sale, row)).sort((a, b) => `${normalizeDate(a.row[0])}-${text(a.row[9])}-${text(a.row[10])}`.localeCompare(`${normalizeDate(b.row[0])}-${text(b.row[9])}-${text(b.row[10])}`));
+    ledgerRows.forEach(({ row, index }) => {
+      const id = paymentIdentity(row, index);
+      seen.add(id);
       const active = !isVoidPayment(row);
       if (active) runningPaid = roundMoney(runningPaid + toNumber(row[5]));
-      entries.push({ entryType: active ? "Installment Payment" : "Voided Payment", paymentDate: normalizeDate(row[0]), salesRefNo: sale.salesRefNo || text(row[1]), groupRef: sale.groupRef || text(row[2]), customerName: sale.customerName || text(row[3]), paymentMethod: text(row[4]) || "Unspecified", amountPaidPhp: toNumber(row[5]), transactionRef: text(row[6]), cashierName: text(row[7]), notes: text(row[8]), paymentStatus: text(row[12]) || "Active", totalSalePhp: sale.totalSalePhp, runningPaidPhp: runningPaid, balanceAfterPhp: roundMoney(Math.max(sale.totalSalePhp - runningPaid, 0)), saleStatus: sale.saleStatus, createdAt: text(row[9]), paymentId: text(row[10]), voidedAt: text(row[13]), voidReason: text(row[14]) });
+      entries.push({ entryType: active ? "Installment Payment" : "Voided Payment", paymentDate: normalizeDate(row[0]), salesRefNo: sale.salesRefNo || text(row[1]), groupRef: sale.groupRef || text(row[2]), customerName: sale.customerName || text(row[3]), paymentMethod: text(row[4]) || "Unspecified", amountPaidPhp: toNumber(row[5]), transactionRef: text(row[6]), cashierName: text(row[7]), notes: text(row[8]), paymentStatus: text(row[12]) || "Active", totalSalePhp: sale.totalSalePhp, runningPaidPhp: runningPaid, balanceAfterPhp: roundMoney(Math.max(sale.totalSalePhp - runningPaid, 0)), saleStatus: sale.saleStatus, createdAt: text(row[9]), paymentId: text(row[10]) || id, voidedAt: text(row[13]), voidReason: text(row[14]) });
     });
+  });
+  paymentRows.slice(1).forEach((row, index) => {
+    const amount = toNumber(row[5]);
+    const id = paymentIdentity(row, index);
+    if (seen.has(id) || amount <= 0) return;
+    const active = !isVoidPayment(row);
+    entries.push({ entryType: active ? "Payment Ledger Entry" : "Voided Payment", paymentDate: normalizeDate(row[0]), salesRefNo: text(row[1]), groupRef: text(row[2]), customerName: text(row[3]), paymentMethod: text(row[4]) || "Unspecified", amountPaidPhp: amount, transactionRef: text(row[6]), cashierName: text(row[7]), notes: text(row[8]) || "Unmatched payment ledger row", paymentStatus: text(row[12]) || "Active", totalSalePhp: 0, runningPaidPhp: amount, balanceAfterPhp: 0, saleStatus: "Ledger", createdAt: text(row[9]), paymentId: text(row[10]) || id, voidedAt: text(row[13]), voidReason: text(row[14]) });
   });
   return entries.sort((a, b) => `${b.paymentDate}-${b.createdAt}-${b.paymentId}`.localeCompare(`${a.paymentDate}-${a.createdAt}-${a.paymentId}`));
 }
