@@ -21,6 +21,7 @@ function isVoidPayment(row: string[]) { return ["voided", "cancelled", "canceled
 function isCancelledSale(row: string[]) { return ["cancelled", "canceled", "voided"].includes(norm(row[20])); }
 function keysForSale(row: string[]) { return [text(row[22]), text(row[14]), text(row[1])].filter(Boolean); }
 function keysForPayment(row: string[]) { return [text(row[11]), text(row[2]), text(row[1])].filter(Boolean); }
+function normalizeDate(value: unknown) { const raw = text(value); if (!raw) return ""; if (/^\d{4}-\d{2}-\d{2}/.test(raw)) return raw.slice(0, 10); const parsed = new Date(raw); if (Number.isNaN(parsed.getTime())) return raw.slice(0, 10); return `${parsed.getFullYear()}-${String(parsed.getMonth() + 1).padStart(2, "0")}-${String(parsed.getDate()).padStart(2, "0")}`; }
 
 async function ensureSheetExists(sheets: any, title: string, headers: string[]) {
   const meta = await sheets.spreadsheets.get({ spreadsheetId: SHEET_ID });
@@ -53,9 +54,7 @@ function buildPaymentTotals(paymentRows: string[][]) {
 }
 
 function firstLedgerValue(map: Map<string, number>, keys: string[]) {
-  for (const key of keys) {
-    if (map.has(key)) return map.get(key) || 0;
-  }
+  for (const key of keys) if (map.has(key)) return map.get(key) || 0;
   return 0;
 }
 
@@ -72,7 +71,7 @@ function buildSaleSummaries(salesRows: string[][], paymentRows: string[][]) {
     const key = saleKey(salesRefNo, groupRef, saleId);
     const due = lineGrandTotal(row);
     if (!key || !saleDate || !customerName || due <= 0) return;
-    const current = map.get(key) || { key, salesRefNo, groupRef, saleId, customerName, saleDate, grandTotalPhp: 0, salesPaidPhp: 0, salesBalancePhp: 0, saleStatus: text(row[20]) || "Draft", rows: [] };
+    const current = map.get(key) || { key, salesRefNo, groupRef, saleId, customerName, saleDate, grandTotalPhp: 0, salesPaidPhp: 0, salesBalancePhp: 0, saleStatus: text(row[20]) || "Draft", initialPaymentMethod: text(row[15]) || "Unspecified", rows: [] };
     current.grandTotalPhp = roundMoney(current.grandTotalPhp + due);
     current.salesPaidPhp = roundMoney(current.salesPaidPhp + toNumber(row[16]));
     current.salesBalancePhp = roundMoney(current.salesBalancePhp + toNumber(row[17]));
@@ -80,6 +79,7 @@ function buildSaleSummaries(salesRows: string[][], paymentRows: string[][]) {
     if (!current.saleId && saleId) current.saleId = saleId;
     if (!current.groupRef && groupRef) current.groupRef = groupRef;
     if (norm(current.saleStatus) !== "confirmed" && text(row[20])) current.saleStatus = text(row[20]);
+    if (!current.initialPaymentMethod && text(row[15])) current.initialPaymentMethod = text(row[15]);
     map.set(key, current);
   });
   return Array.from(map.values()).map((sale) => {
@@ -91,8 +91,29 @@ function buildSaleSummaries(salesRows: string[][], paymentRows: string[][]) {
     const paidFromLedgerOnly = roundMoney(Math.max(followUpPaid, 0));
     const totalPaid = roundMoney(Math.min(Math.max(paidFromSheetBalance, paidFromSales, paidFromLedgerOnly), sale.grandTotalPhp));
     const balance = roundMoney(Math.max(sale.grandTotalPhp - totalPaid, 0));
-    return { ...sale, totalSalePhp: sale.grandTotalPhp, totalPaidPhp: totalPaid, legacyAmountPaidPhp: sale.salesPaidPhp, paymentLedgerPaidPhp: followUpPaid, balancePhp: balance, paymentStatus: getPaymentStatus(totalPaid, sale.grandTotalPhp), paymentCount };
+    const initialPaidPhp = roundMoney(Math.max(totalPaid - followUpPaid, 0));
+    return { ...sale, totalSalePhp: sale.grandTotalPhp, totalPaidPhp: totalPaid, legacyAmountPaidPhp: sale.salesPaidPhp, paymentLedgerPaidPhp: followUpPaid, initialPaidPhp, balancePhp: balance, paymentStatus: getPaymentStatus(totalPaid, sale.grandTotalPhp), paymentCount };
   });
+}
+
+function buildPaymentHistory(salesRows: string[][], paymentRows: string[][]) {
+  const sales = buildSaleSummaries(salesRows, paymentRows);
+  const entries: any[] = [];
+  sales.forEach((sale) => {
+    let runningPaid = 0;
+    const keys = [sale.saleId, sale.groupRef, sale.salesRefNo, sale.key].filter(Boolean).map(norm);
+    if (sale.initialPaidPhp > 0) {
+      runningPaid = roundMoney(runningPaid + sale.initialPaidPhp);
+      entries.push({ entryType: "Initial Sale Payment", paymentDate: normalizeDate(sale.saleDate), salesRefNo: sale.salesRefNo, groupRef: sale.groupRef, customerName: sale.customerName, paymentMethod: sale.initialPaymentMethod || "Unspecified", amountPaidPhp: sale.initialPaidPhp, transactionRef: "", cashierName: "", notes: "Initial payment recorded with sale", paymentStatus: "Active", totalSalePhp: sale.totalSalePhp, runningPaidPhp: runningPaid, balanceAfterPhp: roundMoney(Math.max(sale.totalSalePhp - runningPaid, 0)), saleStatus: sale.saleStatus, createdAt: sale.saleDate, paymentId: `${sale.key}-INITIAL` });
+    }
+    const ledgerRows = paymentRows.slice(1).filter((row) => keysForPayment(row).some((key) => keys.includes(norm(key)))).sort((a, b) => `${normalizeDate(a[0])}-${text(a[9])}-${text(a[10])}`.localeCompare(`${normalizeDate(b[0])}-${text(b[9])}-${text(b[10])}`));
+    ledgerRows.forEach((row) => {
+      const active = !isVoidPayment(row);
+      if (active) runningPaid = roundMoney(runningPaid + toNumber(row[5]));
+      entries.push({ entryType: active ? "Installment Payment" : "Voided Payment", paymentDate: normalizeDate(row[0]), salesRefNo: sale.salesRefNo || text(row[1]), groupRef: sale.groupRef || text(row[2]), customerName: sale.customerName || text(row[3]), paymentMethod: text(row[4]) || "Unspecified", amountPaidPhp: toNumber(row[5]), transactionRef: text(row[6]), cashierName: text(row[7]), notes: text(row[8]), paymentStatus: text(row[12]) || "Active", totalSalePhp: sale.totalSalePhp, runningPaidPhp: runningPaid, balanceAfterPhp: roundMoney(Math.max(sale.totalSalePhp - runningPaid, 0)), saleStatus: sale.saleStatus, createdAt: text(row[9]), paymentId: text(row[10]), voidedAt: text(row[13]), voidReason: text(row[14]) });
+    });
+  });
+  return entries.sort((a, b) => `${b.paymentDate}-${b.createdAt}-${b.paymentId}`.localeCompare(`${a.paymentDate}-${a.createdAt}-${a.paymentId}`));
 }
 
 async function updateSalePaymentFields(sheets: any, salesRows: string[][], key: string, totalPaid: number, paymentStatus: string) {
@@ -120,11 +141,13 @@ async function voidPaymentRowsForKey(sheets: any, paymentRows: string[][], key: 
   return { voidedCount: matches.length, voidedAmount };
 }
 
-export async function GET() {
+export async function GET(req: Request) {
   try {
+    const url = new URL(req.url);
     const sheets = await getSheetsClient();
     await ensureSheetExists(sheets, AUDIT_LOG_SHEET, AUDIT_HEADERS);
     const [salesRows, paymentRows] = await Promise.all([readSalesRows(sheets), readPaymentRows(sheets)]);
+    if (url.searchParams.get("history") === "1") return NextResponse.json(buildPaymentHistory(salesRows, paymentRows));
     return NextResponse.json(buildSaleSummaries(salesRows, paymentRows));
   } catch (error: any) {
     console.error("PAYMENTS GET ERROR:", error);
