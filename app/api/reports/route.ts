@@ -14,6 +14,7 @@ const useful = (value: unknown) => {
 };
 const saleKey = (sale: any) => `${text(sale.saleDate || sale.date)}|${useful(sale.salesRefNo)}|${useful(sale.customerName)}`;
 const detailKey = (item: any) => `${text(item.saleDate || item.date)}|${useful(item.salesRefNo)}|${useful(item.customerName)}`;
+const paidStatus = (paid: number, total: number) => total > 0 && paid + 0.009 >= total ? "Paid" : paid > 0 ? "Partial" : "Pending";
 
 function groupCollectionDetails(payload: any) {
   const details = Array.isArray(payload?.collectionDetails) ? payload.collectionDetails : [];
@@ -52,25 +53,52 @@ function recalcByMethod(details: any[]) {
   return Array.from(map.entries()).map(([method, amount]) => ({ method, amount })).sort((a, b) => b.amount - a.amount);
 }
 
+function correctedFromRows(sale: any) {
+  const total = round(Number(sale.totalSalePhp || sale.grandTotalPhp || 0));
+  const byBalance = round(Math.max(total - Math.max(Number(sale.salesBalance || 0), 0), 0));
+  const byPaid = round(Number(sale.salesPaid || sale.totalPaidPhp || 0));
+  const paid = round(Math.min(Math.max(byBalance, byPaid), total));
+  const follow = round(Number(sale.followUpPaidPhp || 0));
+  const initial = round(Math.max(paid - follow, 0));
+  return {
+    ...sale,
+    initialPaidPhp: initial,
+    initialTenderedPhp: initial,
+    totalPaidPhp: paid,
+    tenderedAmountPhp: round(initial + follow),
+    totalTenderedPhp: round(initial + follow),
+    balancePhp: round(Math.max(total - paid, 0)),
+    paymentStatus: paidStatus(paid, total),
+  };
+}
+
+function mergeOpenReceivables(existing: any[], sales: any[]) {
+  const merged = new Map(existing.map((r: any) => [saleKey(r), r]));
+  sales.forEach((sale: any) => {
+    if (Number(sale.balancePhp || 0) <= 0) return;
+    merged.set(saleKey(sale), {
+      saleDate: sale.saleDate,
+      salesRefNo: sale.salesRefNo,
+      customerName: sale.customerName,
+      totalSalePhp: sale.totalSalePhp,
+      totalPaidPhp: sale.totalPaidPhp,
+      tenderedAmountPhp: sale.totalTenderedPhp,
+      changeDuePhp: sale.changeDuePhp,
+      balancePhp: sale.balancePhp,
+      paymentStatus: sale.paymentStatus,
+      saleStatus: sale.saleStatus,
+    });
+  });
+  return Array.from(merged.values()).filter((r: any) => Number(r.balancePhp || 0) > 0);
+}
+
 function reconcileToOpenBalances(payload: any) {
   const dailySales = Array.isArray(payload?.dailySales) ? payload.dailySales : [];
   const openReceivables = Array.isArray(payload?.openReceivables) ? payload.openReceivables : [];
   if (!dailySales.length) return payload;
 
-  const openByKey = new Map(openReceivables.map((r: any) => [saleKey(r), r]));
-  const correctedSales = dailySales.map((sale: any) => {
-    const open = openByKey.get(saleKey(sale));
-    if (!open) return sale;
-    return {
-      ...sale,
-      totalPaidPhp: round(Number(open.totalPaidPhp || 0)),
-      tenderedAmountPhp: round(Number(open.tenderedAmountPhp || open.totalPaidPhp || 0)),
-      totalTenderedPhp: round(Number(open.tenderedAmountPhp || open.totalPaidPhp || 0)),
-      balancePhp: round(Number(open.balancePhp || 0)),
-      paymentStatus: text(open.paymentStatus) || sale.paymentStatus,
-    };
-  });
-
+  const correctedSales = dailySales.map(correctedFromRows);
+  const correctedOpenReceivables = mergeOpenReceivables(openReceivables, correctedSales);
   const details = (Array.isArray(payload?.collectionDetails) ? payload.collectionDetails : []).map((d: any) => ({ ...d }));
   correctedSales.forEach((sale: any) => {
     const key = saleKey(sale);
@@ -90,7 +118,7 @@ function reconcileToOpenBalances(payload: any) {
   const priorCollections = round(filteredDetails.filter((d) => text(d.collectionType).toLowerCase() === "prior receivable").reduce((sum, d) => sum + Number(d.amount || 0), 0));
   const totalCollections = round(currentCollections + priorCollections);
   const balanceToday = round(correctedSales.reduce((sum: number, sale: any) => sum + Number(sale.balancePhp || 0), 0));
-  const endingReceivables = round(openReceivables.reduce((sum: number, sale: any) => sum + Number(sale.balancePhp || 0), 0));
+  const endingReceivables = round(correctedOpenReceivables.reduce((sum: number, sale: any) => sum + Number(sale.balancePhp || 0), 0));
 
   const summary = {
     ...(payload.summary || {}),
@@ -106,6 +134,7 @@ function reconcileToOpenBalances(payload: any) {
   return {
     ...payload,
     dailySales: correctedSales,
+    openReceivables: correctedOpenReceivables,
     collectionDetails: filteredDetails,
     collectionsByMethod: recalcByMethod(filteredDetails),
     cashByMethod: recalcByMethod(filteredDetails),
@@ -125,10 +154,10 @@ export async function GET(req: Request) {
     lastPayload = payload;
     lastAt = Date.now();
     return NextResponse.json(payload, { headers: { "Cache-Control": "private, max-age=15" } });
-  } catch (error: any) {
+  } catch (e: any) {
     if (lastPayload && Date.now() - lastAt < 60000) {
       return NextResponse.json({ ...lastPayload, warning: "Showing cached report because Google Sheets quota was temporarily exceeded." }, { headers: { "Cache-Control": "private, max-age=15" } });
     }
-    return NextResponse.json({ error: error?.message || "Failed to load reports" }, { status: 500 });
+    return NextResponse.json({ error: e?.message || "Failed to load reports" }, { status: 500 });
   }
 }
