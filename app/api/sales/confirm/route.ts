@@ -85,14 +85,15 @@ function validateRequestedPaymentStatus(requestedStatus: string, requestedPaid: 
   return "";
 }
 
+function isInactive(status: string) {
+  return ["cancelled", "canceled", "voided"].includes(safeText(status).toLowerCase());
+}
+
 async function ensureSheetExists(sheets: any, title: string, headers: string[]) {
   const meta = await sheets.spreadsheets.get({ spreadsheetId: SHEET_ID });
   const found = (meta.data.sheets || []).find((s: any) => s.properties?.title === title);
   if (!found) {
-    await sheets.spreadsheets.batchUpdate({
-      spreadsheetId: SHEET_ID,
-      requestBody: { requests: [{ addSheet: { properties: { title } } }] },
-    });
+    await sheets.spreadsheets.batchUpdate({ spreadsheetId: SHEET_ID, requestBody: { requests: [{ addSheet: { properties: { title } } }] } });
   }
   await sheets.spreadsheets.values.update({
     spreadsheetId: SHEET_ID,
@@ -109,20 +110,7 @@ async function appendAuditLog(sheets: any, entry: { action: string; recordId: st
     range: `${AUDIT_LOG_SHEET}!A:J`,
     valueInputOption: "USER_ENTERED",
     insertDataOption: "INSERT_ROWS",
-    requestBody: {
-      values: [[
-        makeId("AUDIT"),
-        new Date().toISOString(),
-        "Sales",
-        entry.action,
-        entry.recordId,
-        entry.recordRef,
-        entry.actor,
-        entry.summary,
-        entry.before ? JSON.stringify(entry.before) : "",
-        entry.after ? JSON.stringify(entry.after) : "",
-      ]],
-    },
+    requestBody: { values: [[makeId("AUDIT"), new Date().toISOString(), "Sales", entry.action, entry.recordId, entry.recordRef, entry.actor, entry.summary, entry.before ? JSON.stringify(entry.before) : "", entry.after ? JSON.stringify(entry.after) : ""]] },
   });
 }
 
@@ -153,7 +141,6 @@ async function getAvailableStockMap(sheets: any) {
 
 function getConfirmedSoldMap(salesRows: string[][], saleIdBeingConfirmed: string, saleKeyBeingConfirmed: string) {
   const map = new Map<string, number>();
-
   salesRows.slice(1).filter(isValidSalesRow).forEach((row) => {
     const rowSaleId = safeText(row[22]);
     const rowKey = saleKey(row[1], row[14]);
@@ -163,7 +150,6 @@ function getConfirmedSoldMap(salesRows: string[][], saleIdBeingConfirmed: string
     const key = itemKey(row[3], row[4]);
     map.set(key, (map.get(key) || 0) + toNumber(row[5]));
   });
-
   return map;
 }
 
@@ -247,12 +233,8 @@ function makePaymentUpdates(targetRows: Array<{ row: string[]; rowNumber: number
   return targetRows.flatMap(({ row, rowNumber }, index) => {
     const lineTotal = lineGrandTotal(row);
     const lineShare = totalSale > 0 ? lineTotal / totalSale : 0;
-    const previousLinesPaid = targetRows
-      .slice(0, index)
-      .reduce((sum, item) => sum + roundMoney(paidAmount * (lineGrandTotal(item.row) / totalSale)), 0);
-    const linePaid = index === targetRows.length - 1
-      ? roundMoney(paidAmount - previousLinesPaid)
-      : roundMoney(paidAmount * lineShare);
+    const previousLinesPaid = targetRows.slice(0, index).reduce((sum, item) => sum + roundMoney(paidAmount * (lineGrandTotal(item.row) / totalSale)), 0);
+    const linePaid = index === targetRows.length - 1 ? roundMoney(paidAmount - previousLinesPaid) : roundMoney(paidAmount * lineShare);
     const lineBalance = roundMoney(Math.max(lineTotal - linePaid, 0));
     return [
       { range: `${SALES_SHEET}!L${rowNumber}`, values: [[status]] },
@@ -261,13 +243,22 @@ function makePaymentUpdates(targetRows: Array<{ row: string[]; rowNumber: number
   });
 }
 
+function makeVoidUpdates(targetRows: Array<{ row: string[]; rowNumber: number }>, actor: string) {
+  return targetRows.flatMap(({ rowNumber }) => [
+    { range: `${SALES_SHEET}!L${rowNumber}`, values: [["Cancelled"]] },
+    { range: `${SALES_SHEET}!P${rowNumber}:T${rowNumber}`, values: [["Voided", 0, 0, "Voided from Confirm Sales", actor]] },
+    { range: `${SALES_SHEET}!U${rowNumber}:V${rowNumber}`, values: [["Cancelled", ""]] },
+    { range: `${SALES_SHEET}!AI${rowNumber}:AJ${rowNumber}`, values: [[0, 0]] },
+  ]);
+}
+
 export async function PATCH(req: Request) {
   try {
     const body = await req.json();
     const action = safeText(body?.action || "confirm").toLowerCase();
     const actor = safeText(body?.actor || body?.cashierName || "System");
 
-    if (!["confirm", "undo", "unconfirm", "update-payment"].includes(action)) {
+    if (!["confirm", "undo", "unconfirm", "update-payment", "void", "cancel"].includes(action)) {
       return NextResponse.json({ error: "Unsupported sales action" }, { status: 400 });
     }
 
@@ -279,6 +270,22 @@ export async function PATCH(req: Request) {
 
     const target = summarizeTarget(targetRows);
     const normalizedSaleStatus = target.saleStatus.toLowerCase();
+
+    if (action === "void" || action === "cancel") {
+      if (isInactive(target.saleStatus)) return NextResponse.json({ ok: true, message: "Sale is already cancelled or voided", sale: target });
+      const updateData = makeVoidUpdates(targetRows, actor);
+      await sheets.spreadsheets.values.batchUpdate({ spreadsheetId: SHEET_ID, requestBody: { valueInputOption: "USER_ENTERED", data: updateData } });
+      await appendAuditLog(sheets, {
+        action: "VOID_SALE_PAYMENT",
+        recordId: target.saleId || target.key,
+        recordRef: target.salesRefNo || target.groupRef,
+        actor,
+        summary: `Voided sale and payment for ${target.salesRefNo || target.groupRef} with ${targetRows.length} line(s)`,
+        before: { saleStatus: target.saleStatus, paymentStatus: target.paymentStatus, paid: target.paid, balance: target.balance, totalSale: target.totalSale },
+        after: { saleStatus: "Cancelled", paymentStatus: "Cancelled", paid: 0, balance: 0, tendered: 0, change: 0 },
+      });
+      return NextResponse.json({ ok: true, message: "Sale and payment voided successfully.", sale: { ...target, saleStatus: "Cancelled", paymentStatus: "Cancelled", paid: 0, balance: 0 } });
+    }
 
     if (action === "update-payment") {
       const requestedPaid = toNumber(body?.amountPaidPhp);
@@ -324,7 +331,7 @@ export async function PATCH(req: Request) {
     }
 
     if (normalizedSaleStatus === "confirmed") return NextResponse.json({ ok: true, message: "Sale is already confirmed", sale: target });
-    if (["cancelled", "canceled", "voided"].includes(normalizedSaleStatus)) return NextResponse.json({ error: "Cancelled or voided sales cannot be confirmed" }, { status: 400 });
+    if (isInactive(normalizedSaleStatus)) return NextResponse.json({ error: "Cancelled or voided sales cannot be confirmed" }, { status: 400 });
 
     const stockError = await validateStock(sheets, salesRows, target);
     if (stockError) return NextResponse.json({ error: stockError }, { status: 409 });
