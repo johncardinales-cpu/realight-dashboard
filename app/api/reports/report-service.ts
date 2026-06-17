@@ -243,27 +243,21 @@ function saleDateForKey(map: Map<string, string>, ...keys: string[]) {
 
 function collectionTiming(collections: any[], start: string, end: string, periodSalesTotal: number) {
   const totalCollections = round(collections.reduce((sum, c) => sum + (Number(c.amount) || 0), 0));
-  let currentPeriodSaleCollections = 0;
   let priorReceivableCollections = 0;
-  let unknownCollections = 0;
 
   collections.forEach((c) => {
     const saleDate = normDate(c.saleDate);
     const amount = Number(c.amount) || 0;
     if (saleDate && saleDate < start) priorReceivableCollections += amount;
-    else if (saleDate && saleDate >= start && saleDate <= end) currentPeriodSaleCollections += amount;
-    else unknownCollections += amount;
   });
 
   const overflowAboveSales = Math.max(totalCollections - round(periodSalesTotal), 0);
-  const unknownAsPrior = Math.min(unknownCollections, Math.max(overflowAboveSales - priorReceivableCollections, 0));
-  priorReceivableCollections += unknownAsPrior;
-  currentPeriodSaleCollections = totalCollections - priorReceivableCollections;
+  priorReceivableCollections = Math.max(priorReceivableCollections, overflowAboveSales);
 
   return {
-    currentPeriodSaleCollections: round(currentPeriodSaleCollections),
+    currentPeriodSaleCollections: round(Math.max(totalCollections - priorReceivableCollections, 0)),
     priorReceivableCollections: round(priorReceivableCollections),
-    unclassifiedCollections: round(Math.max(unknownCollections - unknownAsPrior, 0)),
+    unclassifiedCollections: 0,
   };
 }
 
