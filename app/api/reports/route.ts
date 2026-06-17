@@ -6,6 +6,11 @@ let lastAt = 0;
 
 const text = (value: unknown) => String(value || "").trim();
 const round = (value: number) => Math.round((Number(value) || 0) * 100) / 100;
+const generic = new Set(["-", "collection", "current sale", "prior receivable", "payment", "unspecified"]);
+const useful = (value: unknown) => {
+  const clean = text(value);
+  return clean && !generic.has(clean.toLowerCase()) ? clean : "";
+};
 
 function groupCollectionDetails(payload: any) {
   const details = Array.isArray(payload?.collectionDetails) ? payload.collectionDetails : [];
@@ -13,23 +18,21 @@ function groupCollectionDetails(payload: any) {
 
   const grouped = new Map<string, any>();
   details.forEach((item: any) => {
-    const source = text(item.salesRefNo) && text(item.salesRefNo) !== "-"
-      ? text(item.salesRefNo)
-      : text(item.customerName) && text(item.customerName) !== "-"
-        ? text(item.customerName)
-        : text(item.collectionType) || "Collection";
-    const method = text(item.method) || "Unspecified";
     const type = text(item.collectionType) || "Collection";
-    const key = `${source}|${method}|${type}`;
+    const method = text(item.method) || "Unspecified";
+    const source = useful(item.salesRefNo) || useful(item.customerName) || useful(item.transactionRef) || type;
+    const customer = useful(item.customerName) || source;
+    const reference = useful(item.transactionRef) || type;
+    const key = `${source}|${customer}|${method}|${type}|${reference}`;
     const current = grouped.get(key) || {
       id: key,
       date: text(item.date),
       saleDate: text(item.saleDate),
       salesRefNo: source,
-      customerName: type,
+      customerName: customer,
       method,
       amount: 0,
-      transactionRef: type,
+      transactionRef: reference,
       cashierName: text(item.cashierName),
       collectionType: type,
     };
