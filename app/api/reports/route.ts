@@ -144,7 +144,7 @@ function reconcileToOpenBalances(payload: any) {
       currentPeriodSaleCollectionsPhp: currentCollections,
       priorReceivableCollectionsPhp: priorCollections,
     },
-    dailyTrend: Array.isArray(payload.dailyTrend) ? payload.dailyTrend.map((row: any) => ({ ...row, collections: totalCollections, cashReceived: totalCollections, receivables: balanceToday })) : payload.dailyTrend,
+    dailyTrend: payload.dailyTrend,
   };
 }
 
