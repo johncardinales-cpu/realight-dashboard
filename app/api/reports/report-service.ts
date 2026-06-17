@@ -183,7 +183,8 @@ function parseAuditPaymentCollections(auditRows: string[][], paymentRows: string
     const inferredLabel = labelFromPaymentSummary(summary);
     const recordRef = txt(after.salesRefNo) || txt(r[5]) || inferredLabel;
     const customerName = txt(after.customerName) || inferredLabel || recordRef;
-    entries.push({ date, method: txt(after.paymentMethod) || "Payment", amount, tenderedAmount: amount, changeDue: 0, transactionRef: txt(after.transactionRef), cashierName: txt(r[6]), source: "Audit_Log", recordRef, salesRefNo: recordRef, customerName });
+    const auditTotalPhp = round(Math.max(num(before.totalPaidPhp) + num(before.balancePhp), num(after.totalPaidPhp) + num(after.balancePhp), 0));
+    entries.push({ date, method: txt(after.paymentMethod) || "Payment", amount, tenderedAmount: amount, changeDue: 0, transactionRef: txt(after.transactionRef), cashierName: txt(r[6]), source: "Audit_Log", recordRef, salesRefNo: recordRef, customerName, auditTotalPhp, auditBeforeBalancePhp: round(num(before.balancePhp)), auditAfterBalancePhp: round(num(after.balancePhp)), auditAfterPaidPhp: round(num(after.totalPaidPhp)) });
   });
   return entries;
 }
@@ -267,6 +268,18 @@ function saleForKey(map: Map<string, any>, ...keys: string[]) {
   return null;
 }
 
+function saleForAuditTotals(allSales: any[], entry: any) {
+  const auditTotal = round(num(entry.auditTotalPhp));
+  if (auditTotal <= 0) return null;
+  const matches = allSales.filter((s) => Math.abs(round(s.totalSalePhp) - auditTotal) < 0.02);
+  if (!matches.length) return null;
+  const afterBalance = round(num(entry.auditAfterBalancePhp));
+  const afterPaid = round(num(entry.auditAfterPaidPhp));
+  return matches.find((s) => Math.abs(round(s.balancePhp) - afterBalance) < 0.02)
+    || matches.find((s) => Math.abs(round(s.totalPaidPhp) - afterPaid) < 0.02)
+    || matches[0];
+}
+
 function collectionTiming(collections: any[], start: string, end: string, periodSalesTotal: number) {
   const totalCollections = round(collections.reduce((sum, c) => sum + (Number(c.amount) || 0), 0));
   let priorReceivableCollections = 0;
@@ -324,7 +337,7 @@ export async function getReportPayload(url: URL) {
     return { date: normDate(r[0]), saleDate: sale?.saleDate || saleDateForKey(saleDateLookup, key, txt(r[11]), txt(r[2]), txt(r[1]), txt(r[3])), salesRefNo: sale?.salesRefNo || txt(r[1]) || txt(r[3]), customerName: sale?.customerName || txt(r[3]) || txt(r[1]), method: txt(r[4]) || "Unspecified", amount: num(r[5]), tenderedAmount: num(r[5]), changeDue: 0, transactionRef: txt(r[6]), cashierName: txt(r[7]), paymentId: txt(r[10]), source: "Payments" };
   });
   const recoveredFollow = parseAuditPaymentCollections(auditRows, paymentRows).filter((r) => inRange(r.date, p.startDate, p.endDate)).map((r) => {
-    const sale = saleForKey(saleLookup, r.recordRef, r.salesRefNo, r.customerName);
+    const sale = saleForKey(saleLookup, r.recordRef, r.salesRefNo, r.customerName) || saleForAuditTotals(allSales, r);
     const fallback = txt(r.customerName || r.salesRefNo || r.recordRef);
     return { ...r, saleDate: sale?.saleDate || saleDateForKey(saleDateLookup, r.recordRef, r.salesRefNo, r.customerName), salesRefNo: sale?.salesRefNo || fallback, customerName: sale?.customerName || fallback || "-" };
   });
