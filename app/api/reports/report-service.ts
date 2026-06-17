@@ -225,6 +225,48 @@ function productMovement(rows: string[][], start: string, end: string) {
   return Array.from(m.values()).sort((a, b) => b.totalSalePhp - a.totalSalePhp);
 }
 
+function makeSaleDateLookup(allSales: any[]) {
+  const map = new Map<string, string>();
+  allSales.forEach((s) => {
+    uniq([s.key, s.saleId, s.groupRef, s.salesRefNo]).forEach((key) => map.set(key, s.saleDate));
+  });
+  return map;
+}
+
+function saleDateForKey(map: Map<string, string>, ...keys: string[]) {
+  for (const key of uniq(keys)) {
+    const found = map.get(key);
+    if (found) return found;
+  }
+  return "";
+}
+
+function collectionTiming(collections: any[], start: string, end: string, periodSalesTotal: number) {
+  const totalCollections = round(collections.reduce((sum, c) => sum + (Number(c.amount) || 0), 0));
+  let currentPeriodSaleCollections = 0;
+  let priorReceivableCollections = 0;
+  let unknownCollections = 0;
+
+  collections.forEach((c) => {
+    const saleDate = normDate(c.saleDate);
+    const amount = Number(c.amount) || 0;
+    if (saleDate && saleDate < start) priorReceivableCollections += amount;
+    else if (saleDate && saleDate >= start && saleDate <= end) currentPeriodSaleCollections += amount;
+    else unknownCollections += amount;
+  });
+
+  const overflowAboveSales = Math.max(totalCollections - round(periodSalesTotal), 0);
+  const unknownAsPrior = Math.min(unknownCollections, Math.max(overflowAboveSales - priorReceivableCollections, 0));
+  priorReceivableCollections += unknownAsPrior;
+  currentPeriodSaleCollections = totalCollections - priorReceivableCollections;
+
+  return {
+    currentPeriodSaleCollections: round(currentPeriodSaleCollections),
+    priorReceivableCollections: round(priorReceivableCollections),
+    unclassifiedCollections: round(Math.max(unknownCollections - unknownAsPrior, 0)),
+  };
+}
+
 export async function getReportPayload(url: URL) {
   const p = period(url.searchParams.get("mode") || "daily", url.searchParams.get("date") || today());
   const cacheKey = `${p.mode}:${p.startDate}:${p.endDate}`;
@@ -233,23 +275,30 @@ export async function getReportPayload(url: URL) {
   const [salesRows, paymentRows, expenseRows, supplierRows, auditRows] = await batchRead();
   const expenses = [...parseExpenses(expenseRows), ...parseSuppliers(supplierRows)];
   const allSales = attachExpenses(parseSales(salesRows, paymentRows), expenses);
+  const saleDateLookup = makeSaleDateLookup(allSales);
   const sales = allSales.filter((s) => inRange(s.saleDate, p.startDate, p.endDate));
   const periodExpenses = expenses.filter((e) => inRange(e.date, p.startDate, p.endDate));
-  const initial = sales.filter((s) => s.initialPaidPhp > 0 || s.initialTenderedPhp > 0).map((s) => ({ date: s.saleDate, method: s.initialPaymentMethod, amount: s.initialPaidPhp, tenderedAmount: s.initialTenderedPhp, changeDue: s.changeDuePhp || 0 }));
-  const follow = paymentRows.slice(1).filter((r) => !inactive(r[12]) && num(r[5]) > 0 && inRange(r[0], p.startDate, p.endDate)).map((r) => ({ date: normDate(r[0]), method: txt(r[4]) || "Unspecified", amount: num(r[5]), tenderedAmount: num(r[5]), changeDue: 0 }));
-  const recoveredFollow = parseAuditPaymentCollections(auditRows, paymentRows).filter((r) => inRange(r.date, p.startDate, p.endDate));
+  const initial = sales.filter((s) => s.initialPaidPhp > 0 || s.initialTenderedPhp > 0).map((s) => ({ date: s.saleDate, saleDate: s.saleDate, method: s.initialPaymentMethod, amount: s.initialPaidPhp, tenderedAmount: s.initialTenderedPhp, changeDue: s.changeDuePhp || 0 }));
+  const follow = paymentRows.slice(1).filter((r) => !inactive(r[12]) && num(r[5]) > 0 && inRange(r[0], p.startDate, p.endDate)).map((r) => {
+    const key = saleKey(r[1], r[2], r[11]);
+    return { date: normDate(r[0]), saleDate: saleDateForKey(saleDateLookup, key, txt(r[11]), txt(r[2]), txt(r[1])), method: txt(r[4]) || "Unspecified", amount: num(r[5]), tenderedAmount: num(r[5]), changeDue: 0 };
+  });
+  const recoveredFollow = parseAuditPaymentCollections(auditRows, paymentRows).filter((r) => inRange(r.date, p.startDate, p.endDate)).map((r) => ({ ...r, saleDate: saleDateForKey(saleDateLookup, r.recordRef) }));
   const collections = [...initial, ...follow, ...recoveredFollow];
   const sum = (arr: any[], field: string) => round(arr.reduce((a, x) => a + (Number(x[field]) || 0), 0));
   const expensesTotal = sum(periodExpenses, "amount");
   const grossProfit = sum(sales, "grossProfitPhp");
   const cashReceived = round(collections.reduce((a, x) => a + (x.tenderedAmount ?? x.amount), 0));
   const changeGiven = sum(collections, "changeDue");
+  const periodSalesTotal = sum(sales, "totalSalePhp");
+  const timing = collectionTiming(collections, p.startDate, p.endDate, periodSalesTotal);
   const summary = {
-    productSubtotalPhp: sum(sales, "productSubtotalPhp"), deliveryFeePhp: sum(sales, "deliveryFeePhp"), installationFeePhp: sum(sales, "installationFeePhp"), otherChargePhp: sum(sales, "otherChargePhp"), discountPhp: sum(sales, "discountPhp"), taxAmountPhp: sum(sales, "taxAmountPhp"), grandTotalPhp: sum(sales, "totalSalePhp"), totalSalesToday: sum(sales, "totalSalePhp"), confirmedSalesToday: sum(sales, "totalSalePhp"), grossProfitToday: grossProfit, expensesToday: expensesTotal, linkedExpensesToday: sum(sales, "linkedExpensesPhp"), unlinkedExpensesToday: periodExpenses.filter((e) => !txt(e.relatedSalesRefNo)).reduce((a, e) => a + e.amount, 0), netProfitToday: grossProfit - expensesTotal, initialCollectionsToday: sum(initial, "amount"), followUpCollectionsToday: round(sum(follow, "amount") + sum(recoveredFollow, "amount")), collectionsToday: sum(collections, "amount"), cashReceivedToday: cashReceived, changeGivenToday: changeGiven, netCashAfterChangeToday: cashReceived - changeGiven, newReceivablesToday: sum(sales, "balancePhp"), endingReceivables: sum(allSales, "balancePhp"), dailySaleCount: sales.length, paymentStatusCounts: sales.reduce((a: Record<string, number>, s) => { a[s.paymentStatus] = (a[s.paymentStatus] || 0) + 1; return a; }, {})
+    productSubtotalPhp: sum(sales, "productSubtotalPhp"), deliveryFeePhp: sum(sales, "deliveryFeePhp"), installationFeePhp: sum(sales, "installationFeePhp"), otherChargePhp: sum(sales, "otherChargePhp"), discountPhp: sum(sales, "discountPhp"), taxAmountPhp: sum(sales, "taxAmountPhp"), grandTotalPhp: periodSalesTotal, totalSalesToday: periodSalesTotal, confirmedSalesToday: periodSalesTotal, grossProfitToday: grossProfit, expensesToday: expensesTotal, linkedExpensesToday: sum(sales, "linkedExpensesPhp"), unlinkedExpensesToday: periodExpenses.filter((e) => !txt(e.relatedSalesRefNo)).reduce((a, e) => a + e.amount, 0), netProfitToday: grossProfit - expensesTotal, initialCollectionsToday: sum(initial, "amount"), followUpCollectionsToday: round(sum(follow, "amount") + sum(recoveredFollow, "amount")), currentPeriodSaleCollectionsToday: timing.currentPeriodSaleCollections, priorReceivableCollectionsToday: timing.priorReceivableCollections, unclassifiedCollectionsToday: timing.unclassifiedCollections, collectionsToday: sum(collections, "amount"), cashReceivedToday: cashReceived, changeGivenToday: changeGiven, netCashAfterChangeToday: cashReceived - changeGiven, newReceivablesToday: sum(sales, "balancePhp"), endingReceivables: sum(allSales, "balancePhp"), dailySaleCount: sales.length, paymentStatusCounts: sales.reduce((a: Record<string, number>, s) => { a[s.paymentStatus] = (a[s.paymentStatus] || 0) + 1; return a; }, {})
   };
   const payload = {
     reportDate: url.searchParams.get("date") || today(), mode: p.mode, startDate: p.startDate, endDate: p.endDate, summary,
     accountingBreakdown: { productSubtotalPhp: summary.productSubtotalPhp, deliveryFeePhp: summary.deliveryFeePhp, installationFeePhp: summary.installationFeePhp, otherChargePhp: summary.otherChargePhp, discountPhp: summary.discountPhp, taxAmountPhp: summary.taxAmountPhp, grandTotalPhp: summary.grandTotalPhp, grossProfitPhp: grossProfit, linkedExpensesPhp: summary.linkedExpensesToday, totalExpensesPhp: expensesTotal, netProfitPhp: grossProfit - expensesTotal },
+    collectionTiming: { currentPeriodSaleCollectionsPhp: timing.currentPeriodSaleCollections, priorReceivableCollectionsPhp: timing.priorReceivableCollections, unclassifiedCollectionsPhp: timing.unclassifiedCollections },
     collectionsByMethod: byMethod(collections), cashByMethod: byMethod(collections.map((x) => ({ method: x.method, amount: x.tenderedAmount ?? x.amount }))), expensesByCategory: byCategory(periodExpenses), dailyTrend: dailyTrend(sales, periodExpenses, collections), productMovement: productMovement(salesRows, p.startDate, p.endDate), dailySales: sales, dailyExpenses: periodExpenses, linkedExpenses: periodExpenses.filter((e) => txt(e.relatedSalesRefNo)), openReceivables: allSales.filter((s) => s.balancePhp > 0).map((s) => ({ saleDate: s.saleDate, salesRefNo: s.salesRefNo, customerName: s.customerName, totalSalePhp: s.totalSalePhp, totalPaidPhp: s.totalPaidPhp, tenderedAmountPhp: s.totalTenderedPhp, changeDuePhp: s.changeDuePhp, balancePhp: s.balancePhp, paymentStatus: s.paymentStatus, saleStatus: s.saleStatus }))
   };
   cache = { key: cacheKey, time: Date.now(), data: payload };
