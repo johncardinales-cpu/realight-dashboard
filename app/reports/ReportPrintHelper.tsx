@@ -1,9 +1,15 @@
 "use client";
 
-const peso = "₱";
-
 function cleanText(value: string | null | undefined) {
   return String(value || "").replace(/\s+/g, " ").trim();
+}
+
+function asciiText(value: string | null | undefined) {
+  return cleanText(value)
+    .replace(/₱/g, "PHP ")
+    .replace(/→/g, "->")
+    .replace(/[–—]/g, "-")
+    .replace(/[^\x20-\x7E]/g, "");
 }
 
 function escapeCsv(value: string) {
@@ -38,8 +44,8 @@ function fileBaseName() {
   return `realights-${reportTitle().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "")}-${fileStamp()}`;
 }
 
-function downloadFile(name: string, content: string, type: string) {
-  const blob = new Blob([content], { type });
+function downloadBlob(name: string, content: BlobPart[], type: string) {
+  const blob = new Blob(content, { type });
   const url = URL.createObjectURL(blob);
   const link = document.createElement("a");
   link.href = url;
@@ -48,6 +54,10 @@ function downloadFile(name: string, content: string, type: string) {
   link.click();
   link.remove();
   URL.revokeObjectURL(url);
+}
+
+function downloadFile(name: string, content: string, type: string) {
+  downloadBlob(name, [content], type);
 }
 
 function summaryRows() {
@@ -98,25 +108,159 @@ function exportCsv() {
   downloadFile(`${fileBaseName()}.csv`, `\ufeff${lines.join("\n")}`, "text/csv;charset=utf-8");
 }
 
-function exportExcel() {
-  const tableHtml = tables().map((table, index) => {
-    const rows = tableRows(table).map((row, rowIndex) => {
-      const tag = rowIndex === 0 ? "th" : "td";
-      return `<tr>${row.map((cell) => `<${tag}>${escapeHtml(cell)}</${tag}>`).join("")}</tr>`;
-    }).join("");
-    return `<h2>${escapeHtml(tableTitle(table, index + 1))}</h2><table>${rows}</table>`;
-  }).join("");
+function sheetName(raw: string, used: Set<string>) {
+  const base = cleanText(raw).replace(/[\\/?*\[\]:]/g, " ").slice(0, 28) || "Sheet";
+  let name = base;
+  let index = 1;
+  while (used.has(name)) {
+    name = `${base.slice(0, 24)} ${index}`.slice(0, 31);
+    index += 1;
+  }
+  used.add(name);
+  return name;
+}
 
-  const summaryHtml = summaryRows().map((row) => `<tr><td>${escapeHtml(row[0])}</td><td>${escapeHtml(row[1])}</td><td>${escapeHtml(row[2] || "")}</td></tr>`).join("");
-  const html = `<!doctype html><html><head><meta charset="utf-8"><style>body{font-family:Arial,sans-serif;color:#0f172a}h1{font-size:24px;margin-bottom:4px}h2{font-size:16px;margin-top:22px;background:#eef2f7;padding:8px}table{border-collapse:collapse;width:100%;margin-bottom:10px}th,td{border:1px solid #cbd5e1;padding:7px;text-align:left}th{background:#f1f5f9;font-weight:700}.right{text-align:right}.meta{color:#475569;font-size:12px;margin-bottom:14px}</style></head><body><h1>Realights Solar Operations Report</h1><div class="meta">${escapeHtml(reportTitle())}<br>Generated: ${escapeHtml(new Date().toLocaleString("en-PH"))}</div><h2>Executive Summary</h2><table><tr><th>Metric</th><th>Amount</th><th>Notes</th></tr>${summaryHtml}</table>${tableHtml}<br><br><table><tr><td>Prepared By</td><td>Reviewed / Approved By</td></tr><tr><td style="height:40px"></td><td></td></tr></table></body></html>`;
-  downloadFile(`${fileBaseName()}.xls`, `\ufeff${html}`, "application/vnd.ms-excel;charset=utf-8");
+async function exportExcel() {
+  const XLSX = await import("xlsx");
+  const workbook = XLSX.utils.book_new();
+  const used = new Set<string>();
+  const summarySheet = XLSX.utils.aoa_to_sheet([
+    ["Realights Solar Operations Report"],
+    [reportTitle()],
+    ["Generated", new Date().toLocaleString("en-PH")],
+    [],
+    ["Metric", "Amount", "Notes"],
+    ...summaryRows(),
+  ]);
+  XLSX.utils.book_append_sheet(workbook, summarySheet, sheetName("Executive Summary", used));
+  tables().forEach((table, index) => {
+    const rows = tableRows(table);
+    if (rows.length) {
+      XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet(rows), sheetName(tableTitle(table, index + 1), used));
+    }
+  });
+  XLSX.writeFile(workbook, `${fileBaseName()}.xlsx`);
+}
+
+function pdfEscape(value: string) {
+  return asciiText(value).replace(/\\/g, "\\\\").replace(/\(/g, "\\(").replace(/\)/g, "\\)");
+}
+
+function wrapText(value: string, maxChars: number) {
+  const words = asciiText(value).split(" ").filter(Boolean);
+  const lines: string[] = [];
+  let line = "";
+  words.forEach((word) => {
+    if (!line) line = word;
+    else if (`${line} ${word}`.length <= maxChars) line += ` ${word}`;
+    else { lines.push(line); line = word; }
+  });
+  if (line) lines.push(line);
+  return lines.length ? lines : [""];
+}
+
+function buildPdf() {
+  const width = 841.89;
+  const height = 595.28;
+  const margin = 34;
+  const usable = width - margin * 2;
+  let y = height - margin;
+  const pages: string[][] = [[]];
+  const page = () => pages[pages.length - 1];
+
+  const add = (cmd: string) => page().push(cmd);
+  const text = (value: string, x: number, yy: number, size = 8, bold = false) => add(`BT /${bold ? "F2" : "F1"} ${size} Tf ${x.toFixed(2)} ${yy.toFixed(2)} Td (${pdfEscape(value)}) Tj ET`);
+  const line = (x1: number, y1: number, x2: number, y2: number) => add(`0.73 0.78 0.86 RG ${x1.toFixed(2)} ${y1.toFixed(2)} m ${x2.toFixed(2)} ${y2.toFixed(2)} l S`);
+  const rect = (x: number, yy: number, w: number, h: number, fill = false) => add(`${fill ? "0.94 0.96 0.98 rg " : ""}0.82 0.86 0.92 RG ${x.toFixed(2)} ${yy.toFixed(2)} ${w.toFixed(2)} ${h.toFixed(2)} re ${fill ? "B" : "S"}`);
+
+  const newPage = () => { pages.push([]); y = height - margin; };
+  const ensure = (needed: number) => { if (y - needed < margin) newPage(); };
+
+  text("REALIGHTS SOLAR", margin, y, 10, true);
+  text("Operations Report", margin, y - 18, 20, true);
+  text(reportTitle(), margin, y - 34, 10);
+  text(`Generated: ${new Date().toLocaleString("en-PH")}`, width - 240, y - 8, 9);
+  y -= 54;
+  line(margin, y, width - margin, y);
+  y -= 16;
+
+  const drawHeading = (title: string) => { ensure(28); text(title, margin, y, 12, true); y -= 16; };
+
+  const drawTable = (title: string, rows: string[][]) => {
+    if (!rows.length) return;
+    drawHeading(title);
+    const colCount = Math.max(...rows.map((row) => row.length));
+    const colW = usable / colCount;
+    const font = colCount > 8 ? 5.6 : colCount > 6 ? 6.5 : 7.5;
+    const lineH = font + 2.2;
+    const drawRow = (row: string[], isHeader: boolean) => {
+      const wrapped = Array.from({ length: colCount }).map((_, index) => wrapText(row[index] || "", Math.max(6, Math.floor((colW - 8) / (font * 0.48)))));
+      const rowH = Math.max(17, Math.max(...wrapped.map((lines) => lines.length)) * lineH + 8);
+      ensure(rowH + (isHeader ? 0 : 18));
+      if (isHeader) rect(margin, y - rowH, usable, rowH, true);
+      let x = margin;
+      wrapped.forEach((lines) => {
+        rect(x, y - rowH, colW, rowH, false);
+        lines.slice(0, 7).forEach((txt, i) => text(txt, x + 4, y - 10 - i * lineH, font, isHeader));
+        x += colW;
+      });
+      y -= rowH;
+    };
+    drawRow(rows[0], true);
+    rows.slice(1).forEach((row) => drawRow(row, false));
+    y -= 10;
+  };
+
+  drawTable("Executive Summary", [["Metric", "Amount", "Notes"], ...summaryRows()]);
+  tables().forEach((table, index) => drawTable(tableTitle(table, index + 1), tableRows(table)));
+
+  ensure(40);
+  y -= 20;
+  line(margin, y, margin + 250, y);
+  line(width - margin - 250, y, width - margin, y);
+  text("Prepared By", margin + 88, y - 14, 8);
+  text("Reviewed / Approved By", width - margin - 180, y - 14, 8);
+
+  const font1 = "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>";
+  const font2 = "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold >>";
+  const objects: string[] = [];
+  const kids: string[] = [];
+  objects.push("<< /Type /Catalog /Pages 2 0 R >>");
+  objects.push("");
+  objects.push(font1);
+  objects.push(font2);
+  pages.forEach((content, index) => {
+    const pageId = 5 + index * 2;
+    const contentId = pageId + 1;
+    kids.push(`${pageId} 0 R`);
+    const stream = content.join("\n");
+    objects.push(`<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${width} ${height}] /Resources << /Font << /F1 3 0 R /F2 4 0 R >> >> /Contents ${contentId} 0 R >>`);
+    objects.push(`<< /Length ${stream.length} >>\nstream\n${stream}\nendstream`);
+  });
+  objects[1] = `<< /Type /Pages /Kids [${kids.join(" ")}] /Count ${pages.length} >>`;
+
+  let pdf = "%PDF-1.4\n";
+  const offsets = [0];
+  objects.forEach((obj, i) => {
+    offsets.push(pdf.length);
+    pdf += `${i + 1} 0 obj\n${obj}\nendobj\n`;
+  });
+  const xref = pdf.length;
+  pdf += `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n`;
+  offsets.slice(1).forEach((offset) => { pdf += `${String(offset).padStart(10, "0")} 00000 n \n`; });
+  pdf += `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF`;
+  return pdf;
+}
+
+function exportPdf() {
+  downloadBlob(`${fileBaseName()}.pdf`, [buildPdf()], "application/pdf");
 }
 
 export default function ReportPrintHelper() {
   return (
     <>
       <div className="report-export-toolbar fixed bottom-6 right-6 z-50 flex flex-wrap gap-2 rounded-2xl border border-slate-200 bg-white/95 p-2 shadow-xl print:hidden">
-        <button type="button" onClick={() => window.print()} className="rounded-xl bg-slate-950 px-4 py-2 text-sm font-bold text-white">PDF</button>
+        <button type="button" onClick={exportPdf} className="rounded-xl bg-slate-950 px-4 py-2 text-sm font-bold text-white">PDF</button>
         <button type="button" onClick={exportExcel} className="rounded-xl bg-emerald-600 px-4 py-2 text-sm font-bold text-white">Excel</button>
         <button type="button" onClick={exportCsv} className="rounded-xl border border-slate-300 px-4 py-2 text-sm font-bold text-slate-700">CSV</button>
       </div>
@@ -129,25 +273,7 @@ export default function ReportPrintHelper() {
           main, section { margin: 0 !important; padding: 0 !important; }
           section.space-y-6::before { content: "Realights Solar Operations Report"; display: block; margin-bottom: 4px; font-size: 24px; line-height: 1.1; font-weight: 900; color: #0f172a; }
           section.space-y-6::after { content: "Prepared By ________________________________    Reviewed / Approved By ________________________________"; display: block; margin-top: 18px; padding-top: 12px; border-top: 1px solid #94a3b8; font-size: 10px; color: #334155; }
-          .rounded-3xl, .rounded-2xl, .rounded-xl { border-radius: 10px !important; }
-          .shadow-sm, .shadow-xl { box-shadow: none !important; }
-          .border, .border-slate-200 { border-color: #cbd5e1 !important; }
-          .bg-white { background: #ffffff !important; }
-          .bg-slate-50 { background: #f1f5f9 !important; }
-          .p-6 { padding: 12px !important; }
-          .p-5 { padding: 10px !important; }
-          .space-y-6 > * + * { margin-top: 10px !important; }
-          .grid { gap: 8px !important; }
-          .xl\\:grid-cols-4 { grid-template-columns: repeat(4, minmax(0, 1fr)) !important; }
-          .xl\\:grid-cols-2 { grid-template-columns: repeat(2, minmax(0, 1fr)) !important; }
-          h1 { font-size: 22px !important; line-height: 1.1 !important; }
-          h2 { font-size: 15px !important; }
-          table { width: 100% !important; border-collapse: collapse !important; page-break-inside: auto; }
-          thead { display: table-header-group; background: #f1f5f9 !important; }
-          tr { page-break-inside: avoid; break-inside: avoid; }
-          th, td { padding: 5px 7px !important; border-top: 1px solid #e2e8f0 !important; vertical-align: top; }
           .overflow-x-auto, .overflow-auto, .max-h-72 { max-height: none !important; overflow: visible !important; }
-          .report-section, .rounded-3xl, .rounded-2xl { break-inside: avoid; page-break-inside: avoid; }
         }
       `}</style>
     </>
