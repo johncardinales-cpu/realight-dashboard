@@ -149,6 +149,11 @@ function paymentSignature(date: string, amount: number) {
   return `${date}|${round(amount).toFixed(2)}`;
 }
 
+function labelFromPaymentSummary(summary: string) {
+  const match = txt(summary).match(/\bfor\s+(.+?)\s*\.?$/i);
+  return txt(match?.[1]).replace(/\.+$/, "");
+}
+
 function parseAuditPaymentCollections(auditRows: string[][], paymentRows: string[][]) {
   const ledgerCounts = new Map<string, number>();
   paymentRows.slice(1).forEach((r) => {
@@ -175,7 +180,10 @@ function parseAuditPaymentCollections(auditRows: string[][], paymentRows: string
       ledgerCounts.set(signature, matchedLedgerCount - 1);
       return;
     }
-    entries.push({ date, method: txt(after.paymentMethod) || "Payment", amount, tenderedAmount: amount, changeDue: 0, transactionRef: txt(after.transactionRef), cashierName: txt(r[6]), source: "Audit_Log", recordRef: txt(r[5]) });
+    const inferredLabel = labelFromPaymentSummary(summary);
+    const recordRef = txt(after.salesRefNo) || txt(r[5]) || inferredLabel;
+    const customerName = txt(after.customerName) || inferredLabel || recordRef;
+    entries.push({ date, method: txt(after.paymentMethod) || "Payment", amount, tenderedAmount: amount, changeDue: 0, transactionRef: txt(after.transactionRef), cashierName: txt(r[6]), source: "Audit_Log", recordRef, salesRefNo: recordRef, customerName });
   });
   return entries;
 }
@@ -230,7 +238,7 @@ function productMovement(rows: string[][], start: string, end: string) {
 function makeSaleDateLookup(allSales: any[]) {
   const map = new Map<string, string>();
   allSales.forEach((s) => {
-    uniq([s.key, s.saleId, s.groupRef, s.salesRefNo]).forEach((key) => map.set(key, s.saleDate));
+    uniq([s.key, s.saleId, s.groupRef, s.salesRefNo, s.customerName]).forEach((key) => map.set(key, s.saleDate));
   });
   return map;
 }
@@ -238,7 +246,7 @@ function makeSaleDateLookup(allSales: any[]) {
 function makeSaleLookup(allSales: any[]) {
   const map = new Map<string, any>();
   allSales.forEach((s) => {
-    uniq([s.key, s.saleId, s.groupRef, s.salesRefNo]).forEach((key) => map.set(key, s));
+    uniq([s.key, s.saleId, s.groupRef, s.salesRefNo, s.customerName]).forEach((key) => map.set(key, s));
   });
   return map;
 }
@@ -286,8 +294,8 @@ function collectionDetails(collections: any[], start: string) {
       id: c.paymentId || c.recordRef || `${c.date}-${index}`,
       date: normDate(c.date),
       saleDate,
-      salesRefNo: txt(c.salesRefNo || c.recordRef) || "-",
-      customerName: txt(c.customerName) || "-",
+      salesRefNo: txt(c.salesRefNo || c.recordRef || c.customerName) || "-",
+      customerName: txt(c.customerName || c.salesRefNo || c.recordRef) || "-",
       method: txt(c.method) || "Unspecified",
       amount: round(c.amount),
       transactionRef: txt(c.transactionRef || c.paymentId || c.recordRef) || "-",
@@ -312,12 +320,13 @@ export async function getReportPayload(url: URL) {
   const initial = sales.filter((s) => s.initialPaidPhp > 0 || s.initialTenderedPhp > 0).map((s) => ({ date: s.saleDate, saleDate: s.saleDate, salesRefNo: s.salesRefNo, customerName: s.customerName, method: s.initialPaymentMethod, amount: s.initialPaidPhp, tenderedAmount: s.initialTenderedPhp, changeDue: s.changeDuePhp || 0, transactionRef: s.transactionRef, cashierName: s.cashierName, source: "Sales" }));
   const follow = paymentRows.slice(1).filter((r) => !inactive(r[12]) && num(r[5]) > 0 && inRange(r[0], p.startDate, p.endDate)).map((r) => {
     const key = saleKey(r[1], r[2], r[11]);
-    const sale = saleForKey(saleLookup, key, txt(r[11]), txt(r[2]), txt(r[1]));
-    return { date: normDate(r[0]), saleDate: sale?.saleDate || saleDateForKey(saleDateLookup, key, txt(r[11]), txt(r[2]), txt(r[1])), salesRefNo: sale?.salesRefNo || txt(r[1]), customerName: sale?.customerName || txt(r[3]), method: txt(r[4]) || "Unspecified", amount: num(r[5]), tenderedAmount: num(r[5]), changeDue: 0, transactionRef: txt(r[6]), cashierName: txt(r[7]), paymentId: txt(r[10]), source: "Payments" };
+    const sale = saleForKey(saleLookup, key, txt(r[11]), txt(r[2]), txt(r[1]), txt(r[3]));
+    return { date: normDate(r[0]), saleDate: sale?.saleDate || saleDateForKey(saleDateLookup, key, txt(r[11]), txt(r[2]), txt(r[1]), txt(r[3])), salesRefNo: sale?.salesRefNo || txt(r[1]) || txt(r[3]), customerName: sale?.customerName || txt(r[3]) || txt(r[1]), method: txt(r[4]) || "Unspecified", amount: num(r[5]), tenderedAmount: num(r[5]), changeDue: 0, transactionRef: txt(r[6]), cashierName: txt(r[7]), paymentId: txt(r[10]), source: "Payments" };
   });
   const recoveredFollow = parseAuditPaymentCollections(auditRows, paymentRows).filter((r) => inRange(r.date, p.startDate, p.endDate)).map((r) => {
-    const sale = saleForKey(saleLookup, r.recordRef);
-    return { ...r, saleDate: sale?.saleDate || saleDateForKey(saleDateLookup, r.recordRef), salesRefNo: sale?.salesRefNo || r.recordRef, customerName: sale?.customerName || "-" };
+    const sale = saleForKey(saleLookup, r.recordRef, r.salesRefNo, r.customerName);
+    const fallback = txt(r.customerName || r.salesRefNo || r.recordRef);
+    return { ...r, saleDate: sale?.saleDate || saleDateForKey(saleDateLookup, r.recordRef, r.salesRefNo, r.customerName), salesRefNo: sale?.salesRefNo || fallback, customerName: sale?.customerName || fallback || "-" };
   });
   const collections = [...initial, ...follow, ...recoveredFollow];
   const sum = (arr: any[], field: string) => round(arr.reduce((a, x) => a + (Number(x[field]) || 0), 0));
