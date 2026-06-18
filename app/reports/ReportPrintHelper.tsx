@@ -169,9 +169,9 @@ function buildPdf() {
   const page = () => pages[pages.length - 1];
 
   const add = (cmd: string) => page().push(cmd);
-  const text = (value: string, x: number, yy: number, size = 8, bold = false) => add(`BT /${bold ? "F2" : "F1"} ${size} Tf ${x.toFixed(2)} ${yy.toFixed(2)} Td (${pdfEscape(value)}) Tj ET`);
-  const line = (x1: number, y1: number, x2: number, y2: number) => add(`0.73 0.78 0.86 RG ${x1.toFixed(2)} ${y1.toFixed(2)} m ${x2.toFixed(2)} ${y2.toFixed(2)} l S`);
-  const rect = (x: number, yy: number, w: number, h: number, fill = false) => add(`${fill ? "0.94 0.96 0.98 rg " : ""}0.82 0.86 0.92 RG ${x.toFixed(2)} ${yy.toFixed(2)} ${w.toFixed(2)} ${h.toFixed(2)} re ${fill ? "B" : "S"}`);
+  const text = (value: string, x: number, yy: number, size = 8, bold = false) => add(`0 0 0 rg BT /${bold ? "F2" : "F1"} ${size} Tf ${x.toFixed(2)} ${yy.toFixed(2)} Td (${pdfEscape(value)}) Tj ET`);
+  const line = (x1: number, y1: number, x2: number, y2: number) => add(`0.35 0.42 0.52 RG ${x1.toFixed(2)} ${y1.toFixed(2)} m ${x2.toFixed(2)} ${y2.toFixed(2)} l S`);
+  const rect = (x: number, yy: number, w: number, h: number, fill = false) => add(`${fill ? "0.94 0.96 0.98 rg " : ""}0.62 0.68 0.76 RG ${x.toFixed(2)} ${yy.toFixed(2)} ${w.toFixed(2)} ${h.toFixed(2)} re ${fill ? "B" : "S"}`);
 
   const newPage = () => { pages.push([]); y = height - margin; };
   const ensure = (needed: number) => { if (y - needed < margin) newPage(); };
