@@ -6,6 +6,7 @@ type ThemeMode = "Light" | "Dark" | "System";
 type AccentColor = "Emerald" | "Amber" | "Blue" | "Violet" | "Slate";
 type FontSize = "Compact" | "Comfortable" | "Large";
 type Density = "Compact" | "Comfortable" | "Spacious";
+type AccessRole = "Admin" | "Accounting" | "Cashier";
 
 type StoredSettings = {
   theme: ThemeMode;
@@ -47,17 +48,49 @@ const businessRules = [
 ];
 
 const readiness = [
-  { label: "Login gate", status: "Added", tone: "green" },
+  { label: "Login gate", status: "Admin only", tone: "green" },
   { label: "Sales charges", status: "Added", tone: "green" },
-  { label: "Tax in cashiering", status: "Added", tone: "green" },
   { label: "Expenses module", status: "Added", tone: "green" },
-  { label: "Expense to sale linking", status: "Validated", tone: "green" },
   { label: "Recent Activity", status: "Audit synced", tone: "green" },
+  { label: "Role plan", status: "Prepared", tone: "green" },
+  { label: "Supabase Auth", status: "Next step", tone: "amber" },
+  { label: "Row security", status: "Next step", tone: "amber" },
   { label: "Migration readiness", status: "Ready", tone: "green" },
-  { label: "Payments/Reports tax check", status: "Needs final verification", tone: "amber" },
 ];
 
 const envItems = ["GOOGLE_SHEET_ID", "GOOGLE_CLIENT_EMAIL", "GOOGLE_PRIVATE_KEY", "REALIGHTS_ADMIN_EMAIL", "REALIGHTS_ACCESS_CODE"];
+
+const roleMatrix: Record<AccessRole, { level: string; purpose: string; allowed: string[]; limits: string[] }> = {
+  Admin: {
+    level: "Full control",
+    purpose: "Owner/manager access. Admin can manage users, roles, page access, limits, settings, migration, and all business records.",
+    allowed: ["Dashboard", "Sales", "Confirm Sales", "Payments", "Inventory", "Pricing", "Customers", "Expenses", "Reports", "Users", "Settings", "Migration", "Audit Logs"],
+    limits: ["No limits by default", "Can void/cancel/undo", "Can add users and assign roles", "Can change access rules"],
+  },
+  Accounting: {
+    level: "Finance and audit",
+    purpose: "Accounting can review collections, receivables, expenses, exports, and reports without changing operational settings.",
+    allowed: ["Dashboard view", "Payments history", "Receivables", "Expenses", "Reports", "Exports", "Audit Logs view"],
+    limits: ["Cannot add users", "Cannot change roles/settings", "Cannot edit inventory/pricing", "Cannot void confirmed sales without Admin"],
+  },
+  Cashier: {
+    level: "Sales counter",
+    purpose: "Cashier can create sales, collect payments, print invoices/receipts, and view limited stock/customer info.",
+    allowed: ["Sales", "Payments", "Invoices", "Customers view", "Pricing view", "Inventory availability view"],
+    limits: ["Cannot add users", "Cannot change roles/settings", "Cannot edit pricing/cost", "Cannot access full reports", "Cannot void/cancel without Admin"],
+  },
+};
+
+const adminOnlyControls = [
+  "Add, disable, or restore users",
+  "Assign or change roles",
+  "Set page access and module limits",
+  "Void/cancel confirmed sales and payments",
+  "Undo confirmation and restore inventory",
+  "Edit pricing, product cost, and stock adjustments",
+  "Change company settings and report/export rules",
+  "Run migration, backup, and restore tools",
+];
 
 const accentClasses: Record<AccentColor, string> = {
   Emerald: "bg-emerald-600 text-white ring-emerald-100",
@@ -96,6 +129,11 @@ function Toggle({ checked, onChange, label, helper }: { checked: boolean; onChan
   );
 }
 
+function RoleBadge({ role }: { role: AccessRole }) {
+  const className = role === "Admin" ? "bg-emerald-50 text-emerald-700" : role === "Accounting" ? "bg-violet-50 text-violet-700" : "bg-blue-50 text-blue-700";
+  return <span className={`rounded-full px-3 py-1 text-xs font-bold ${className}`}>{role}</span>;
+}
+
 export default function SettingsPage() {
   const [settings, setSettings] = useState<StoredSettings>(defaultSettings);
   const [message, setMessage] = useState("");
@@ -131,7 +169,7 @@ export default function SettingsPage() {
     document.documentElement.dataset.accent = settings.accent.toLowerCase();
     document.documentElement.dataset.fontSize = settings.fontSize.toLowerCase();
     document.documentElement.style.fontSize = settings.fontSize === "Compact" ? "14px" : settings.fontSize === "Large" ? "17px" : "16px";
-    setMessage("Settings saved on this browser. Full company-wide settings can be connected to the database/settings sheet later.");
+    setMessage("Settings saved on this browser. Company-wide role enforcement will be connected during Supabase migration.");
   }
 
   function resetSettings() {
@@ -146,12 +184,53 @@ export default function SettingsPage() {
       <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
         <p className="text-xs font-bold uppercase tracking-[0.35em] text-emerald-600">System Configuration</p>
         <h1 className="mt-2 text-3xl font-bold tracking-tight text-slate-950">Settings</h1>
-        <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-600">Control appearance preferences, business defaults, cashiering rules, and readiness settings for Realights POS.</p>
+        <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-600">Control appearance preferences, business defaults, cashiering rules, and admin-only access settings for Realights POS.</p>
         {message ? <p className="mt-4 rounded-2xl border border-emerald-100 bg-emerald-50 px-4 py-3 text-sm font-semibold text-emerald-700">{message}</p> : null}
       </div>
 
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-4">
         {readiness.map((item) => <div key={item.label} className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm"><p className="text-sm font-semibold text-slate-500">{item.label}</p><div className="mt-3"><StatusBadge tone={item.tone}>{item.status}</StatusBadge></div></div>)}
+      </div>
+
+      <div className="rounded-3xl border border-emerald-200 bg-emerald-50 p-6 shadow-sm">
+        <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+          <div>
+            <p className="text-xs font-bold uppercase tracking-[0.3em] text-emerald-700">Access Mode</p>
+            <h2 className="mt-2 text-2xl font-bold text-slate-950">Current setup: single Admin only</h2>
+            <p className="mt-2 max-w-4xl text-sm leading-6 text-slate-700">For now, only the configured Admin account should access Settings and Users. During Supabase migration, this plan becomes database-enforced with roles, page permissions, limits, and audit logs.</p>
+          </div>
+          <span className="w-fit rounded-full bg-white px-4 py-2 text-sm font-bold text-emerald-700 ring-1 ring-emerald-200">Ready for Supabase Auth</span>
+        </div>
+      </div>
+
+      <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
+        <h2 className="text-xl font-bold text-slate-950">Admin-Only User & Role Controls</h2>
+        <p className="mt-2 text-sm leading-6 text-slate-600">These controls are reserved for Admin. Accounting and Cashier will not be allowed to change users, roles, page access, or limits after Supabase Auth is connected.</p>
+        <div className="mt-5 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+          {adminOnlyControls.map((item) => <div key={item} className="rounded-2xl border border-slate-200 bg-slate-50 p-4 text-sm font-semibold leading-6 text-slate-700"><span className="mr-2 font-bold text-emerald-600">✓</span>{item}</div>)}
+        </div>
+      </div>
+
+      <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
+        <h2 className="text-xl font-bold text-slate-950">Role Access Matrix for Migration</h2>
+        <p className="mt-2 text-sm leading-6 text-slate-600">Initial production roles: Admin now, Accounting and Cashier ready later. A second Admin can be added from Settings after Supabase migration.</p>
+        <div className="mt-5 overflow-x-auto rounded-2xl border border-slate-200">
+          <table className="min-w-full text-left text-sm">
+            <thead className="bg-slate-50 text-slate-500">
+              <tr><th className="px-5 py-4 font-semibold">Role</th><th className="px-5 py-4 font-semibold">Access Level</th><th className="px-5 py-4 font-semibold">Allowed Views</th><th className="px-5 py-4 font-semibold">Limits</th></tr>
+            </thead>
+            <tbody>
+              {(Object.keys(roleMatrix) as AccessRole[]).map((role) => (
+                <tr key={role} className="border-t border-slate-100 align-top">
+                  <td className="px-5 py-4"><RoleBadge role={role} /></td>
+                  <td className="px-5 py-4"><p className="font-bold text-slate-800">{roleMatrix[role].level}</p><p className="mt-1 max-w-md text-sm leading-6 text-slate-500">{roleMatrix[role].purpose}</p></td>
+                  <td className="px-5 py-4"><div className="flex max-w-lg flex-wrap gap-2">{roleMatrix[role].allowed.map((item) => <span key={item} className="rounded-full bg-slate-50 px-3 py-1 text-xs font-bold text-slate-700 ring-1 ring-slate-200">{item}</span>)}</div></td>
+                  <td className="px-5 py-4"><ul className="list-disc space-y-1 pl-5 text-sm leading-6 text-slate-600">{roleMatrix[role].limits.map((item) => <li key={item}>{item}</li>)}</ul></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       </div>
 
       <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_380px]">
@@ -205,9 +284,9 @@ export default function SettingsPage() {
       </div>
 
       <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
-        <h2 className="text-xl font-bold text-slate-950">Other Settings Recommended Later</h2>
+        <h2 className="text-xl font-bold text-slate-950">Supabase Role Enforcement Plan</h2>
         <div className="mt-4 grid gap-3 md:grid-cols-2 lg:grid-cols-3">
-          {["Receipt logo and footer", "Invoice numbering format", "Default payment methods", "Default report period", "Backup schedule", "Notification rules", "Per-role page access", "Audit export retention", "Database migration target"].map((item) => <div key={item} className="rounded-2xl border border-slate-200 bg-slate-50 p-4 text-sm font-semibold text-slate-700">{item}</div>)}
+          {["profiles table with role", "role_permissions table", "Admin-only Settings", "Admin-only Users", "Row-level security policies", "Audit logs for role changes", "Receipt/export permissions", "Payment/void limits", "Database migration target"].map((item) => <div key={item} className="rounded-2xl border border-slate-200 bg-slate-50 p-4 text-sm font-semibold text-slate-700">{item}</div>)}
         </div>
       </div>
 
