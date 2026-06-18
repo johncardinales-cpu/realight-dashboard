@@ -92,6 +92,29 @@ function mergeOpenReceivables(existing: any[], sales: any[]) {
   return Array.from(merged.values()).filter((r: any) => Number(r.balancePhp || 0) > 0);
 }
 
+function reconcileTrend(payload: any, sales: any[], details: any[]) {
+  const collectionsByDate = new Map<string, number>();
+  details.forEach((d: any) => {
+    const date = text(d.date);
+    if (!date) return;
+    collectionsByDate.set(date, round((collectionsByDate.get(date) || 0) + Number(d.amount || 0)));
+  });
+
+  const receivablesByDate = new Map<string, number>();
+  sales.forEach((sale: any) => {
+    const date = text(sale.saleDate);
+    if (!date) return;
+    receivablesByDate.set(date, round((receivablesByDate.get(date) || 0) + Number(sale.balancePhp || 0)));
+  });
+
+  const rows = Array.isArray(payload.dailyTrend) ? payload.dailyTrend : [];
+  return rows.map((row: any) => {
+    const date = text(row.date);
+    const collections = round(collectionsByDate.get(date) || 0);
+    return { ...row, collections, cashReceived: collections, receivables: round(receivablesByDate.get(date) || 0) };
+  });
+}
+
 function reconcileToOpenBalances(payload: any) {
   const dailySales = Array.isArray(payload?.dailySales) ? payload.dailySales : [];
   const openReceivables = Array.isArray(payload?.openReceivables) ? payload.openReceivables : [];
@@ -144,7 +167,7 @@ function reconcileToOpenBalances(payload: any) {
       currentPeriodSaleCollectionsPhp: currentCollections,
       priorReceivableCollectionsPhp: priorCollections,
     },
-    dailyTrend: payload.dailyTrend,
+    dailyTrend: reconcileTrend(payload, correctedSales, filteredDetails),
   };
 }
 
