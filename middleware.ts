@@ -17,6 +17,7 @@ function isPublicPath(pathname: string) {
     pathname === "/admin-only" ||
     pathname.startsWith("/api/session/start") ||
     pathname.startsWith("/api/session/end") ||
+    pathname.startsWith("/api/session/me") ||
     pathname.startsWith("/_next") ||
     pathname.startsWith("/favicon") ||
     pathname.includes(".")
@@ -85,7 +86,7 @@ export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
   const session = request.cookies.get(COOKIE_NAME)?.value;
   const isAuthenticated = session === SESSION_VALUE;
-  const adminEmailConfigured = Boolean(process.env.REALIGHTS_ADMIN_EMAIL || process.env.ADMIN_EMAIL);
+  const adminEmailConfigured = Boolean(process.env.REALIGHTS_ADMIN_EMAILS || process.env.REALIGHTS_ADMIN_EMAIL || process.env.ADMIN_EMAIL);
 
   if (pathname === "/login" && isAuthenticated) {
     return NextResponse.redirect(new URL("/", request.url));
