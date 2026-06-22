@@ -1,7 +1,9 @@
 import { NextResponse } from "next/server";
 
 const COOKIE_NAME = "realights_session";
+const EMAIL_COOKIE_NAME = "realights_session_email";
 const SESSION_VALUE = "active";
+const SESSION_MAX_AGE = 60 * 60 * 12;
 const EXTRA_ADMIN_EMAILS = ["fuenteseiche@gmail.com"];
 
 function text(value: unknown) {
@@ -14,6 +16,16 @@ function parseEmails(value: unknown) {
     .split(/[\s,;]+/)
     .map((item) => item.trim())
     .filter(Boolean);
+}
+
+function sessionCookieOptions() {
+  return {
+    httpOnly: true,
+    sameSite: "lax" as const,
+    secure: process.env.NODE_ENV === "production",
+    path: "/",
+    maxAge: SESSION_MAX_AGE,
+  };
 }
 
 export async function POST(req: Request) {
@@ -36,14 +48,9 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "Invalid access details" }, { status: 401 });
     }
 
-    const response = NextResponse.json({ ok: true });
-    response.cookies.set(COOKIE_NAME, SESSION_VALUE, {
-      httpOnly: true,
-      sameSite: "lax",
-      secure: process.env.NODE_ENV === "production",
-      path: "/",
-      maxAge: 60 * 60 * 12,
-    });
+    const response = NextResponse.json({ ok: true, email });
+    response.cookies.set(COOKIE_NAME, SESSION_VALUE, sessionCookieOptions());
+    response.cookies.set(EMAIL_COOKIE_NAME, email, sessionCookieOptions());
     return response;
   } catch (error: any) {
     return NextResponse.json({ error: error?.message || "Unable to start session" }, { status: 500 });
