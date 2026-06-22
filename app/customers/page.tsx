@@ -56,6 +56,10 @@ function money(value: number | undefined) {
   return `₱${(Number(value) || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
 
+function customerKey(row: CustomerRow) {
+  return row.customerId || `${row.rowNumber}-${row.customerName}`;
+}
+
 export default function CustomersPage() {
   const [rows, setRows] = useState<CustomerRow[]>([]);
   const [form, setForm] = useState(emptyForm);
@@ -84,7 +88,9 @@ export default function CustomersPage() {
   const filteredRows = useMemo(() => {
     const query = search.trim().toLowerCase();
     return rows.filter((row) => {
-      const purchaseText = (row.purchases || []).map((sale) => `${sale.salesRefNo} ${sale.description} ${sale.specification} ${sale.paymentStatus} ${sale.saleStatus}`).join(" ");
+      const purchaseText = (row.purchases || [])
+        .map((sale) => `${sale.salesRefNo} ${sale.description} ${sale.specification} ${sale.paymentStatus} ${sale.saleStatus}`)
+        .join(" ");
       const text = `${row.customerName} ${row.contactPerson} ${row.phone} ${row.email} ${row.address} ${row.customerType} ${row.status} ${purchaseText}`.toLowerCase();
       return !query || text.includes(query);
     });
@@ -148,7 +154,7 @@ export default function CustomersPage() {
         <p className="text-xs font-bold uppercase tracking-[0.35em] text-emerald-600">Customer Records</p>
         <h1 className="mt-2 text-3xl font-bold tracking-tight text-slate-950">Customers</h1>
         <p className="mt-2 max-w-4xl text-sm leading-6 text-slate-600">
-          Add and maintain customer records. Purchases and orders are automatically shown under each customer by matching Sales customer name.
+          Keep live customer records clean for sales history, receivables, warranty, and repeat orders.
         </p>
         {message ? <p className="mt-4 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-semibold text-slate-700">{message}</p> : null}
       </div>
@@ -164,7 +170,7 @@ export default function CustomersPage() {
       <div className="grid gap-6 xl:grid-cols-[420px_minmax(0,1fr)]">
         <form onSubmit={saveCustomer} className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
           <h2 className="text-xl font-bold text-slate-950">{form.rowNumber ? "Update Customer" : "Add Customer"}</h2>
-          <p className="mt-2 text-sm leading-6 text-slate-600">Customer records support sales history, payment follow-up, warranty, repeat orders, and customer balances.</p>
+          <p className="mt-2 text-sm leading-6 text-slate-600">Use this only for real live customer records. Avoid duplicate customer names.</p>
 
           <div className="mt-5 space-y-4">
             <label className="block space-y-1"><span className="text-xs font-bold uppercase tracking-wide text-slate-600">Customer Name</span><input className="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm" value={form.customerName} onChange={(e) => updateField("customerName", e.target.value)} placeholder="Customer or company name" required /></label>
@@ -185,36 +191,45 @@ export default function CustomersPage() {
 
         <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
           <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-            <div><h2 className="text-xl font-bold text-slate-950">Customer List & Order History</h2><p className="mt-1 text-sm text-slate-600">Expand a customer to view purchased items, payment status, and balance.</p></div>
+            <div><h2 className="text-xl font-bold text-slate-950">Customer List</h2><p className="mt-1 text-sm text-slate-600">Compact live list. Open only the customer you need.</p></div>
             <button type="button" onClick={loadRows} className="rounded-xl border border-slate-300 px-4 py-2 text-sm font-bold text-slate-700">Refresh</button>
           </div>
           <input className="mt-4 w-full rounded-2xl border border-slate-300 px-4 py-3 text-sm" value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search customer, item, sale ref, phone, email..." />
-          <div className="mt-4 space-y-4">
+          <div className="mt-4 max-h-[70vh] overflow-y-auto rounded-2xl border border-slate-200">
             {filteredRows.map((row) => {
-              const expanded = expandedCustomerId === row.customerId;
+              const key = customerKey(row);
+              const expanded = expandedCustomerId === key;
+              const contact = [row.contactPerson, row.phone, row.email].filter(Boolean).join(" · ");
+              const extraInfo = [row.address, row.notes].filter(Boolean).join(" · ");
               return (
-                <div key={row.customerId || `${row.rowNumber}-${row.customerName}`} className="rounded-2xl border border-slate-200 bg-white">
-                  <div className="grid gap-4 p-4 lg:grid-cols-[minmax(0,1fr)_360px]">
-                    <div>
-                      <div className="flex flex-wrap items-center gap-2"><p className="text-lg font-bold text-slate-950">{row.customerName}</p><span className={`rounded-full px-3 py-1 text-xs font-bold ${row.status === "Active" ? "bg-emerald-50 text-emerald-700" : row.status === "Watchlist" ? "bg-amber-50 text-amber-700" : "bg-slate-100 text-slate-600"}`}>{row.status}</span><span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-bold text-slate-700">{row.customerType}</span></div>
-                      <p className="mt-1 text-sm text-slate-600">{row.contactPerson || "No contact person"} · {row.phone || "No phone"} · {row.email || "No email"}</p>
-                      <p className="mt-1 text-xs text-slate-500">{row.address || "No address"}</p>
-                      <p className="mt-2 text-sm leading-6 text-slate-600">{row.notes || "No notes"}</p>
+                <div key={key} className="border-b border-slate-100 bg-white last:border-b-0">
+                  <div className="flex flex-col gap-3 px-4 py-3 lg:flex-row lg:items-center lg:justify-between">
+                    <div className="min-w-0">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <p className="max-w-full truncate text-sm font-bold text-slate-950">{row.customerName}</p>
+                        <span className={`rounded-full px-2.5 py-1 text-[11px] font-bold ${row.status === "Active" ? "bg-emerald-50 text-emerald-700" : row.status === "Watchlist" ? "bg-amber-50 text-amber-700" : "bg-slate-100 text-slate-600"}`}>{row.status || "Active"}</span>
+                        <span className="rounded-full bg-slate-100 px-2.5 py-1 text-[11px] font-bold text-slate-700">{row.customerType || "Retail"}</span>
+                      </div>
+                      {contact ? <p className="mt-1 truncate text-xs text-slate-600">{contact}</p> : null}
+                      {extraInfo ? <p className="mt-1 truncate text-xs text-slate-500">{extraInfo}</p> : null}
                     </div>
-                    <div className="grid grid-cols-2 gap-2 text-sm">
-                      <div className="rounded-xl bg-slate-50 p-3"><p className="text-xs font-semibold text-slate-500">Orders</p><p className="mt-1 font-bold text-slate-950">{row.totalOrders || 0}</p></div>
-                      <div className="rounded-xl bg-slate-50 p-3"><p className="text-xs font-semibold text-slate-500">Last Purchase</p><p className="mt-1 font-bold text-slate-950">{row.lastPurchaseDate || "-"}</p></div>
-                      <div className="rounded-xl bg-slate-50 p-3"><p className="text-xs font-semibold text-slate-500">Purchased</p><p className="mt-1 font-bold text-slate-950">{money(row.totalPurchasedPhp)}</p></div>
-                      <div className="rounded-xl bg-rose-50 p-3"><p className="text-xs font-semibold text-rose-500">Balance</p><p className="mt-1 font-bold text-rose-700">{money(row.outstandingBalancePhp)}</p></div>
+                    <div className="flex flex-wrap items-center gap-2 text-xs lg:justify-end">
+                      <div className="rounded-xl bg-slate-50 px-3 py-2"><p className="text-[11px] font-semibold text-slate-500">Orders</p><p className="font-bold text-slate-950">{row.totalOrders || 0}</p></div>
+                      <div className="rounded-xl bg-slate-50 px-3 py-2"><p className="text-[11px] font-semibold text-slate-500">Purchased</p><p className="font-bold text-slate-950">{money(row.totalPurchasedPhp)}</p></div>
+                      <div className={`${Number(row.outstandingBalancePhp) > 0 ? "bg-rose-50" : "bg-slate-50"} rounded-xl px-3 py-2`}><p className="text-[11px] font-semibold text-rose-500">Balance</p><p className="font-bold text-rose-700">{money(row.outstandingBalancePhp)}</p></div>
+                      <button type="button" onClick={() => setExpandedCustomerId(expanded ? "" : key)} className="rounded-xl border border-slate-300 px-3 py-2 text-xs font-bold text-slate-700">{expanded ? "Hide" : "Orders"}</button>
+                      <button type="button" onClick={() => editRow(row)} className="rounded-xl border border-slate-300 px-3 py-2 text-xs font-bold text-slate-700">Edit</button>
                     </div>
                   </div>
-                  <div className="flex flex-wrap gap-2 border-t border-slate-100 px-4 py-3"><button type="button" onClick={() => setExpandedCustomerId(expanded ? "" : row.customerId)} className="rounded-xl border border-slate-300 px-3 py-2 text-xs font-bold text-slate-700">{expanded ? "Hide Orders" : "View Orders"}</button><button type="button" onClick={() => editRow(row)} className="rounded-xl border border-slate-300 px-3 py-2 text-xs font-bold text-slate-700">Edit Customer</button></div>
                   {expanded ? (
-                    <div className="border-t border-slate-100 p-4">
-                      <h3 className="mb-3 text-sm font-bold text-slate-950">Purchased Items / Orders</h3>
-                      <div className="overflow-x-auto rounded-xl border border-slate-200">
+                    <div className="border-t border-slate-100 bg-slate-50/60 p-4">
+                      <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+                        <h3 className="text-sm font-bold text-slate-950">Order History</h3>
+                        <p className="text-xs font-semibold text-slate-500">Last purchase: {row.lastPurchaseDate || "-"}</p>
+                      </div>
+                      <div className="max-h-80 overflow-auto rounded-xl border border-slate-200 bg-white">
                         <table className="min-w-full text-left text-xs">
-                          <thead className="bg-slate-50 text-slate-500"><tr><th className="px-3 py-2 font-semibold">Date</th><th className="px-3 py-2 font-semibold">Sale Ref</th><th className="px-3 py-2 font-semibold">Item</th><th className="px-3 py-2 font-semibold">Qty</th><th className="px-3 py-2 font-semibold">Grand Total</th><th className="px-3 py-2 font-semibold">Paid</th><th className="px-3 py-2 font-semibold">Balance</th><th className="px-3 py-2 font-semibold">Payment</th><th className="px-3 py-2 font-semibold">Sale</th></tr></thead>
+                          <thead className="sticky top-0 bg-slate-50 text-slate-500"><tr><th className="px-3 py-2 font-semibold">Date</th><th className="px-3 py-2 font-semibold">Sale Ref</th><th className="px-3 py-2 font-semibold">Item</th><th className="px-3 py-2 font-semibold">Qty</th><th className="px-3 py-2 font-semibold">Grand Total</th><th className="px-3 py-2 font-semibold">Paid</th><th className="px-3 py-2 font-semibold">Balance</th><th className="px-3 py-2 font-semibold">Payment</th><th className="px-3 py-2 font-semibold">Sale</th></tr></thead>
                           <tbody>
                             {(row.purchases || []).map((sale, index) => <tr key={`${sale.salesRefNo}-${index}`} className="border-t border-slate-100"><td className="px-3 py-2 text-slate-700">{sale.saleDate}</td><td className="px-3 py-2 font-semibold text-slate-900">{sale.salesRefNo || "-"}</td><td className="px-3 py-2 text-slate-700">{sale.description}<p className="text-[11px] text-slate-500">{sale.specification}</p></td><td className="px-3 py-2 text-slate-700">{sale.qty}</td><td className="px-3 py-2 text-slate-700">{money(sale.grandTotalPhp)}</td><td className="px-3 py-2 text-slate-700">{money(sale.amountPaidPhp)}</td><td className="px-3 py-2 font-semibold text-rose-600">{money(sale.balancePhp)}</td><td className="px-3 py-2 text-slate-700">{sale.paymentStatus}</td><td className="px-3 py-2 text-slate-700">{sale.saleStatus}</td></tr>)}
                             {!(row.purchases || []).length ? <tr><td colSpan={9} className="px-3 py-8 text-center text-slate-500">No purchases/orders found for this customer yet.</td></tr> : null}
@@ -226,14 +241,9 @@ export default function CustomersPage() {
                 </div>
               );
             })}
-            {!filteredRows.length ? <div className="rounded-2xl border border-slate-200 p-10 text-center text-slate-500">No customers found.</div> : null}
+            {!filteredRows.length ? <div className="p-10 text-center text-slate-500">No customers found.</div> : null}
           </div>
         </div>
-      </div>
-
-      <div className="rounded-3xl border border-amber-200 bg-amber-50 p-6 shadow-sm">
-        <h2 className="text-xl font-bold text-amber-950">Next integration</h2>
-        <p className="mt-2 text-sm leading-6 text-amber-900">The next improvement is to connect this Customers list to the Sales page so customer names can auto-suggest and auto-fill contact/address details when creating a sale. For stronger matching, future Sales should save Customer ID, not only Customer Name.</p>
       </div>
     </section>
   );
