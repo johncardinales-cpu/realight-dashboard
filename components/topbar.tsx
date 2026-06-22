@@ -3,14 +3,42 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 
+type AdminProfile = {
+  name: string;
+  email: string;
+  role: "Admin";
+  initials: string;
+};
+
 export default function Topbar() {
   const router = useRouter();
   const [now, setNow] = useState<Date | null>(null);
+  const [profile, setProfile] = useState<AdminProfile | null>(null);
 
   useEffect(() => {
     setNow(new Date());
     const timer = window.setInterval(() => setNow(new Date()), 1000);
     return () => window.clearInterval(timer);
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadProfile() {
+      try {
+        const res = await fetch("/api/session/me", { cache: "no-store" });
+        if (!res.ok) return;
+        const data = await res.json();
+        if (!cancelled && data?.profile) setProfile(data.profile);
+      } catch {
+        // Keep the generic admin fallback if the profile endpoint is unavailable.
+      }
+    }
+
+    loadProfile();
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   async function logout() {
@@ -26,6 +54,10 @@ export default function Topbar() {
   const formattedTime = now
     ? now.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", second: "2-digit", hour12: true, timeZone: "Asia/Manila" })
     : "--:-- --";
+
+  const displayName = profile?.name || "Admin User";
+  const displayEmail = profile?.email || "Signed in admin";
+  const displayInitials = profile?.initials || "A";
 
   return (
     <header className="border-b border-slate-200/80 bg-white/95 px-4 py-4 backdrop-blur sm:px-5 lg:px-6">
@@ -58,12 +90,14 @@ export default function Topbar() {
 
           <div className="flex min-w-[270px] items-center gap-3 rounded-2xl border border-slate-200 bg-white px-4 py-3 shadow-sm">
             <div className="relative shrink-0">
-              <img src="https://i.pravatar.cc/120?img=12" alt="John Cardinales profile photo" className="h-12 w-12 rounded-full object-cover ring-2 ring-white" />
+              <div aria-label={`${displayName} profile`} className="flex h-12 w-12 items-center justify-center rounded-full bg-emerald-600 text-sm font-black text-white ring-2 ring-white">
+                {displayInitials}
+              </div>
               <span className="absolute bottom-0 right-0 h-3.5 w-3.5 rounded-full border-2 border-white bg-emerald-500" />
             </div>
             <div className="min-w-0 flex-1">
-              <p className="truncate text-sm font-semibold text-slate-950">John Cardinales</p>
-              <p className="truncate text-xs font-medium text-slate-500">john.cardinales@gmail.com</p>
+              <p className="truncate text-sm font-semibold text-slate-950">{displayName}</p>
+              <p className="truncate text-xs font-medium text-slate-500">{displayEmail}</p>
             </div>
             <button type="button" onClick={logout} className="rounded-xl border border-slate-200 px-3 py-2 text-xs font-bold text-slate-600 hover:bg-slate-50">Logout</button>
           </div>
