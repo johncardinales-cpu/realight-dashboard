@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useMemo, useState } from "react";
+import { FormEvent, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 
 type DeliveryForm = {
@@ -21,6 +21,24 @@ type FieldKey = keyof DeliveryForm;
 
 type ApiError = {
   error?: unknown;
+};
+
+type ItemOption = {
+  description: string;
+  specification: string;
+  unitPriceUsd?: number;
+  source?: "Pricing" | "Inventory" | "Common";
+};
+
+type PricingRow = {
+  description?: string;
+  specification?: string;
+  costPriceUsd?: number;
+};
+
+type InventoryRow = {
+  Description?: string;
+  Specification?: string;
 };
 
 const today = new Date().toISOString().slice(0, 10);
@@ -45,14 +63,14 @@ const supplierSuggestions = [
   "Suntree Electric Group Co., Ltd.",
 ];
 
-const itemSuggestions = [
-  { description: "Rail", specification: "2400 mm" },
-  { description: "Mid clamp", specification: "H35/30,L40" },
-  { description: "End clamp", specification: "H35/30,L41" },
-  { description: "L Feet", specification: "80x40" },
-  { description: "PV Combiner Box", specification: "TC20NB-1T1" },
-  { description: "DC Breaker", specification: "125A 1000V" },
-  { description: "Bluesun 5.5KW Inverter", specification: "BSM-5500BLV-48DA" },
+const commonItemSuggestions: ItemOption[] = [
+  { description: "Rail", specification: "2400 mm", source: "Common" },
+  { description: "Mid clamp", specification: "H35/30,L40", source: "Common" },
+  { description: "End clamp", specification: "H35/30,L41", source: "Common" },
+  { description: "L Feet", specification: "80x40", source: "Common" },
+  { description: "PV Combiner Box", specification: "TC20NB-1T1", source: "Common" },
+  { description: "DC Breaker", specification: "125A 1000V", source: "Common" },
+  { description: "Bluesun 5.5KW Inverter", specification: "BSM-5500BLV-48DA", source: "Common" },
 ];
 
 function cn(...classes: string[]) {
@@ -61,6 +79,45 @@ function cn(...classes: string[]) {
 
 function getErrorMessage(error: unknown, fallback = "Failed to add delivery.") {
   return error instanceof Error ? error.message : fallback;
+}
+
+function itemKey(description: string, specification: string) {
+  return `${String(description || "").trim().toLowerCase()}|||${String(specification || "").trim().toLowerCase()}`;
+}
+
+function itemValue(item: ItemOption) {
+  return `${item.description}|||${item.specification}`;
+}
+
+function cleanItem(description: unknown, specification: unknown, source: ItemOption["source"], unitPriceUsd?: unknown): ItemOption | null {
+  const cleanDescription = String(description || "").trim();
+  const cleanSpecification = String(specification || "").trim();
+  if (!cleanDescription || !cleanSpecification) return null;
+  return {
+    description: cleanDescription,
+    specification: cleanSpecification,
+    source,
+    unitPriceUsd: Number(unitPriceUsd) || undefined,
+  };
+}
+
+function combineItemOptions(...groups: ItemOption[][]) {
+  const map = new Map<string, ItemOption>();
+  for (const group of groups) {
+    for (const item of group) {
+      const key = itemKey(item.description, item.specification);
+      if (!key || key === "|||") continue;
+      const existing = map.get(key);
+      if (!existing) {
+        map.set(key, item);
+        continue;
+      }
+      if (!existing.unitPriceUsd && item.unitPriceUsd) {
+        map.set(key, { ...existing, unitPriceUsd: item.unitPriceUsd });
+      }
+    }
+  }
+  return Array.from(map.values()).sort((a, b) => `${a.description} ${a.specification}`.localeCompare(`${b.description} ${b.specification}`));
 }
 
 function Icon({ type }: { type: "truck" | "upload" | "calendar" | "box" | "dollar" | "note" | "check" | "arrow" }) {
@@ -111,15 +168,72 @@ export default function AddDeliveryPage() {
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState("");
   const [messageType, setMessageType] = useState<"success" | "error" | "">("");
+  const [pricingItems, setPricingItems] = useState<ItemOption[]>([]);
+  const [inventoryItems, setInventoryItems] = useState<ItemOption[]>([]);
+  const [pickerMessage, setPickerMessage] = useState("Loading live items...");
+
+  useEffect(() => {
+    let active = true;
+
+    async function loadLiveItems() {
+      try {
+        const [pricingRes, inventoryRes] = await Promise.allSettled([
+          fetch(`/api/pricing-base?t=${Date.now()}`, { cache: "no-store" }),
+          fetch(`/api/inventory?t=${Date.now()}`, { cache: "no-store" }),
+        ]);
+
+        if (!active) return;
+
+        if (pricingRes.status === "fulfilled" && pricingRes.value.ok) {
+          const data = await pricingRes.value.json();
+          setPricingItems(
+            Array.isArray(data)
+              ? data
+                  .map((row: PricingRow) => cleanItem(row.description, row.specification, "Pricing", row.costPriceUsd))
+                  .filter(Boolean) as ItemOption[]
+              : []
+          );
+        }
+
+        if (inventoryRes.status === "fulfilled" && inventoryRes.value.ok) {
+          const data = await inventoryRes.value.json();
+          setInventoryItems(
+            Array.isArray(data)
+              ? data
+                  .map((row: InventoryRow) => cleanItem(row.Description, row.Specification, "Inventory"))
+                  .filter(Boolean) as ItemOption[]
+              : []
+          );
+        }
+
+        setPickerMessage("");
+      } catch {
+        if (active) setPickerMessage("Live item list unavailable. You can still type the item manually.");
+      }
+    }
+
+    loadLiveItems().catch(() => {
+      if (active) setPickerMessage("Live item list unavailable. You can still type the item manually.");
+    });
+
+    return () => { active = false; };
+  }, []);
+
+  const itemOptions = useMemo(() => combineItemOptions(pricingItems, inventoryItems, commonItemSuggestions), [pricingItems, inventoryItems]);
 
   function updateField(key: FieldKey, value: string) {
     setForm((prev) => ({ ...prev, [key]: value }));
   }
 
   function chooseItem(value: string) {
-    const item = itemSuggestions.find((entry) => `${entry.description}|||${entry.specification}` === value);
+    const item = itemOptions.find((entry) => itemValue(entry) === value);
     if (!item) return;
-    setForm((prev) => ({ ...prev, description: item.description, specification: item.specification }));
+    setForm((prev) => ({
+      ...prev,
+      description: item.description,
+      specification: item.specification,
+      unitPriceUsd: item.unitPriceUsd && !prev.unitPriceUsd ? String(item.unitPriceUsd) : prev.unitPriceUsd,
+    }));
   }
 
   const totalCost = useMemo(() => {
@@ -191,15 +305,16 @@ export default function AddDeliveryPage() {
             </div>
           </SectionCard>
 
-          <SectionCard title="Item Information" subtitle="Choose an existing item or type a new product/specification." icon="box">
+          <SectionCard title="Item Information" subtitle="Choose from live pricing/inventory, or type a new product/specification." icon="box">
             <div className="mb-4">
               <label className="block">
                 <span className="text-sm font-semibold text-slate-700">Quick item picker</span>
                 <select defaultValue="" onChange={(event) => chooseItem(event.target.value)} className="mt-2 w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-700 outline-none focus:border-emerald-300 focus:ring-4 focus:ring-emerald-50">
-                  <option value="">Select common solar item</option>
-                  {itemSuggestions.map((item) => <option key={`${item.description}-${item.specification}`} value={`${item.description}|||${item.specification}`}>{item.description} · {item.specification}</option>)}
+                  <option value="">Select live inventory/pricing item</option>
+                  {itemOptions.map((item) => <option key={itemValue(item)} value={itemValue(item)}>{item.description} · {item.specification}{item.source ? ` (${item.source})` : ""}</option>)}
                 </select>
               </label>
+              <p className="mt-2 text-xs font-medium text-slate-500">{pickerMessage || `${itemOptions.length} item(s) available from live pricing/inventory.`}</p>
             </div>
             <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
               <Field label="Description" value={form.description} onChange={(value) => updateField("description", value)} placeholder="Rail, Inverter, Battery..." required />
