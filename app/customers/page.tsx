@@ -35,6 +35,18 @@ type CustomerRow = {
   purchases?: PurchaseRow[];
 };
 
+type UnpaidOrder = {
+  key: string;
+  saleDate: string;
+  salesRefNo: string;
+  grandTotalPhp: number;
+  amountPaidPhp: number;
+  balancePhp: number;
+  paymentStatus: string;
+  saleStatus: string;
+  lineCount: number;
+};
+
 const emptyForm = {
   rowNumber: 0,
   customerId: "",
@@ -58,6 +70,41 @@ function money(value: number | undefined) {
 
 function customerKey(row: CustomerRow) {
   return row.customerId || `${row.rowNumber}-${row.customerName}`;
+}
+
+function inactiveSale(value: string) {
+  return ["cancelled", "canceled", "void", "voided"].includes(String(value || "").trim().toLowerCase());
+}
+
+function unpaidOrdersFor(row: CustomerRow) {
+  const map = new Map<string, UnpaidOrder>();
+
+  (row.purchases || [])
+    .filter((sale) => Number(sale.balancePhp) > 0 && !inactiveSale(sale.saleStatus))
+    .forEach((sale) => {
+      const key = sale.salesRefNo || `${sale.saleDate}-${sale.description}-${sale.specification}`;
+      const current = map.get(key) || {
+        key,
+        saleDate: sale.saleDate,
+        salesRefNo: sale.salesRefNo || "-",
+        grandTotalPhp: 0,
+        amountPaidPhp: 0,
+        balancePhp: 0,
+        paymentStatus: sale.paymentStatus || "Pending",
+        saleStatus: sale.saleStatus || "Draft",
+        lineCount: 0,
+      };
+
+      current.grandTotalPhp += Number(sale.grandTotalPhp) || 0;
+      current.amountPaidPhp += Number(sale.amountPaidPhp) || 0;
+      current.balancePhp += Number(sale.balancePhp) || 0;
+      current.paymentStatus = sale.paymentStatus || current.paymentStatus;
+      current.saleStatus = sale.saleStatus || current.saleStatus;
+      current.lineCount += 1;
+      map.set(key, current);
+    });
+
+  return Array.from(map.values()).sort((a, b) => `${b.saleDate}-${b.salesRefNo}`.localeCompare(`${a.saleDate}-${a.salesRefNo}`));
 }
 
 export default function CustomersPage() {
@@ -164,7 +211,7 @@ export default function CustomersPage() {
         <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm"><p className="text-sm font-semibold text-slate-500">Active Customers</p><p className="mt-2 text-3xl font-bold text-slate-950">{activeCount}</p></div>
         <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm"><p className="text-sm font-semibold text-slate-500">Dealers</p><p className="mt-2 text-3xl font-bold text-slate-950">{dealerCount}</p></div>
         <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm"><p className="text-sm font-semibold text-slate-500">Total Purchased</p><p className="mt-2 text-2xl font-bold text-slate-950">{money(totalPurchased)}</p></div>
-        <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm"><p className="text-sm font-semibold text-slate-500">Receivables</p><p className="mt-2 text-2xl font-bold text-rose-600">{money(totalReceivables)}</p></div>
+        <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm"><p className="text-sm font-semibold text-slate-500">Total Unpaid</p><p className="mt-2 text-2xl font-bold text-rose-600">{money(totalReceivables)}</p></div>
       </div>
 
       <div className="grid gap-6 xl:grid-cols-[420px_minmax(0,1fr)]">
@@ -201,6 +248,9 @@ export default function CustomersPage() {
               const expanded = expandedCustomerId === key;
               const contact = [row.contactPerson, row.phone, row.email].filter(Boolean).join(" · ");
               const extraInfo = [row.address, row.notes].filter(Boolean).join(" · ");
+              const totalUnpaid = Number(row.outstandingBalancePhp) || 0;
+              const unpaidOrders = unpaidOrdersFor(row);
+
               return (
                 <div key={key} className="border-b border-slate-100 bg-white last:border-b-0">
                   <div className="flex flex-col gap-3 px-4 py-3 lg:flex-row lg:items-center lg:justify-between">
@@ -209,6 +259,7 @@ export default function CustomersPage() {
                         <p className="max-w-full truncate text-sm font-bold text-slate-950">{row.customerName}</p>
                         <span className={`rounded-full px-2.5 py-1 text-[11px] font-bold ${row.status === "Active" ? "bg-emerald-50 text-emerald-700" : row.status === "Watchlist" ? "bg-amber-50 text-amber-700" : "bg-slate-100 text-slate-600"}`}>{row.status || "Active"}</span>
                         <span className="rounded-full bg-slate-100 px-2.5 py-1 text-[11px] font-bold text-slate-700">{row.customerType || "Retail"}</span>
+                        {totalUnpaid > 0 ? <span className="rounded-full bg-rose-50 px-2.5 py-1 text-[11px] font-bold text-rose-700">Unpaid</span> : null}
                       </div>
                       {contact ? <p className="mt-1 truncate text-xs text-slate-600">{contact}</p> : null}
                       {extraInfo ? <p className="mt-1 truncate text-xs text-slate-500">{extraInfo}</p> : null}
@@ -216,13 +267,36 @@ export default function CustomersPage() {
                     <div className="flex flex-wrap items-center gap-2 text-xs lg:justify-end">
                       <div className="rounded-xl bg-slate-50 px-3 py-2"><p className="text-[11px] font-semibold text-slate-500">Orders</p><p className="font-bold text-slate-950">{row.totalOrders || 0}</p></div>
                       <div className="rounded-xl bg-slate-50 px-3 py-2"><p className="text-[11px] font-semibold text-slate-500">Purchased</p><p className="font-bold text-slate-950">{money(row.totalPurchasedPhp)}</p></div>
-                      <div className={`${Number(row.outstandingBalancePhp) > 0 ? "bg-rose-50" : "bg-slate-50"} rounded-xl px-3 py-2`}><p className="text-[11px] font-semibold text-rose-500">Balance</p><p className="font-bold text-rose-700">{money(row.outstandingBalancePhp)}</p></div>
+                      <div className={`${totalUnpaid > 0 ? "border border-rose-100 bg-rose-50" : "bg-slate-50"} rounded-xl px-3 py-2`}><p className="text-[11px] font-semibold text-rose-500">Total Unpaid</p><p className="font-bold text-rose-700">{money(totalUnpaid)}</p></div>
                       <button type="button" onClick={() => setExpandedCustomerId(expanded ? "" : key)} className="rounded-xl border border-slate-300 px-3 py-2 text-xs font-bold text-slate-700">{expanded ? "Hide" : "Orders"}</button>
                       <button type="button" onClick={() => editRow(row)} className="rounded-xl border border-slate-300 px-3 py-2 text-xs font-bold text-slate-700">Edit</button>
                     </div>
                   </div>
                   {expanded ? (
                     <div className="border-t border-slate-100 bg-slate-50/60 p-4">
+                      <div className="mb-4 grid gap-3 md:grid-cols-4">
+                        <div className="rounded-xl border border-slate-200 bg-white p-3"><p className="text-[11px] font-semibold text-slate-500">Total Unpaid Balance</p><p className="mt-1 text-base font-bold text-rose-700">{money(totalUnpaid)}</p></div>
+                        <div className="rounded-xl border border-slate-200 bg-white p-3"><p className="text-[11px] font-semibold text-slate-500">Unpaid Orders</p><p className="mt-1 text-base font-bold text-slate-950">{unpaidOrders.length}</p></div>
+                        <div className="rounded-xl border border-slate-200 bg-white p-3"><p className="text-[11px] font-semibold text-slate-500">Total Paid</p><p className="mt-1 text-base font-bold text-emerald-700">{money(row.totalPaidPhp)}</p></div>
+                        <div className="rounded-xl border border-slate-200 bg-white p-3"><p className="text-[11px] font-semibold text-slate-500">Last Purchase</p><p className="mt-1 text-base font-bold text-slate-950">{row.lastPurchaseDate || "-"}</p></div>
+                      </div>
+
+                      {unpaidOrders.length ? (
+                        <div className="mb-4">
+                          <h3 className="mb-2 text-sm font-bold text-slate-950">Unpaid Orders</h3>
+                          <div className="max-h-56 overflow-auto rounded-xl border border-rose-100 bg-white">
+                            <table className="min-w-full text-left text-xs">
+                              <thead className="sticky top-0 bg-rose-50 text-rose-700"><tr><th className="px-3 py-2 font-semibold">Date</th><th className="px-3 py-2 font-semibold">Sale Ref</th><th className="px-3 py-2 font-semibold">Lines</th><th className="px-3 py-2 font-semibold">Grand Total</th><th className="px-3 py-2 font-semibold">Paid</th><th className="px-3 py-2 font-semibold">Balance</th><th className="px-3 py-2 font-semibold">Payment</th></tr></thead>
+                              <tbody>
+                                {unpaidOrders.map((order) => <tr key={order.key} className="border-t border-rose-50"><td className="px-3 py-2 text-slate-700">{order.saleDate}</td><td className="px-3 py-2 font-semibold text-slate-900">{order.salesRefNo}</td><td className="px-3 py-2 text-slate-700">{order.lineCount}</td><td className="px-3 py-2 text-slate-700">{money(order.grandTotalPhp)}</td><td className="px-3 py-2 text-slate-700">{money(order.amountPaidPhp)}</td><td className="px-3 py-2 font-bold text-rose-700">{money(order.balancePhp)}</td><td className="px-3 py-2 text-slate-700">{order.paymentStatus}</td></tr>)}
+                              </tbody>
+                            </table>
+                          </div>
+                        </div>
+                      ) : totalUnpaid > 0 ? (
+                        <p className="mb-4 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-800">This customer has an unpaid balance. Open Sales/Payments for older unpaid order details if they are not shown in this recent history list.</p>
+                      ) : null}
+
                       <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
                         <h3 className="text-sm font-bold text-slate-950">Order History</h3>
                         <p className="text-xs font-semibold text-slate-500">Last purchase: {row.lastPurchaseDate || "-"}</p>
