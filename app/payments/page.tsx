@@ -53,12 +53,31 @@ function today() {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
 }
 
+function normalizeDate(value: string | number | undefined) {
+  const raw = String(value || "").trim();
+  if (!raw) return "";
+  if (/^\d{4}-\d{2}-\d{2}/.test(raw)) return raw.slice(0, 10);
+  if (/^\d{1,2}\/\d{1,2}\/\d{2,4}$/.test(raw)) {
+    const [month, day, yearRaw] = raw.split("/").map(Number);
+    const year = yearRaw < 100 ? 2000 + yearRaw : yearRaw;
+    return `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+  }
+  if (/^\d+(\.\d+)?$/.test(raw)) {
+    const serial = Number(raw);
+    if (serial > 20000 && serial < 90000) {
+      return new Date(Math.floor(serial - 25569) * 86400 * 1000).toISOString().slice(0, 10);
+    }
+  }
+  const parsed = new Date(raw);
+  return Number.isNaN(parsed.getTime()) ? raw : `${parsed.getFullYear()}-${String(parsed.getMonth() + 1).padStart(2, "0")}-${String(parsed.getDate()).padStart(2, "0")}`;
+}
+
 function norm(value: string) {
   return String(value || "").trim().toLowerCase();
 }
 
 function toDate(value: string) {
-  const raw = String(value || today()).slice(0, 10);
+  const raw = normalizeDate(value || today());
   const [year, month, day] = raw.split("-").map(Number);
   const date = year && month && day ? new Date(year, month - 1, day) : new Date();
   return Number.isNaN(date.getTime()) ? new Date() : date;
@@ -87,7 +106,7 @@ function periodRange(mode: HistoryMode, anchorValue: string) {
 }
 
 function inRange(date: string, start: string, end: string) {
-  const d = String(date || "").slice(0, 10);
+  const d = normalizeDate(date);
   return d >= start && d <= end;
 }
 
@@ -256,8 +275,17 @@ export default function PaymentsPage() {
       <div className="grid gap-6 xl:grid-cols-[1.2fr_0.8fr]">
         <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
           <h2 className="mb-4 text-xl font-semibold text-slate-900">Open Balances</h2>
-          <div className="overflow-x-auto rounded-2xl border border-slate-200"><table className="w-full text-sm"><thead className="bg-slate-100 text-slate-700"><tr>{["Date", "Sales Ref", "Customer", "Total", "Paid", "Balance", "Payment", "Sale", "Action"].map((head) => <th key={head} className="px-4 py-3 text-left font-medium whitespace-nowrap">{head}</th>)}</tr></thead><tbody>{openBalances.map((row) => <tr key={row.key} className="border-t border-slate-100"><td className="px-4 py-3 text-slate-700">{row.saleDate}</td><td className="px-4 py-3 text-slate-700">{row.salesRefNo}</td><td className="px-4 py-3 text-slate-700">{row.customerName}</td><td className="px-4 py-3 text-slate-700">{money(row.totalSalePhp)}</td><td className="px-4 py-3 text-slate-700">{money(row.totalPaidPhp)}</td><td className="px-4 py-3 font-bold text-slate-900">{money(row.balancePhp)}</td><td className="px-4 py-3"><StatusPill value={displayPaymentStatus(row)} /></td><td className="px-4 py-3"><StatusPill value={row.saleStatus} /></td><td className="px-4 py-3"><button type="button" onClick={() => selectSale(row.key)} className="rounded-xl bg-emerald-600 px-3 py-2 text-xs font-bold text-white shadow-sm">Add Payment</button></td></tr>)}{!openBalances.length && <tr><td colSpan={9} className="px-4 py-8 text-center text-slate-500">No open balances found.</td></tr>}</tbody></table></div>
+          <div className="overflow-x-auto rounded-2xl border border-slate-200">
+            <table className="w-full text-sm">
+              <thead className="bg-slate-100 text-slate-700"><tr>{["Date", "Sales Ref", "Customer", "Total", "Paid", "Balance", "Payment", "Sale", "Action"].map((head) => <th key={head} className="px-4 py-3 text-left font-medium whitespace-nowrap">{head}</th>)}</tr></thead>
+              <tbody>
+                {openBalances.map((row) => <tr key={row.key} className="border-t border-slate-100"><td className="px-4 py-3 text-slate-700">{normalizeDate(row.saleDate)}</td><td className="px-4 py-3 text-slate-700">{row.salesRefNo}</td><td className="px-4 py-3 text-slate-700">{row.customerName}</td><td className="px-4 py-3 text-slate-700">{money(row.totalSalePhp)}</td><td className="px-4 py-3 text-slate-700">{money(row.totalPaidPhp)}</td><td className="px-4 py-3 font-bold text-slate-900">{money(row.balancePhp)}</td><td className="px-4 py-3"><StatusPill value={displayPaymentStatus(row)} /></td><td className="px-4 py-3"><StatusPill value={row.saleStatus} /></td><td className="px-4 py-3"><button type="button" onClick={() => selectSale(row.key)} className="rounded-xl bg-emerald-600 px-3 py-2 text-xs font-bold text-white shadow-sm">Add Payment</button></td></tr>)}
+                {!openBalances.length && <tr><td colSpan={9} className="px-4 py-8 text-center text-slate-500">No open balances found.</td></tr>}
+              </tbody>
+            </table>
+          </div>
         </div>
+
         <form onSubmit={savePayment} className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm space-y-4">
           <h2 className="text-xl font-semibold text-slate-900">Complete Payment</h2>
           <select className="w-full rounded-xl border border-slate-300 px-3 py-2" value={selectedKey} onChange={(e) => selectSale(e.target.value)}><option value="">Select sale with balance</option>{openBalances.map((row) => <option key={row.key} value={row.key}>{row.salesRefNo} - {row.customerName} - {money(row.balancePhp)}</option>)}</select>
@@ -280,19 +308,14 @@ export default function PaymentsPage() {
             <p className="mt-1 text-xs font-semibold text-slate-600">Showing {activeHistoryRange.start} to {activeHistoryRange.end} • {filteredHistory.length} record(s) • {money(historyTotal)} collected</p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
-            <select value={historyMode} onChange={(e) => changeHistoryMode(e.target.value as HistoryMode)} className="rounded-xl border border-slate-300 px-3 py-2 text-sm font-semibold text-slate-700">
-              <option value="daily">Daily</option>
-              <option value="weekly">Weekly</option>
-              <option value="monthly">Monthly</option>
-              <option value="custom">Custom Range</option>
-            </select>
+            <select value={historyMode} onChange={(e) => changeHistoryMode(e.target.value as HistoryMode)} className="rounded-xl border border-slate-300 px-3 py-2 text-sm font-semibold text-slate-700"><option value="daily">Daily</option><option value="weekly">Weekly</option><option value="monthly">Monthly</option><option value="custom">Custom Range</option></select>
             {historyMode === "custom" ? <><input type="date" value={historyStart} onChange={(e) => setHistoryStart(e.target.value)} className="rounded-xl border border-slate-300 px-3 py-2 text-sm font-semibold text-slate-700" /><span className="text-xs font-bold text-slate-400">to</span><input type="date" value={historyEnd} onChange={(e) => setHistoryEnd(e.target.value)} className="rounded-xl border border-slate-300 px-3 py-2 text-sm font-semibold text-slate-700" /></> : <input type="date" value={historyDate} onChange={(e) => changeHistoryDate(e.target.value)} className="rounded-xl border border-slate-300 px-3 py-2 text-sm font-semibold text-slate-700" />}
           </div>
         </div>
         <div className="mt-4 overflow-x-auto rounded-2xl border border-slate-200">
           <table className="w-full text-sm">
             <thead className="bg-slate-100 text-slate-700"><tr>{["Date", "Sales Ref", "Customer", "Type", "Method", "Amount", "Running Paid", "Balance After", "Status", "Reference", "Cashier", "Notes"].map((head) => <th key={head} className="px-4 py-3 text-left font-medium whitespace-nowrap">{head}</th>)}</tr></thead>
-            <tbody>{filteredHistory.map((entry, index) => <tr key={`${entry.paymentId}-${entry.entryType}-${index}`} className="border-t border-slate-100"><td className="px-4 py-3 text-slate-700">{entry.paymentDate}</td><td className="px-4 py-3 text-slate-700">{entry.salesRefNo}</td><td className="px-4 py-3 text-slate-700">{entry.customerName}</td><td className="px-4 py-3 text-slate-700">{entry.entryType}</td><td className="px-4 py-3 text-slate-700">{entry.paymentMethod}</td><td className="px-4 py-3 font-semibold text-slate-900">{money(entry.amountPaidPhp)}</td><td className="px-4 py-3 text-slate-700">{money(entry.runningPaidPhp)}</td><td className="px-4 py-3 font-semibold text-slate-900">{money(entry.balanceAfterPhp)}</td><td className="px-4 py-3"><StatusPill value={entry.paymentStatus} /></td><td className="px-4 py-3 text-slate-700">{entry.transactionRef || "-"}</td><td className="px-4 py-3 text-slate-700">{entry.cashierName || "-"}</td><td className="px-4 py-3 text-slate-700">{entry.notes || "-"}</td></tr>)}<PaymentActivityRows start={activeHistoryRange.start} end={activeHistoryRange.end} />{!filteredHistory.length && <tr><td colSpan={12} className="px-4 py-8 text-center text-slate-500">No payment history for this selected period.</td></tr>}</tbody>
+            <tbody>{filteredHistory.map((entry, index) => <tr key={`${entry.paymentId}-${entry.entryType}-${index}`} className="border-t border-slate-100"><td className="px-4 py-3 text-slate-700">{normalizeDate(entry.paymentDate)}</td><td className="px-4 py-3 text-slate-700">{entry.salesRefNo}</td><td className="px-4 py-3 text-slate-700">{entry.customerName}</td><td className="px-4 py-3 text-slate-700">{entry.entryType}</td><td className="px-4 py-3 text-slate-700">{entry.paymentMethod}</td><td className="px-4 py-3 font-semibold text-slate-900">{money(entry.amountPaidPhp)}</td><td className="px-4 py-3 text-slate-700">{money(entry.runningPaidPhp)}</td><td className="px-4 py-3 font-semibold text-slate-900">{money(entry.balanceAfterPhp)}</td><td className="px-4 py-3"><StatusPill value={entry.paymentStatus} /></td><td className="px-4 py-3 text-slate-700">{entry.transactionRef || "-"}</td><td className="px-4 py-3 text-slate-700">{entry.cashierName || "-"}</td><td className="px-4 py-3 text-slate-700">{entry.notes || "-"}</td></tr>)}<PaymentActivityRows start={activeHistoryRange.start} end={activeHistoryRange.end} />{!filteredHistory.length && <tr><td colSpan={12} className="px-4 py-8 text-center text-slate-500">No payment history for this selected period.</td></tr>}</tbody>
           </table>
         </div>
       </div>
