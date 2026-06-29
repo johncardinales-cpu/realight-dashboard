@@ -157,7 +157,7 @@ function isActiveCustomerSale(sale: ReturnType<typeof parseSale>) {
 }
 
 function attachSalesHistory(customers: any[], salesRows: string[][]) {
-  const sales = salesRows.slice(1).map(parseSale).filter((sale) => sale.customerName && sale.description && sale.qty > 0);
+  const sales = salesRows.slice(1).map(parseSale).filter((sale) => sale.customerName && sale.description && sale.grandTotalPhp > 0);
   return customers.map((customer) => {
     const customerKey = normalizeName(customer.customerName);
     const customerSales = sales.filter((sale) => normalizeName(sale.customerName) === customerKey);
@@ -191,7 +191,7 @@ export async function GET() {
 
     const [customerResponse, salesResponse] = await Promise.all([
       sheets.spreadsheets.values.get({ spreadsheetId: SHEET_ID, range: `${CUSTOMERS_SHEET}!A:J` }).catch(() => ({ data: { values: [] } })),
-      sheets.spreadsheets.values.get({ spreadsheetId: SHEET_ID, range: `${SALES_SHEET}!A:AG` }).catch(() => ({ data: { values: [] } })),
+      sheets.spreadsheets.values.get({ spreadsheetId: SHEET_ID, range: `${SALES_SHEET}!A:AJ` }).catch(() => ({ data: { values: [] } })),
     ]);
 
     const rows = (customerResponse.data.values || []) as string[][];
@@ -219,11 +219,9 @@ export async function POST(req: Request) {
     const phone = safeText(body?.phone);
     const email = safeText(body?.email);
     const address = safeText(body?.address);
-    const customerType = safeText(body?.customerType || "Retail");
-    const status = safeText(body?.status || "Active");
+    const customerType = safeText(body?.customerType) || "Retail";
+    const status = safeText(body?.status) || "Active";
     const notes = safeText(body?.notes);
-    const actor = safeText(body?.actor || "Admin");
-
     if (!customerName) return NextResponse.json({ error: "Customer Name is required" }, { status: 400 });
 
     const client = await auth.getClient();
@@ -231,39 +229,26 @@ export async function POST(req: Request) {
     await ensureSheetExists(sheets, CUSTOMERS_SHEET, CUSTOMER_HEADERS);
     await ensureSheetExists(sheets, AUDIT_LOG_SHEET, AUDIT_HEADERS);
 
-    const createdAt = safeText(body?.createdAt) || new Date().toISOString();
-    const row = [customerId, createdAt, customerName, contactPerson, phone, email, address, customerType, status, notes];
-
-    if (rowNumber) {
-      const beforeResponse = await sheets.spreadsheets.values.get({ spreadsheetId: SHEET_ID, range: `${CUSTOMERS_SHEET}!A${rowNumber}:J${rowNumber}` }).catch(() => ({ data: { values: [[]] } }));
-      const before = beforeResponse.data.values?.[0] || [];
-
-      await sheets.spreadsheets.values.update({ spreadsheetId: SHEET_ID, range: `${CUSTOMERS_SHEET}!A${rowNumber}:J${rowNumber}`, valueInputOption: "USER_ENTERED", requestBody: { values: [row] } });
-
-      await appendAuditLog(sheets, {
-        action: "UPDATE_CUSTOMER",
-        recordId: customerId,
-        recordRef: customerName,
-        actor,
-        summary: `Updated customer ${customerName}`,
-        before,
-        after: { customerId, customerName, contactPerson, phone, email, address, customerType, status, notes },
+    const row = [customerId, new Date().toISOString(), customerName, contactPerson, phone, email, address, customerType, status, notes];
+    if (rowNumber > 1) {
+      await sheets.spreadsheets.values.update({
+        spreadsheetId: SHEET_ID,
+        range: `${CUSTOMERS_SHEET}!A${rowNumber}:J${rowNumber}`,
+        valueInputOption: "USER_ENTERED",
+        requestBody: { values: [row] },
       });
-
+      await appendAuditLog(sheets, { action: "UPDATE_CUSTOMER", recordId: customerId, recordRef: customerName, actor: "Admin", summary: `Updated customer ${customerName}`, after: { customerId, customerName, contactPerson, phone, email, address, customerType, status, notes } });
       return NextResponse.json({ ok: true, mode: "updated", customerId });
     }
 
-    await sheets.spreadsheets.values.append({ spreadsheetId: SHEET_ID, range: `${CUSTOMERS_SHEET}!A:J`, valueInputOption: "USER_ENTERED", insertDataOption: "INSERT_ROWS", requestBody: { values: [row] } });
-
-    await appendAuditLog(sheets, {
-      action: "CREATE_CUSTOMER",
-      recordId: customerId,
-      recordRef: customerName,
-      actor,
-      summary: `Created customer ${customerName}`,
-      after: { customerId, customerName, contactPerson, phone, email, address, customerType, status, notes },
+    await sheets.spreadsheets.values.append({
+      spreadsheetId: SHEET_ID,
+      range: `${CUSTOMERS_SHEET}!A:J`,
+      valueInputOption: "USER_ENTERED",
+      insertDataOption: "INSERT_ROWS",
+      requestBody: { values: [row] },
     });
-
+    await appendAuditLog(sheets, { action: "CREATE_CUSTOMER", recordId: customerId, recordRef: customerName, actor: "Admin", summary: `Created customer ${customerName}`, after: { customerId, customerName, contactPerson, phone, email, address, customerType, status, notes } });
     return NextResponse.json({ ok: true, mode: "created", customerId });
   } catch (error: any) {
     console.error("CUSTOMERS POST ERROR:", error);
