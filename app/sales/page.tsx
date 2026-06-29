@@ -74,6 +74,35 @@ function toDate(value: string) {
   return y && m && day ? new Date(y, m - 1, day) : new Date();
 }
 
+function dateCode(value: string) {
+  const normalized = normDate(value || today());
+  const [year, month, day] = normalized.split("-");
+  if (!year || !month || !day) return "";
+  return `${month}${day}${year.slice(-2)}`;
+}
+
+function customerInitials(value: string) {
+  const words = String(value || "").trim().split(/\s+/).filter(Boolean);
+  if (!words.length) return "";
+  if (words.length === 1) return words[0].replace(/[^A-Za-z0-9]/g, "").slice(0, 2).toUpperCase();
+  return words.slice(0, 2).map((word) => word[0]).join("").replace(/[^A-Za-z0-9]/g, "").toUpperCase();
+}
+
+function specificationCode(value: string) {
+  const firstPart = String(value || "").trim().split("-")[0] || "";
+  return firstPart.replace(/[^A-Za-z0-9]/g, "").toUpperCase().slice(0, 20);
+}
+
+function buildSalesRef(customerName: string, items: SaleLine[], saleDate: string) {
+  const initials = customerInitials(customerName);
+  const firstItem = items.find((item) => item.specification && Number(item.qty) > 0);
+  const qty = Number(firstItem?.qty) || 0;
+  const spec = specificationCode(firstItem?.specification || "");
+  const date = dateCode(saleDate);
+  if (!initials || !qty || !spec || !date) return "";
+  return `${initials}-${qty}-${spec}-${date}`;
+}
+
 function periodRange(mode: PeriodMode, value: string) {
   const start = toDate(value);
   const end = new Date(start);
@@ -242,6 +271,7 @@ export default function SalesPage() {
     const grandTotal = round(taxable + tax);
     return { subtotal: round(subtotal), charges, tax, grandTotal };
   }, [items, deliveryFeePhp, installationFeePhp, otherChargePhp, discountPhp, taxRatePct]);
+  const suggestedSalesRef = useMemo(() => buildSalesRef(customerName, items, saleDate), [customerName, items, saleDate]);
 
   const collected = Math.min(Number(amountPaidPhp) || 0, totals.grandTotal);
   const balance = round(Math.max(totals.grandTotal - collected, 0));
@@ -276,6 +306,15 @@ export default function SalesPage() {
 
     setCustomerId("");
     setCustomerName(cleanValue);
+  }
+
+  function applySuggestedSalesRef() {
+    if (!suggestedSalesRef) {
+      setAlert("Add customer name, quantity, product specification, and sale date before generating Sales Ref No.");
+      return;
+    }
+    setSalesRefNo(suggestedSalesRef);
+    setAlert("");
   }
 
   function selectProduct(i: number, value: string) {
@@ -330,10 +369,12 @@ export default function SalesPage() {
       const rule = validatePayment();
       if (rule) throw new Error(`Payment procedure blocked: ${rule}`);
 
+      const finalSalesRefNo = salesRefNo.trim() || suggestedSalesRef;
+
       const res = await fetch("/api/sales", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ saleDate, salesRefNo, customerId, customerName, paymentStatus, paymentMethod, amountPaidPhp, deliveryFeePhp, installationFeePhp, otherChargePhp, discountPhp, taxRatePct, transactionRef, cashierName, saleStatus, salesperson, notes, items: cleanItems }),
+        body: JSON.stringify({ saleDate, salesRefNo: finalSalesRefNo, customerId, customerName, paymentStatus, paymentMethod, amountPaidPhp, deliveryFeePhp, installationFeePhp, otherChargePhp, discountPhp, taxRatePct, transactionRef, cashierName, saleStatus, salesperson, notes, items: cleanItems }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data?.error || "Failed to save sale");
@@ -358,7 +399,12 @@ export default function SalesPage() {
       <form onSubmit={onSubmit} className="space-y-5 rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
         <div className="grid gap-4 md:grid-cols-3">
           <Field label="Sale Date"><input className={inputClass} type="date" value={saleDate} onChange={(e) => setSaleDate(e.target.value)} /></Field>
-          <Field label="Sales Ref No."><input className={inputClass} value={salesRefNo} onChange={(e) => setSalesRefNo(e.target.value)} /></Field>
+          <Field label="Sales Ref No." helper={suggestedSalesRef ? `Suggested: ${suggestedSalesRef}` : "Format: Initials-Qty-Spec-MMDDYY"}>
+            <div className="flex gap-2">
+              <input className={inputClass} value={salesRefNo} onChange={(e) => setSalesRefNo(e.target.value.toUpperCase().replace(/\s+/g, ""))} placeholder="RS-11-BSM610M10-042425" />
+              <button type="button" onClick={applySuggestedSalesRef} className="rounded-xl border border-slate-300 px-3 text-xs font-bold text-slate-700">Generate</button>
+            </div>
+          </Field>
           <Field label="Customer Search" helper="Type freely, select an exact customer from the list, or clear it anytime.">
             <div className="flex gap-2">
               <input list="customer-options" className={inputClass} value={customerSearch} onChange={(e) => selectCustomer(e.target.value)} placeholder="Search or type customer name" />
