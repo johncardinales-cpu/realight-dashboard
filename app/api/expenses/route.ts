@@ -6,7 +6,7 @@ const SUPPLIER_COSTS_SHEET = "Supplier_Invoice_Costs";
 const AUDIT_LOG_SHEET = "Audit_Log";
 const SALES_SHEET = "Sales";
 
-const EXPENSE_HEADERS = ["Expense Date", "Category", "Description", "Base Amount", "Tax / VAT / Fee", "Total Amount", "Payment Method", "Reference No.", "Related Sales Ref No.", "Payee", "Notes", "Created At", "Expense ID"];
+const EXPENSE_HEADERS = ["Expense Date", "Category", "Description", "Base Amount", "Tax / VAT / Fee", "Total Amount", "Payment Method", "Reference No.", "Related Sales Ref No.", "Payee", "Notes", "Created At", "Expense ID", "Customer / Expense For"];
 const SUPPLIER_HEADERS = ["Upload Date", "Supplier", "Batch / Reference", "Invoice No.", "Invoice Valid", "Product Subtotal", "Freight Cost", "Delivery Cost", "Customs Cost", "Other Cost", "Total Invoice Cost", "Notes"];
 const AUDIT_HEADERS = ["Audit ID", "Created At", "Module", "Action", "Record ID", "Record Ref", "Actor", "Summary", "Before JSON", "After JSON"];
 
@@ -111,9 +111,10 @@ function parseExpenseRow(row: string[], header: string[]) {
   const paymentMethod = map["Payment Method"] || "";
   const relatedSalesRefNo = map["Related Sales Ref No."] || "";
   const payee = map["Payee"] || "";
+  const customerName = map["Customer / Expense For"] || map["Customer"] || map["Expense For"] || "";
   const expenseId = map["Expense ID"] || "";
   if (!date && !description && !totalAmount) return null;
-  return { Date: date, Category: category, Description: description, BaseAmount: baseAmount, TaxFee: taxFee, Amount: totalAmount, PaymentMethod: paymentMethod, Reference: reference, RelatedSalesRefNo: relatedSalesRefNo, Payee: payee, Source: "Expenses", Notes: notes, ExpenseID: expenseId };
+  return { Date: date, Category: category, Description: description, BaseAmount: baseAmount, TaxFee: taxFee, Amount: totalAmount, PaymentMethod: paymentMethod, Reference: reference, RelatedSalesRefNo: relatedSalesRefNo, CustomerName: customerName, Payee: payee, Source: "Expenses", Notes: notes, ExpenseID: expenseId };
 }
 
 function parseSupplierRow(row: string[]) {
@@ -131,7 +132,7 @@ function parseSupplierRow(row: string[]) {
   const taxFee = customsCost + otherCost;
   const baseAmount = productSubtotal + freightCost + deliveryCost;
   if (!date && !supplier && !totalInvoiceCost) return null;
-  return { Date: date, Category: "Supplier Invoice Cost", Description: supplier, BaseAmount: baseAmount || totalInvoiceCost, TaxFee: taxFee, Amount: totalInvoiceCost, PaymentMethod: "", Reference: invoiceNo || batchReference, RelatedSalesRefNo: "", Payee: supplier, Source: "Supplier_Invoice_Costs", Notes: notes, ExpenseID: "" };
+  return { Date: date, Category: "Supplier Invoice Cost", Description: supplier, BaseAmount: baseAmount || totalInvoiceCost, TaxFee: taxFee, Amount: totalInvoiceCost, PaymentMethod: "", Reference: invoiceNo || batchReference, RelatedSalesRefNo: "", CustomerName: "", Payee: supplier, Source: "Supplier_Invoice_Costs", Notes: notes, ExpenseID: "" };
 }
 
 async function ensureSupplierSheetExists(sheets: any) {
@@ -144,7 +145,7 @@ export async function GET() {
     await ensureSheetExists(sheets, EXPENSES_SHEET, EXPENSE_HEADERS);
     await ensureSupplierSheetExists(sheets);
     const [expensesRes, supplierRes] = await Promise.all([
-      sheets.spreadsheets.values.get({ spreadsheetId: SHEET_ID, range: `${EXPENSES_SHEET}!A:M` }).catch(() => ({ data: { values: [] } })),
+      sheets.spreadsheets.values.get({ spreadsheetId: SHEET_ID, range: `${EXPENSES_SHEET}!A:N` }).catch(() => ({ data: { values: [] } })),
       sheets.spreadsheets.values.get({ spreadsheetId: SHEET_ID, range: `${SUPPLIER_COSTS_SHEET}!A:L` }),
     ]);
     const expenseRows = expensesRes.data.values || [];
@@ -179,6 +180,7 @@ export async function POST(req: Request) {
     const referenceNo = safeText(body?.referenceNo);
     const relatedSalesRefNo = safeText(body?.relatedSalesRefNo);
     const payee = safeText(body?.payee);
+    const customerName = safeText(body?.customerName || body?.expenseFor);
     const notes = safeText(body?.notes);
     const actor = safeText(body?.actor || "Admin");
     if (!expenseDate) return NextResponse.json({ error: "Expense Date is required" }, { status: 400 });
@@ -196,10 +198,10 @@ export async function POST(req: Request) {
     const expenseId = makeId("EXP");
     await sheets.spreadsheets.values.append({
       spreadsheetId: SHEET_ID,
-      range: `${EXPENSES_SHEET}!A:M`,
+      range: `${EXPENSES_SHEET}!A:N`,
       valueInputOption: "USER_ENTERED",
       insertDataOption: "INSERT_ROWS",
-      requestBody: { values: [[expenseDate, category, description, baseAmount, taxFee, totalAmount, paymentMethod, referenceNo, relatedSalesRefNo, payee, notes, createdAt, expenseId]] },
+      requestBody: { values: [[expenseDate, category, description, baseAmount, taxFee, totalAmount, paymentMethod, referenceNo, relatedSalesRefNo, payee, notes, createdAt, expenseId, customerName]] },
     });
     await appendAuditLog(sheets, {
       module: "Expenses",
@@ -207,10 +209,10 @@ export async function POST(req: Request) {
       recordId: expenseId,
       recordRef: referenceNo || relatedSalesRefNo || category,
       actor,
-      summary: `Recorded expense ${totalAmount} for ${category}: ${description}${taxFee ? ` including tax/fee ${taxFee}` : ""}${relatedSalesRefNo ? ` linked to sale ${relatedSalesRefNo}` : ""}`,
-      after: { expenseId, expenseDate, category, description, baseAmount, taxFee, totalAmount, paymentMethod, referenceNo, relatedSalesRefNo, payee, notes },
+      summary: `Recorded expense ${totalAmount} for ${customerName ? `${customerName} / ` : ""}${category}: ${description}${taxFee ? ` including tax/fee ${taxFee}` : ""}${relatedSalesRefNo ? ` linked to sale ${relatedSalesRefNo}` : ""}`,
+      after: { expenseId, expenseDate, category, description, baseAmount, taxFee, totalAmount, paymentMethod, referenceNo, relatedSalesRefNo, customerName, payee, notes },
     });
-    return NextResponse.json({ ok: true, expenseId, baseAmount, taxFee, totalAmount });
+    return NextResponse.json({ ok: true, expenseId, baseAmount, taxFee, totalAmount, customerName });
   } catch (error: any) {
     console.error("EXPENSES POST ERROR:", error);
     return NextResponse.json({ error: error?.message || String(error) || "Failed to save expense" }, { status: 500 });
