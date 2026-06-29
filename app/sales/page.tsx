@@ -16,26 +16,158 @@ const paymentStatusOptions = ["Pending", "Paid", "Partial"];
 const paymentMethodOptions = ["", "Cash", "Bank Transfer", "GCash", "Maya", "Check", "Credit", "Installment", "Mixed Payment"];
 const saleStatusOptions = ["Draft", "Confirmed", "Cancelled"];
 
-function money(value: number) { return `PHP ${(Number(value) || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`; }
-function round(value: number) { return Math.round((Number(value) || 0) * 100) / 100; }
-function itemKey(description: string, specification: string) { return `${String(description || "").trim()}|||${String(specification || "").trim()}`; }
-function productLabel(row: PriceRow) { return `${row.description} | ${row.specification}`; }
-function customerLabel(row: CustomerRow) { return `${row.customerName}${row.phone ? ` | ${row.phone}` : ""}${row.customerType ? ` | ${row.customerType}` : ""}`; }
-function invoiceKey(row: SavedSale) { return encodeURIComponent(row.saleId || row.groupRef || row.salesRefNo); }
-function openInvoice(row: SavedSale) { window.open(`/invoices/${invoiceKey(row)}`, "_blank", "noopener,noreferrer"); }
-function statusFrom(paid: number, total: number) { const p = round(paid); const t = round(total); if (t <= 0 || p <= 0) return "Pending"; return p + 0.009 >= t ? "Paid" : "Partial"; }
-function normDate(value: string) { const raw = String(value || "").trim(); if (!raw) return ""; if (/^\d{4}-\d{2}-\d{2}/.test(raw)) return raw.slice(0, 10); const parsed = new Date(raw); return Number.isNaN(parsed.getTime()) ? raw.slice(0, 10) : `${parsed.getFullYear()}-${String(parsed.getMonth() + 1).padStart(2, "0")}-${String(parsed.getDate()).padStart(2, "0")}`; }
-function today() { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`; }
-function toDate(value: string) { const d = normDate(value); const [y, m, day] = d.split("-").map(Number); return y && m && day ? new Date(y, m - 1, day) : new Date(); }
-function periodRange(mode: PeriodMode, value: string) { const start = toDate(value); const end = new Date(start); if (mode === "weekly") { const day = start.getDay(); const offset = day === 0 ? -6 : 1 - day; start.setDate(start.getDate() + offset); end.setTime(start.getTime()); end.setDate(start.getDate() + 6); } if (mode === "monthly") { start.setDate(1); end.setTime(start.getTime()); end.setMonth(start.getMonth() + 1, 0); } const f = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`; return { start: f(start), end: f(end) }; }
-function inPeriod(date: string, start: string, end: string) { const d = normDate(date); return d >= start && d <= end; }
-function titleForMode(mode: PeriodMode) { return mode === "weekly" ? "Weekly" : mode === "monthly" ? "Monthly" : "Daily"; }
-function isInactive(value: string) { return ["cancelled", "canceled", "voided"].includes(String(value || "").toLowerCase()); }
-function StatusPill({ value }: { value: string }) { const v = value || "Pending"; const n = v.toLowerCase(); const color = n === "confirmed" || n === "paid" ? "bg-emerald-50 text-emerald-700" : n === "partial" ? "bg-amber-50 text-amber-700" : isInactive(v) ? "bg-rose-50 text-rose-700" : "bg-slate-100 text-slate-700"; return <span className={`rounded-full px-2.5 py-1 text-xs font-bold ${color}`}>{v}</span>; }
-function Field({ label, children, helper }: { label: string; children: React.ReactNode; helper?: string }) { return <label className="block space-y-1"><span className="block text-xs font-bold uppercase tracking-wide text-slate-600">{label}</span>{children}{helper ? <span className="block text-[11px] text-slate-500">{helper}</span> : null}</label>; }
-function summaryKey(row: { saleId?: string; groupRef?: string; salesRefNo?: string }) { return row.saleId || row.groupRef || row.salesRefNo || ""; }
-function buildPaymentMap(payments: PaySummary[]) { const map = new Map<string, PaySummary>(); payments.forEach((p) => [p.saleId, p.groupRef, p.salesRefNo, p.key].filter(Boolean).forEach((k) => map.set(String(k), p))); return map; }
-function summarizeSavedSales(rows: SavedSale[], payments: PaySummary[]) { const paymentMap = buildPaymentMap(payments); const map = new Map<string, SaleSummary>(); rows.forEach((row) => { const key = summaryKey(row) || `${row.saleDate}-${row.customerName}`; const current = map.get(key) || { key, saleDate: row.saleDate, salesRefNo: row.salesRefNo, customerName: row.customerName, totalSalePhp: 0, paidPhp: 0, balancePhp: 0, paymentStatus: "Pending", saleStatus: row.saleStatus || "Draft", paymentMethod: row.paymentMethod || "", lineCount: 0, deliveryFeePhp: 0, grossProfitPhp: 0, sampleRow: row }; current.totalSalePhp = round(current.totalSalePhp + (Number(row.grandTotalPhp ?? row.totalSalePhp) || 0)); current.paidPhp = round(current.paidPhp + (Number(row.amountPaidPhp) || 0)); current.balancePhp = round(current.balancePhp + (Number(row.balancePhp) || 0)); current.deliveryFeePhp = round(current.deliveryFeePhp + (Number(row.deliveryFeePhp) || 0)); current.grossProfitPhp = round(current.grossProfitPhp + (Number(row.grossProfitPhp) || 0)); current.lineCount += 1; current.saleStatus = row.saleStatus || current.saleStatus; if (!current.paymentMethod && row.paymentMethod) current.paymentMethod = row.paymentMethod; map.set(key, current); }); return Array.from(map.values()).map((s) => { const p = paymentMap.get(s.key) || paymentMap.get(s.sampleRow.saleId || "") || paymentMap.get(s.sampleRow.groupRef || "") || paymentMap.get(s.salesRefNo || ""); if (p && !isInactive(s.saleStatus)) return { ...s, paidPhp: round(p.totalPaidPhp), balancePhp: round(p.balancePhp), paymentStatus: p.paymentStatus || statusFrom(p.totalPaidPhp, p.totalSalePhp), saleStatus: p.saleStatus || s.saleStatus }; const paid = round(Math.min(Math.max(s.paidPhp, 0), s.totalSalePhp)); return { ...s, paidPhp: paid, balancePhp: round(Math.max(s.totalSalePhp - paid, 0)), paymentStatus: statusFrom(paid, s.totalSalePhp) }; }).sort((a, b) => `${b.saleDate}-${b.salesRefNo}`.localeCompare(`${a.saleDate}-${a.salesRefNo}`)); }
+function money(value: number) {
+  return `PHP ${(Number(value) || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+}
+
+function round(value: number) {
+  return Math.round((Number(value) || 0) * 100) / 100;
+}
+
+function itemKey(description: string, specification: string) {
+  return `${String(description || "").trim()}|||${String(specification || "").trim()}`;
+}
+
+function productLabel(row: PriceRow) {
+  return `${row.description} | ${row.specification}`;
+}
+
+function customerLabel(row: CustomerRow) {
+  return `${row.customerName}${row.phone ? ` | ${row.phone}` : ""}${row.customerType ? ` | ${row.customerType}` : ""}`;
+}
+
+function invoiceKey(row: SavedSale) {
+  return encodeURIComponent(row.saleId || row.groupRef || row.salesRefNo);
+}
+
+function openInvoice(row: SavedSale) {
+  window.open(`/invoices/${invoiceKey(row)}`, "_blank", "noopener,noreferrer");
+}
+
+function statusFrom(paid: number, total: number) {
+  const p = round(paid);
+  const t = round(total);
+  if (t <= 0 || p <= 0) return "Pending";
+  return p + 0.009 >= t ? "Paid" : "Partial";
+}
+
+function normDate(value: string) {
+  const raw = String(value || "").trim();
+  if (!raw) return "";
+  if (/^\d{4}-\d{2}-\d{2}/.test(raw)) return raw.slice(0, 10);
+  if (/^\d+(\.\d+)?$/.test(raw)) {
+    const serial = Number(raw);
+    if (serial > 20000 && serial < 90000) return new Date(Math.floor(serial - 25569) * 86400 * 1000).toISOString().slice(0, 10);
+  }
+  const parsed = new Date(raw);
+  return Number.isNaN(parsed.getTime()) ? raw.slice(0, 10) : `${parsed.getFullYear()}-${String(parsed.getMonth() + 1).padStart(2, "0")}-${String(parsed.getDate()).padStart(2, "0")}`;
+}
+
+function today() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
+function toDate(value: string) {
+  const d = normDate(value);
+  const [y, m, day] = d.split("-").map(Number);
+  return y && m && day ? new Date(y, m - 1, day) : new Date();
+}
+
+function periodRange(mode: PeriodMode, value: string) {
+  const start = toDate(value);
+  const end = new Date(start);
+  if (mode === "weekly") {
+    const day = start.getDay();
+    const offset = day === 0 ? -6 : 1 - day;
+    start.setDate(start.getDate() + offset);
+    end.setTime(start.getTime());
+    end.setDate(start.getDate() + 6);
+  }
+  if (mode === "monthly") {
+    start.setDate(1);
+    end.setTime(start.getTime());
+    end.setMonth(start.getMonth() + 1, 0);
+  }
+  const f = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  return { start: f(start), end: f(end) };
+}
+
+function inPeriod(date: string, start: string, end: string) {
+  const d = normDate(date);
+  return d >= start && d <= end;
+}
+
+function titleForMode(mode: PeriodMode) {
+  return mode === "weekly" ? "Weekly" : mode === "monthly" ? "Monthly" : "Daily";
+}
+
+function isInactive(value: string) {
+  return ["cancelled", "canceled", "voided"].includes(String(value || "").toLowerCase());
+}
+
+function StatusPill({ value }: { value: string }) {
+  const v = value || "Pending";
+  const n = v.toLowerCase();
+  const color = n === "confirmed" || n === "paid" ? "bg-emerald-50 text-emerald-700" : n === "partial" ? "bg-amber-50 text-amber-700" : isInactive(v) ? "bg-rose-50 text-rose-700" : "bg-slate-100 text-slate-700";
+  return <span className={`rounded-full px-2.5 py-1 text-xs font-bold ${color}`}>{v}</span>;
+}
+
+function Field({ label, children, helper }: { label: string; children: React.ReactNode; helper?: string }) {
+  return <label className="block space-y-1"><span className="block text-xs font-bold uppercase tracking-wide text-slate-600">{label}</span>{children}{helper ? <span className="block text-[11px] text-slate-500">{helper}</span> : null}</label>;
+}
+
+function summaryKey(row: { saleId?: string; groupRef?: string; salesRefNo?: string }) {
+  return row.saleId || row.groupRef || row.salesRefNo || "";
+}
+
+function buildPaymentMap(payments: PaySummary[]) {
+  const map = new Map<string, PaySummary>();
+  payments.forEach((p) => [p.saleId, p.groupRef, p.salesRefNo, p.key].filter(Boolean).forEach((k) => map.set(String(k), p)));
+  return map;
+}
+
+function summarizeSavedSales(rows: SavedSale[], payments: PaySummary[]) {
+  const paymentMap = buildPaymentMap(payments);
+  const map = new Map<string, SaleSummary>();
+
+  rows.forEach((row) => {
+    const key = summaryKey(row) || `${row.saleDate}-${row.customerName}`;
+    const current = map.get(key) || {
+      key,
+      saleDate: normDate(row.saleDate),
+      salesRefNo: row.salesRefNo,
+      customerName: row.customerName,
+      totalSalePhp: 0,
+      paidPhp: 0,
+      balancePhp: 0,
+      paymentStatus: "Pending",
+      saleStatus: row.saleStatus || "Draft",
+      paymentMethod: row.paymentMethod || "",
+      lineCount: 0,
+      deliveryFeePhp: 0,
+      grossProfitPhp: 0,
+      sampleRow: row,
+    };
+
+    current.totalSalePhp = round(current.totalSalePhp + (Number(row.grandTotalPhp ?? row.totalSalePhp) || 0));
+    current.paidPhp = round(current.paidPhp + (Number(row.amountPaidPhp) || 0));
+    current.balancePhp = round(current.balancePhp + (Number(row.balancePhp) || 0));
+    current.deliveryFeePhp = round(current.deliveryFeePhp + (Number(row.deliveryFeePhp) || 0));
+    current.grossProfitPhp = round(current.grossProfitPhp + (Number(row.grossProfitPhp) || 0));
+    current.lineCount += 1;
+    current.saleStatus = row.saleStatus || current.saleStatus;
+    if (!current.paymentMethod && row.paymentMethod) current.paymentMethod = row.paymentMethod;
+    map.set(key, current);
+  });
+
+  return Array.from(map.values()).map((s) => {
+    const p = paymentMap.get(s.key) || paymentMap.get(s.sampleRow.saleId || "") || paymentMap.get(s.sampleRow.groupRef || "") || paymentMap.get(s.salesRefNo || "");
+    if (p && !isInactive(s.saleStatus)) return { ...s, paidPhp: round(p.totalPaidPhp), balancePhp: round(p.balancePhp), paymentStatus: p.paymentStatus || statusFrom(p.totalPaidPhp, p.totalSalePhp), saleStatus: p.saleStatus || s.saleStatus };
+    const paid = round(Math.min(Math.max(s.paidPhp, 0), s.totalSalePhp));
+    return { ...s, paidPhp: paid, balancePhp: round(Math.max(s.totalSalePhp - paid, 0)), paymentStatus: statusFrom(paid, s.totalSalePhp) };
+  }).sort((a, b) => `${b.saleDate}-${b.salesRefNo}`.localeCompare(`${a.saleDate}-${a.salesRefNo}`));
+}
 
 export default function SalesPage() {
   const [pricing, setPricing] = useState<PriceRow[]>([]);
@@ -75,11 +207,13 @@ export default function SalesPage() {
       fetch(`/api/payments?t=${Date.now()}`, { cache: "no-store" }),
       fetch(`/api/inventory?t=${Date.now()}`, { cache: "no-store" }),
     ]);
+
     const salesData = await salesRes.json();
     const pricingData = await pricingRes.json();
     const customersData = await customersRes.json();
     const paymentsData = await paymentsRes.json();
     const inventoryData = await inventoryRes.json();
+
     setRows(Array.isArray(salesData) ? salesData : []);
     setPricing(Array.isArray(pricingData) ? pricingData : []);
     setCustomers(Array.isArray(customersData) ? customersData : []);
@@ -100,18 +234,90 @@ export default function SalesPage() {
   const filteredRows = useMemo(() => rows.filter((row) => inPeriod(row.saleDate, range.start, range.end)), [rows, range.start, range.end]);
   const saleSummaries = useMemo(() => summarizeSavedSales(filteredRows, payments), [filteredRows, payments]);
   const filteredTotals = useMemo(() => ({ sales: saleSummaries.reduce((sum, sale) => sum + sale.totalSalePhp, 0), paid: saleSummaries.reduce((sum, sale) => sum + sale.paidPhp, 0), balance: saleSummaries.reduce((sum, sale) => sum + sale.balancePhp, 0) }), [saleSummaries]);
-  const totals = useMemo(() => { const subtotal = items.reduce((a, x) => a + ((Number(x.qty) || 0) * (Number(x.unitPricePhp) || 0)), 0); const charges = round((Number(deliveryFeePhp) || 0) + (Number(installationFeePhp) || 0) + (Number(otherChargePhp) || 0)); const taxable = round(Math.max(subtotal + charges - (Number(discountPhp) || 0), 0)); const tax = round(taxable * ((Number(taxRatePct) || 0) / 100)); const grandTotal = round(taxable + tax); return { subtotal: round(subtotal), charges, tax, grandTotal }; }, [items, deliveryFeePhp, installationFeePhp, otherChargePhp, discountPhp, taxRatePct]);
+  const totals = useMemo(() => {
+    const subtotal = items.reduce((a, x) => a + ((Number(x.qty) || 0) * (Number(x.unitPricePhp) || 0)), 0);
+    const charges = round((Number(deliveryFeePhp) || 0) + (Number(installationFeePhp) || 0) + (Number(otherChargePhp) || 0));
+    const taxable = round(Math.max(subtotal + charges - (Number(discountPhp) || 0), 0));
+    const tax = round(taxable * ((Number(taxRatePct) || 0) / 100));
+    const grandTotal = round(taxable + tax);
+    return { subtotal: round(subtotal), charges, tax, grandTotal };
+  }, [items, deliveryFeePhp, installationFeePhp, otherChargePhp, discountPhp, taxRatePct]);
+
   const collected = Math.min(Number(amountPaidPhp) || 0, totals.grandTotal);
   const balance = round(Math.max(totals.grandTotal - collected, 0));
   const change = round(Math.max((Number(amountPaidPhp) || 0) - totals.grandTotal, 0));
 
   function getAvailable(item: SaleLine) { return stockMap.get(itemKey(item.description, item.specification)); }
   function getRequested(item: SaleLine) { return requestedQtyMap.get(itemKey(item.description, item.specification)) || 0; }
-  function selectCustomer(value: string) { setCustomerSearch(value); const q = value.toLowerCase(); const match = customers.find((c) => customerLabel(c).toLowerCase() === q) || customers.find((c) => customerLabel(c).toLowerCase().includes(q) || c.customerName.toLowerCase().includes(q)); if (match) { setCustomerId(match.customerId || ""); setCustomerName(match.customerName); setCustomerSearch(customerLabel(match)); } else { setCustomerId(""); setCustomerName(value); } }
-  function selectProduct(i: number, value: string) { const q = value.toLowerCase(); const match = pricing.find((p) => productLabel(p).toLowerCase() === q) || pricing.find((p) => productLabel(p).toLowerCase().includes(q)); setItems((prev) => prev.map((x, idx) => idx === i ? match ? { productSearch: productLabel(match), description: match.description, specification: match.specification, qty: x.qty || 1, unitPricePhp: match.sellingPricePhp || 0 } : { ...x, productSearch: value } : x)); }
-  function updateItem(i: number, patch: Partial<SaleLine>) { setItems((prev) => prev.map((x, idx) => idx === i ? { ...x, ...patch } : x)); }
-  function validatePayment() { const s = paymentStatus.toLowerCase(); const m = paymentMethod.toLowerCase(); if (s === "pending" && collected > 0) return "Pending payment cannot have a paid amount."; if (s === "partial" && collected <= 0) return "Partial needs a paid amount."; if (s === "partial" && collected + 0.009 >= totals.grandTotal) return "Partial already covers full total. Use Paid."; if (s === "partial" && m === "cash") return "Partial payment cannot use plain Cash. Use Installment or Mixed Payment."; if (s === "paid" && collected + 0.009 < totals.grandTotal) return `Paid is short by ${money(balance)}. Use Partial.`; return ""; }
-  function resetForm() { setSaleDate(today()); setSalesRefNo(""); setCustomerId(""); setCustomerSearch(""); setCustomerName(""); setPaymentStatus("Pending"); setPaymentMethod(""); setAmountPaidPhp(0); setDeliveryFeePhp(0); setInstallationFeePhp(0); setOtherChargePhp(0); setDiscountPhp(0); setTaxRatePct(0); setTransactionRef(""); setCashierName(""); setSaleStatus("Draft"); setSalesperson(""); setNotes(""); setItems([{ ...emptyLine }]); }
+
+  function clearCustomer() {
+    setCustomerSearch("");
+    setCustomerId("");
+    setCustomerName("");
+  }
+
+  function selectCustomer(value: string) {
+    setCustomerSearch(value);
+    const cleanValue = value.trim();
+    if (!cleanValue) {
+      clearCustomer();
+      return;
+    }
+
+    const q = cleanValue.toLowerCase();
+    const exactMatch = customers.find((c) => customerLabel(c).toLowerCase() === q || c.customerName.toLowerCase() === q);
+
+    if (exactMatch) {
+      setCustomerId(exactMatch.customerId || "");
+      setCustomerName(exactMatch.customerName);
+      setCustomerSearch(customerLabel(exactMatch));
+      return;
+    }
+
+    setCustomerId("");
+    setCustomerName(cleanValue);
+  }
+
+  function selectProduct(i: number, value: string) {
+    const q = value.toLowerCase();
+    const match = pricing.find((p) => productLabel(p).toLowerCase() === q) || pricing.find((p) => productLabel(p).toLowerCase().includes(q));
+    setItems((prev) => prev.map((x, idx) => idx === i ? match ? { productSearch: productLabel(match), description: match.description, specification: match.specification, qty: x.qty || 1, unitPricePhp: match.sellingPricePhp || 0 } : { ...x, productSearch: value } : x));
+  }
+
+  function updateItem(i: number, patch: Partial<SaleLine>) {
+    setItems((prev) => prev.map((x, idx) => idx === i ? { ...x, ...patch } : x));
+  }
+
+  function validatePayment() {
+    const s = paymentStatus.toLowerCase();
+    const m = paymentMethod.toLowerCase();
+    if (s === "pending" && collected > 0) return "Pending payment cannot have a paid amount.";
+    if (s === "partial" && collected <= 0) return "Partial needs a paid amount.";
+    if (s === "partial" && collected + 0.009 >= totals.grandTotal) return "Partial already covers full total. Use Paid.";
+    if (s === "partial" && m === "cash") return "Partial payment cannot use plain Cash. Use Installment or Mixed Payment.";
+    if (s === "paid" && collected + 0.009 < totals.grandTotal) return `Paid is short by ${money(balance)}. Use Partial.`;
+    return "";
+  }
+
+  function resetForm() {
+    setSaleDate(today());
+    setSalesRefNo("");
+    clearCustomer();
+    setPaymentStatus("Pending");
+    setPaymentMethod("");
+    setAmountPaidPhp(0);
+    setDeliveryFeePhp(0);
+    setInstallationFeePhp(0);
+    setOtherChargePhp(0);
+    setDiscountPhp(0);
+    setTaxRatePct(0);
+    setTransactionRef("");
+    setCashierName("");
+    setSaleStatus("Draft");
+    setSalesperson("");
+    setNotes("");
+    setItems([{ ...emptyLine }]);
+  }
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -123,6 +329,7 @@ export default function SalesPage() {
       if (stockIssue) throw new Error(`Low stock blocked: ${stockIssue}`);
       const rule = validatePayment();
       if (rule) throw new Error(`Payment procedure blocked: ${rule}`);
+
       const res = await fetch("/api/sales", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -140,5 +347,114 @@ export default function SalesPage() {
     }
   }
 
-  return <section className="space-y-6"><div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm"><h1 className="text-3xl font-semibold text-slate-900">Sales</h1><p className="mt-1 text-sm text-slate-600">Create customer sales and review reconciled paid/balance totals. Low stock is blocked before saving.</p>{alert ? <p className="mt-4 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-semibold text-slate-700">{alert}</p> : null}</div><form onSubmit={onSubmit} className="space-y-5 rounded-3xl border border-slate-200 bg-white p-6 shadow-sm"><div className="grid gap-4 md:grid-cols-3"><Field label="Sale Date"><input className={inputClass} type="date" value={saleDate} onChange={(e) => setSaleDate(e.target.value)} /></Field><Field label="Sales Ref No."><input className={inputClass} value={salesRefNo} onChange={(e) => setSalesRefNo(e.target.value)} /></Field><Field label="Customer Search"><input list="customer-options" className={inputClass} value={customerSearch || customerName} onChange={(e) => selectCustomer(e.target.value)} /></Field><datalist id="customer-options">{customerOptions.map((x) => <option key={x} value={x} />)}</datalist><Field label="Customer Name"><input className={inputClass} value={customerName} onChange={(e) => setCustomerName(e.target.value)} /></Field><Field label="Payment Status"><select className={inputClass} value={paymentStatus} onChange={(e) => setPaymentStatus(e.target.value)}>{paymentStatusOptions.map((x) => <option key={x}>{x}</option>)}</select></Field><Field label="Salesperson"><input className={inputClass} value={salesperson} onChange={(e) => setSalesperson(e.target.value)} /></Field></div><div className="rounded-2xl border border-slate-200 p-4"><h2 className="mb-1 text-lg font-bold text-slate-900">Product Lines</h2><p className="mb-3 text-xs text-slate-500">Available qty is live sellable stock after confirmed sales. Save is blocked if requested qty is higher than available.</p>{stockIssue ? <p className="mb-3 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-sm font-bold text-rose-700">Low stock: {stockIssue}</p> : null}<datalist id="product-options">{productOptions.map((x) => <option key={x} value={x} />)}</datalist>{items.map((item, i) => { const available = getAvailable(item); const requested = getRequested(item); const isLow = available !== undefined && requested > available; return <div key={i} className="mb-3 grid gap-3 md:grid-cols-[1.2fr_1fr_1fr_0.45fr_0.55fr_0.7fr_auto]"><input list="product-options" className={inputClass} placeholder="Search product" value={item.productSearch || ""} onChange={(e) => selectProduct(i, e.target.value)} /><input className={inputClass} placeholder="Description" value={item.description} onChange={(e) => updateItem(i, { description: e.target.value })} /><input className={inputClass} placeholder="Specification" value={item.specification} onChange={(e) => updateItem(i, { specification: e.target.value })} /><input className={`${inputClass} ${isLow ? "border-rose-400 bg-rose-50" : ""}`} type="number" min="1" value={item.qty} onChange={(e) => updateItem(i, { qty: Number(e.target.value) })} /><div className={`rounded-xl border px-3 py-2 text-xs font-bold ${isLow ? "border-rose-300 bg-rose-50 text-rose-700" : "border-emerald-200 bg-emerald-50 text-emerald-700"}`}>Avail: {available ?? "-"}</div><input className={inputClass} type="number" value={item.unitPricePhp} onChange={(e) => updateItem(i, { unitPricePhp: Number(e.target.value) })} /><button type="button" className="rounded-xl border px-3 text-sm font-bold" onClick={() => setItems((p) => p.length === 1 ? p : p.filter((_, idx) => idx !== i))}>Remove</button></div>; })}<button type="button" onClick={() => setItems((p) => [...p, { ...emptyLine }])} className="rounded-xl border border-slate-300 px-4 py-2 text-sm font-bold">Add Product Line</button></div><div className="rounded-2xl border border-emerald-100 bg-emerald-50/40 p-4"><div className="grid gap-4 md:grid-cols-4"><Field label="Payment Method"><select className={inputClass} value={paymentMethod} onChange={(e) => setPaymentMethod(e.target.value)}>{paymentMethodOptions.map((x) => <option key={x}>{x}</option>)}</select></Field><Field label="Amount Tendered / Paid"><input className={inputClass} type="number" step="0.01" value={amountPaidPhp} onChange={(e) => setAmountPaidPhp(Number(e.target.value))} /></Field><Field label="Delivery Fee"><input className={inputClass} type="number" value={deliveryFeePhp} onChange={(e) => setDeliveryFeePhp(Number(e.target.value))} /></Field><Field label="Sale Status"><select className={inputClass} value={saleStatus} onChange={(e) => setSaleStatus(e.target.value)}>{saleStatusOptions.map((x) => <option key={x}>{x}</option>)}</select></Field><Field label="Installation Fee"><input className={inputClass} type="number" value={installationFeePhp} onChange={(e) => setInstallationFeePhp(Number(e.target.value))} /></Field><Field label="Other Charge"><input className={inputClass} type="number" value={otherChargePhp} onChange={(e) => setOtherChargePhp(Number(e.target.value))} /></Field><Field label="Discount"><input className={inputClass} type="number" value={discountPhp} onChange={(e) => setDiscountPhp(Number(e.target.value))} /></Field><Field label="Tax Rate (%)"><input className={inputClass} type="number" value={taxRatePct} onChange={(e) => setTaxRatePct(Number(e.target.value))} /></Field><Field label="Transaction Ref"><input className={inputClass} value={transactionRef} onChange={(e) => setTransactionRef(e.target.value)} /></Field><Field label="Cashier Name"><input className={inputClass} value={cashierName} onChange={(e) => setCashierName(e.target.value)} /></Field><Field label="Balance"><input className={readOnlyClass} readOnly value={money(balance)} /></Field><Field label="Change Due"><input className={readOnlyClass} readOnly value={money(change)} /></Field></div><div className="mt-4 rounded-xl border border-emerald-200 bg-white p-3 text-sm font-bold text-slate-700">Product Subtotal: {money(totals.subtotal)} · Charges: {money(totals.charges)} · Tax: {money(totals.tax)} · Grand Total: {money(totals.grandTotal)}</div></div><div className="flex gap-3"><button type="submit" disabled={saving || Boolean(stockIssue)} className="rounded-xl bg-emerald-600 px-5 py-3 text-sm font-bold text-white disabled:opacity-60">{saving ? "Saving..." : stockIssue ? "Low Stock Blocked" : "Save Sale"}</button><button type="button" onClick={resetForm} className="rounded-xl border border-slate-300 px-5 py-3 text-sm font-bold">Clear</button></div></form><div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm"><div className="mb-4 flex flex-col gap-3 md:flex-row md:items-end md:justify-between"><div><h2 className="text-lg font-bold text-slate-900">Sales Ledger Filters</h2><p className="text-xs text-slate-500">Controls Sales Payment Summary and Sales Line Ledger only. Period: {range.start} to {range.end}</p></div><div className="grid gap-2 md:grid-cols-[160px_180px_auto]"><select className={inputClass} value={periodMode} onChange={(e) => setPeriodMode(e.target.value as PeriodMode)}><option value="daily">Daily</option><option value="weekly">Weekly</option><option value="monthly">Monthly</option></select><input className={inputClass} type="date" value={periodDate} onChange={(e) => setPeriodDate(e.target.value)} /><button className="rounded-xl border border-slate-300 px-4 py-2 text-sm font-bold" onClick={loadAll}>Refresh</button></div></div><div className="grid gap-3 md:grid-cols-3"><div className="rounded-xl border p-4"><p className="text-xs text-slate-500">Filtered Sales</p><p className="text-xl font-bold">{money(filteredTotals.sales)}</p></div><div className="rounded-xl border p-4"><p className="text-xs text-slate-500">Filtered Paid</p><p className="text-xl font-bold text-emerald-700">{money(filteredTotals.paid)}</p></div><div className="rounded-xl border p-4"><p className="text-xs text-slate-500">Filtered Balance</p><p className="text-xl font-bold text-rose-700">{money(filteredTotals.balance)}</p></div></div></div><div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm"><h2 className="mb-1 text-xl font-semibold text-slate-900">Sales Payment Summary</h2><p className="mb-4 text-xs text-slate-500">One row per sale for the selected {titleForMode(periodMode).toLowerCase()} period. Uses reconciled Payments/Reports balances.</p><div className="overflow-x-auto rounded-2xl border border-slate-200"><table className="w-full text-sm"><thead className="bg-slate-100"><tr>{["Date", "Sales Ref", "Invoice", "Customer", "Lines", "Grand Total", "Paid", "Balance", "Payment", "Method", "Sale", "Delivery", "Gross Profit"].map((h) => <th key={h} className="px-4 py-3 text-left font-medium whitespace-nowrap">{h}</th>)}</tr></thead><tbody>{saleSummaries.map((s) => <tr key={s.key} className="border-t"><td className="px-4 py-3">{s.saleDate}</td><td className="px-4 py-3">{s.salesRefNo}</td><td className="px-4 py-3"><button onClick={() => openInvoice(s.sampleRow)} className="rounded-lg border border-emerald-300 bg-emerald-50 px-3 py-1 text-xs font-bold text-emerald-700">View Invoice</button></td><td className="px-4 py-3">{s.customerName}</td><td className="px-4 py-3">{s.lineCount}</td><td className="px-4 py-3 font-bold">{money(s.totalSalePhp)}</td><td className="px-4 py-3 font-bold text-emerald-700">{money(s.paidPhp)}</td><td className="px-4 py-3 font-bold text-rose-700">{money(s.balancePhp)}</td><td className="px-4 py-3"><StatusPill value={s.paymentStatus} /></td><td className="px-4 py-3">{s.paymentMethod || "-"}</td><td className="px-4 py-3"><StatusPill value={s.saleStatus} /></td><td className="px-4 py-3">{money(s.deliveryFeePhp)}</td><td className="px-4 py-3">{money(s.grossProfitPhp)}</td></tr>)}{!saleSummaries.length && <tr><td colSpan={13} className="px-4 py-8 text-center text-slate-500">No sales for this period.</td></tr>}</tbody></table></div></div><div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm"><h2 className="mb-4 text-xl font-semibold text-slate-900">Sales Line Ledger</h2><div className="overflow-x-auto rounded-2xl border border-slate-200"><table className="w-full text-sm"><thead className="bg-slate-100"><tr>{["Date", "Sales Ref", "Invoice", "Customer", "Description", "Specification", "Qty", "Unit Price", "Grand Total", "Paid", "Balance", "Payment Status", "Method", "Sale Status"].map((h) => <th key={h} className="px-4 py-3 text-left font-medium whitespace-nowrap">{h}</th>)}</tr></thead><tbody>{filteredRows.map((r, i) => <tr key={`${r.saleId || r.groupRef}-${i}`} className="border-t"><td className="px-4 py-3">{r.saleDate}</td><td className="px-4 py-3">{r.salesRefNo}</td><td className="px-4 py-3"><button onClick={() => openInvoice(r)} className="rounded-lg border border-emerald-300 bg-emerald-50 px-3 py-1 text-xs font-bold text-emerald-700">View Invoice</button></td><td className="px-4 py-3">{r.customerName}</td><td className="px-4 py-3">{r.description}</td><td className="px-4 py-3">{r.specification}</td><td className="px-4 py-3">{r.qty}</td><td className="px-4 py-3">{money(r.unitPricePhp)}</td><td className="px-4 py-3">{money(Number(r.grandTotalPhp ?? r.totalSalePhp) || 0)}</td><td className="px-4 py-3">{money(r.amountPaidPhp)}</td><td className="px-4 py-3">{money(r.balancePhp)}</td><td className="px-4 py-3"><StatusPill value={r.paymentStatus} /></td><td className="px-4 py-3">{r.paymentMethod || "-"}</td><td className="px-4 py-3"><StatusPill value={r.saleStatus} /></td></tr>)}{!filteredRows.length && <tr><td colSpan={14} className="px-4 py-8 text-center text-slate-500">No sales for this period.</td></tr>}</tbody></table></div></div></section>;
+  return (
+    <section className="space-y-6">
+      <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
+        <h1 className="text-3xl font-semibold text-slate-900">Sales</h1>
+        <p className="mt-1 text-sm text-slate-600">Create customer sales and review reconciled paid/balance totals. Low stock is blocked before saving.</p>
+        {alert ? <p className="mt-4 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-semibold text-slate-700">{alert}</p> : null}
+      </div>
+
+      <form onSubmit={onSubmit} className="space-y-5 rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
+        <div className="grid gap-4 md:grid-cols-3">
+          <Field label="Sale Date"><input className={inputClass} type="date" value={saleDate} onChange={(e) => setSaleDate(e.target.value)} /></Field>
+          <Field label="Sales Ref No."><input className={inputClass} value={salesRefNo} onChange={(e) => setSalesRefNo(e.target.value)} /></Field>
+          <Field label="Customer Search" helper="Type freely, select an exact customer from the list, or clear it anytime.">
+            <div className="flex gap-2">
+              <input list="customer-options" className={inputClass} value={customerSearch} onChange={(e) => selectCustomer(e.target.value)} placeholder="Search or type customer name" />
+              <button type="button" onClick={clearCustomer} className="rounded-xl border border-slate-300 px-3 text-xs font-bold text-slate-700">Clear</button>
+            </div>
+          </Field>
+          <datalist id="customer-options">{customerOptions.map((x) => <option key={x} value={x} />)}</datalist>
+          <Field label="Customer Name"><input className={inputClass} value={customerName} onChange={(e) => { setCustomerName(e.target.value); setCustomerId(""); }} /></Field>
+          <Field label="Payment Status"><select className={inputClass} value={paymentStatus} onChange={(e) => setPaymentStatus(e.target.value)}>{paymentStatusOptions.map((x) => <option key={x}>{x}</option>)}</select></Field>
+          <Field label="Salesperson"><input className={inputClass} value={salesperson} onChange={(e) => setSalesperson(e.target.value)} /></Field>
+        </div>
+
+        <div className="rounded-2xl border border-slate-200 p-4">
+          <h2 className="mb-1 text-lg font-bold text-slate-900">Product Lines</h2>
+          <p className="mb-3 text-xs text-slate-500">Available qty is live sellable stock after confirmed sales. Save is blocked if requested qty is higher than available.</p>
+          {stockIssue ? <p className="mb-3 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-sm font-bold text-rose-700">Low stock: {stockIssue}</p> : null}
+          <datalist id="product-options">{productOptions.map((x) => <option key={x} value={x} />)}</datalist>
+          {items.map((item, i) => {
+            const available = getAvailable(item);
+            const requested = getRequested(item);
+            const isLow = available !== undefined && requested > available;
+            return (
+              <div key={i} className="mb-3 grid gap-3 md:grid-cols-[1.2fr_1fr_1fr_0.45fr_0.55fr_0.7fr_auto]">
+                <input list="product-options" className={inputClass} placeholder="Search product" value={item.productSearch || ""} onChange={(e) => selectProduct(i, e.target.value)} />
+                <input className={inputClass} placeholder="Description" value={item.description} onChange={(e) => updateItem(i, { description: e.target.value })} />
+                <input className={inputClass} placeholder="Specification" value={item.specification} onChange={(e) => updateItem(i, { specification: e.target.value })} />
+                <input className={`${inputClass} ${isLow ? "border-rose-400 bg-rose-50" : ""}`} type="number" min="1" value={item.qty} onChange={(e) => updateItem(i, { qty: Number(e.target.value) })} />
+                <div className={`rounded-xl border px-3 py-2 text-xs font-bold ${isLow ? "border-rose-300 bg-rose-50 text-rose-700" : "border-emerald-200 bg-emerald-50 text-emerald-700"}`}>Avail: {available ?? "-"}</div>
+                <input className={inputClass} type="number" value={item.unitPricePhp} onChange={(e) => updateItem(i, { unitPricePhp: Number(e.target.value) })} />
+                <button type="button" className="rounded-xl border px-3 text-sm font-bold" onClick={() => setItems((p) => p.length === 1 ? p : p.filter((_, idx) => idx !== i))}>Remove</button>
+              </div>
+            );
+          })}
+          <button type="button" onClick={() => setItems((p) => [...p, { ...emptyLine }])} className="rounded-xl border border-slate-300 px-4 py-2 text-sm font-bold">Add Product Line</button>
+        </div>
+
+        <div className="rounded-2xl border border-emerald-100 bg-emerald-50/40 p-4">
+          <div className="grid gap-4 md:grid-cols-4">
+            <Field label="Payment Method"><select className={inputClass} value={paymentMethod} onChange={(e) => setPaymentMethod(e.target.value)}>{paymentMethodOptions.map((x) => <option key={x}>{x}</option>)}</select></Field>
+            <Field label="Amount Tendered / Paid"><input className={inputClass} type="number" step="0.01" value={amountPaidPhp} onChange={(e) => setAmountPaidPhp(Number(e.target.value))} /></Field>
+            <Field label="Delivery Fee"><input className={inputClass} type="number" value={deliveryFeePhp} onChange={(e) => setDeliveryFeePhp(Number(e.target.value))} /></Field>
+            <Field label="Sale Status"><select className={inputClass} value={saleStatus} onChange={(e) => setSaleStatus(e.target.value)}>{saleStatusOptions.map((x) => <option key={x}>{x}</option>)}</select></Field>
+            <Field label="Installation Fee"><input className={inputClass} type="number" value={installationFeePhp} onChange={(e) => setInstallationFeePhp(Number(e.target.value))} /></Field>
+            <Field label="Other Charge"><input className={inputClass} type="number" value={otherChargePhp} onChange={(e) => setOtherChargePhp(Number(e.target.value))} /></Field>
+            <Field label="Discount"><input className={inputClass} type="number" value={discountPhp} onChange={(e) => setDiscountPhp(Number(e.target.value))} /></Field>
+            <Field label="Tax Rate (%)"><input className={inputClass} type="number" value={taxRatePct} onChange={(e) => setTaxRatePct(Number(e.target.value))} /></Field>
+            <Field label="Transaction Ref"><input className={inputClass} value={transactionRef} onChange={(e) => setTransactionRef(e.target.value)} /></Field>
+            <Field label="Cashier Name"><input className={inputClass} value={cashierName} onChange={(e) => setCashierName(e.target.value)} /></Field>
+            <Field label="Balance"><input className={readOnlyClass} readOnly value={money(balance)} /></Field>
+            <Field label="Change Due"><input className={readOnlyClass} readOnly value={money(change)} /></Field>
+          </div>
+          <div className="mt-4 rounded-xl border border-emerald-200 bg-white p-3 text-sm font-bold text-slate-700">Product Subtotal: {money(totals.subtotal)} - Charges: {money(totals.charges)} - Tax: {money(totals.tax)} - Grand Total: {money(totals.grandTotal)}</div>
+        </div>
+
+        <div className="flex gap-3">
+          <button type="submit" disabled={saving || Boolean(stockIssue)} className="rounded-xl bg-emerald-600 px-5 py-3 text-sm font-bold text-white disabled:opacity-60">{saving ? "Saving..." : stockIssue ? "Low Stock Blocked" : "Save Sale"}</button>
+          <button type="button" onClick={resetForm} className="rounded-xl border border-slate-300 px-5 py-3 text-sm font-bold">Clear</button>
+        </div>
+      </form>
+
+      <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
+        <div className="mb-4 flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
+          <div><h2 className="text-lg font-bold text-slate-900">Sales Ledger Filters</h2><p className="text-xs text-slate-500">Controls Sales Payment Summary and Sales Line Ledger only. Period: {range.start} to {range.end}</p></div>
+          <div className="grid gap-2 md:grid-cols-[160px_180px_auto]">
+            <select className={inputClass} value={periodMode} onChange={(e) => setPeriodMode(e.target.value as PeriodMode)}><option value="daily">Daily</option><option value="weekly">Weekly</option><option value="monthly">Monthly</option></select>
+            <input className={inputClass} type="date" value={periodDate} onChange={(e) => setPeriodDate(e.target.value)} />
+            <button type="button" className="rounded-xl border border-slate-300 px-4 py-2 text-sm font-bold" onClick={loadAll}>Refresh</button>
+          </div>
+        </div>
+        <div className="grid gap-3 md:grid-cols-3">
+          <div className="rounded-xl border p-4"><p className="text-xs text-slate-500">Filtered Sales</p><p className="text-xl font-bold">{money(filteredTotals.sales)}</p></div>
+          <div className="rounded-xl border p-4"><p className="text-xs text-slate-500">Filtered Paid</p><p className="text-xl font-bold text-emerald-700">{money(filteredTotals.paid)}</p></div>
+          <div className="rounded-xl border p-4"><p className="text-xs text-slate-500">Filtered Balance</p><p className="text-xl font-bold text-rose-700">{money(filteredTotals.balance)}</p></div>
+        </div>
+      </div>
+
+      <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
+        <h2 className="mb-1 text-xl font-semibold text-slate-900">Sales Payment Summary</h2>
+        <p className="mb-4 text-xs text-slate-500">One row per sale for the selected {titleForMode(periodMode).toLowerCase()} period. Uses reconciled Payments/Reports balances.</p>
+        <div className="overflow-x-auto rounded-2xl border border-slate-200">
+          <table className="w-full text-sm">
+            <thead className="bg-slate-100"><tr>{["Date", "Sales Ref", "Invoice", "Customer", "Lines", "Grand Total", "Paid", "Balance", "Payment", "Method", "Sale", "Delivery", "Gross Profit"].map((h) => <th key={h} className="px-4 py-3 text-left font-medium whitespace-nowrap">{h}</th>)}</tr></thead>
+            <tbody>{saleSummaries.map((s) => <tr key={s.key} className="border-t"><td className="px-4 py-3">{s.saleDate}</td><td className="px-4 py-3">{s.salesRefNo}</td><td className="px-4 py-3"><button type="button" onClick={() => openInvoice(s.sampleRow)} className="rounded-lg border border-emerald-300 bg-emerald-50 px-3 py-1 text-xs font-bold text-emerald-700">View Invoice</button></td><td className="px-4 py-3">{s.customerName}</td><td className="px-4 py-3">{s.lineCount}</td><td className="px-4 py-3 font-bold">{money(s.totalSalePhp)}</td><td className="px-4 py-3 font-bold text-emerald-700">{money(s.paidPhp)}</td><td className="px-4 py-3 font-bold text-rose-700">{money(s.balancePhp)}</td><td className="px-4 py-3"><StatusPill value={s.paymentStatus} /></td><td className="px-4 py-3">{s.paymentMethod || "-"}</td><td className="px-4 py-3"><StatusPill value={s.saleStatus} /></td><td className="px-4 py-3">{money(s.deliveryFeePhp)}</td><td className="px-4 py-3">{money(s.grossProfitPhp)}</td></tr>)}{!saleSummaries.length && <tr><td colSpan={13} className="px-4 py-8 text-center text-slate-500">No sales for this period.</td></tr>}</tbody>
+          </table>
+        </div>
+      </div>
+
+      <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
+        <h2 className="mb-4 text-xl font-semibold text-slate-900">Sales Line Ledger</h2>
+        <div className="overflow-x-auto rounded-2xl border border-slate-200">
+          <table className="w-full text-sm">
+            <thead className="bg-slate-100"><tr>{["Date", "Sales Ref", "Invoice", "Customer", "Description", "Specification", "Qty", "Unit Price", "Grand Total", "Paid", "Balance", "Payment Status", "Method", "Sale Status"].map((h) => <th key={h} className="px-4 py-3 text-left font-medium whitespace-nowrap">{h}</th>)}</tr></thead>
+            <tbody>{filteredRows.map((r, i) => <tr key={`${r.saleId || r.groupRef}-${i}`} className="border-t"><td className="px-4 py-3">{normDate(r.saleDate)}</td><td className="px-4 py-3">{r.salesRefNo}</td><td className="px-4 py-3"><button type="button" onClick={() => openInvoice(r)} className="rounded-lg border border-emerald-300 bg-emerald-50 px-3 py-1 text-xs font-bold text-emerald-700">View Invoice</button></td><td className="px-4 py-3">{r.customerName}</td><td className="px-4 py-3">{r.description}</td><td className="px-4 py-3">{r.specification}</td><td className="px-4 py-3">{r.qty}</td><td className="px-4 py-3">{money(Number(r.unitPricePhp) || 0)}</td><td className="px-4 py-3 font-bold">{money(Number(r.grandTotalPhp ?? r.totalSalePhp) || 0)}</td><td className="px-4 py-3 text-emerald-700 font-bold">{money(Number(r.amountPaidPhp) || 0)}</td><td className="px-4 py-3 text-rose-700 font-bold">{money(Number(r.balancePhp) || 0)}</td><td className="px-4 py-3"><StatusPill value={r.paymentStatus} /></td><td className="px-4 py-3">{r.paymentMethod || "-"}</td><td className="px-4 py-3"><StatusPill value={r.saleStatus} /></td></tr>)}{!filteredRows.length && <tr><td colSpan={14} className="px-4 py-8 text-center text-slate-500">No sales line entries for this period.</td></tr>}</tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+  );
 }
