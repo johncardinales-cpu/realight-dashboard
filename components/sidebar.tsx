@@ -12,11 +12,12 @@ const mainNavItems = [
   { label: "Pricing", href: "/pricing", icon: "M20.6 13.4 13.4 20.6a2 2 0 0 1-2.8 0L3 13V3h10l7.6 7.6a2 2 0 0 1 0 2.8ZM7.5 7.5h.01" },
   { label: "Customers", href: "/customers", icon: "M16 21v-2a4 4 0 0 0-8 0v2M12 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8Zm6-6a3 3 0 1 1 0 6" },
   { label: "Sales", href: "/sales", icon: "M4 19h16M7 16l4-4 3 3 5-7" },
+  { label: "Customer Charges", href: "/customer-charges", icon: "M4 7h16v10H4V7Zm3 4h10M8 15h4M16 15h1" },
   { label: "Confirm Sales", href: "/confirm-sales", icon: "M9 12l2 2 4-5M4 4h16v16H4V4Z" },
   { label: "Payments", href: "/payments", icon: "M4 7h16v10H4V7Zm0 3h16M7 15h4" },
   { label: "Expenses", href: "/expenses", icon: "M4 7h16v12H4V7Zm0 4h16M16 15h2" },
   { label: "Reports", href: "/reports", icon: "M6 3h9l3 3v15H6V3Zm8 0v4h4M9 13h6M9 17h6" },
-  { label: "AI Agents", href: "/ai-agents", icon: "M12 3c1.2 2.8 3.2 4.8 6 6-2.8 1.2-4.8 3.2-6 6-1.2-2.8-3.2-4.8-6-6 2.8-1.2 4.8-3.2 6-6Zm6 9c.7 1.6 1.8 2.7 3 3-1.2.3-2.3 1.4-3 3-.7-1.6-1.8-2.7-3-3 1.2-.3 2.3-1.4 3-3ZM6 15c.5 1.1 1.4 2 2.5 2.5C7.4 18 6.5 18.9 6 20c-.5-1.1-1.4-2-2.5-2.5C4.6 17 5.5 16.1 6 15Z" },
+  { label: "AI Agents", href: "/ai-agents", icon: "M12 3c1.2 2.8 3.2 4.8 6 6-2.8 1.2-4.8 3.2-6 6-1.2-2.8-3.2-4.8-6-6 2.8-1.2 4.8-3.2 6-6Zm6 9c.7 1.6 1.8 2.7 3 3-1.2.3-2.3 1.4-3 3-.7-1.6-1.8-2.7-3-3 1.2-.3 2.3-3 3-3ZM6 15c.5 1.1 1.4 2 2.5 2.5C7.4 18 6.5 18.9 6 20c-.5-1.1-1.4-1.4-2.5-2.5C4.6 17 5.5 16.1 6 15Z" },
 ];
 
 const adminNavItems = [
