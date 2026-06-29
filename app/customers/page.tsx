@@ -15,6 +15,26 @@ type PurchaseRow = {
   saleStatus: string;
 };
 
+type PaymentHistoryRow = {
+  entryType: string;
+  paymentDate: string;
+  salesRefNo: string;
+  groupRef: string;
+  customerName: string;
+  paymentMethod: string;
+  amountPaidPhp: number;
+  transactionRef: string;
+  cashierName: string;
+  notes: string;
+  paymentStatus: string;
+  totalSalePhp: number;
+  runningPaidPhp: number;
+  balanceAfterPhp: number;
+  saleStatus: string;
+  createdAt: string;
+  paymentId: string;
+};
+
 type CustomerRow = {
   rowNumber: number;
   customerId: string;
@@ -87,12 +107,20 @@ function normalizeDate(value: string | undefined) {
   return Number.isNaN(parsed.getTime()) ? raw : parsed.toISOString().slice(0, 10);
 }
 
+function normalizedName(value: string | undefined) {
+  return String(value || "").trim().toLowerCase().replace(/\s+/g, " ");
+}
+
 function customerKey(row: CustomerRow) {
   return row.customerId || `${row.rowNumber}-${row.customerName}`;
 }
 
 function inactiveSale(value: string) {
   return ["cancelled", "canceled", "void", "voided"].includes(String(value || "").trim().toLowerCase());
+}
+
+function inactivePayment(value: string) {
+  return ["voided", "cancelled", "canceled"].includes(String(value || "").trim().toLowerCase());
 }
 
 function unpaidOrdersFor(row: CustomerRow) {
@@ -129,6 +157,7 @@ function unpaidOrdersFor(row: CustomerRow) {
 
 export default function CustomersPage() {
   const [rows, setRows] = useState<CustomerRow[]>([]);
+  const [paymentHistory, setPaymentHistory] = useState<PaymentHistoryRow[]>([]);
   const [form, setForm] = useState(emptyForm);
   const [search, setSearch] = useState("");
   const [message, setMessage] = useState("Loading customers...");
@@ -138,11 +167,19 @@ export default function CustomersPage() {
   async function loadRows() {
     setMessage("Loading customers...");
     try {
-      const res = await fetch("/api/customers", { cache: "no-store" });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data?.error || "Failed to load customers");
-      setRows(Array.isArray(data) ? data : []);
-      setMessage("");
+      const [customersRes, paymentsRes] = await Promise.all([
+        fetch("/api/customers", { cache: "no-store" }),
+        fetch(`/api/payments?history=1&t=${Date.now()}`, { cache: "no-store" }),
+      ]);
+
+      const customersData = await customersRes.json();
+      const paymentsData = await paymentsRes.json().catch(() => []);
+
+      if (!customersRes.ok) throw new Error(customersData?.error || "Failed to load customers");
+
+      setRows(Array.isArray(customersData) ? customersData : []);
+      setPaymentHistory(paymentsRes.ok && Array.isArray(paymentsData) ? paymentsData : []);
+      setMessage(paymentsRes.ok ? "" : "Customers loaded. Payment history is temporarily unavailable.");
     } catch (error: any) {
       setMessage(error?.message || "Failed to load customers.");
     }
@@ -167,6 +204,17 @@ export default function CustomersPage() {
   const dealerCount = rows.filter((row) => row.customerType === "Dealer").length;
   const totalReceivables = rows.reduce((sum, row) => sum + (Number(row.outstandingBalancePhp) || 0), 0);
   const totalPurchased = rows.reduce((sum, row) => sum + (Number(row.totalPurchasedPhp) || 0), 0);
+
+  function paymentRowsFor(row: CustomerRow) {
+    const key = normalizedName(row.customerName);
+    return paymentHistory
+      .filter((payment) => normalizedName(payment.customerName) === key)
+      .sort((a, b) => `${normalizeDate(b.paymentDate)}-${b.createdAt}-${b.paymentId}`.localeCompare(`${normalizeDate(a.paymentDate)}-${a.createdAt}-${a.paymentId}`));
+  }
+
+  function paymentTotalFor(payments: PaymentHistoryRow[]) {
+    return payments.reduce((sum, payment) => sum + (inactivePayment(payment.paymentStatus) ? 0 : Number(payment.amountPaidPhp) || 0), 0);
+  }
 
   function updateField<K extends keyof typeof emptyForm>(key: K, value: (typeof emptyForm)[K]) {
     setForm((prev) => ({ ...prev, [key]: value }));
@@ -271,6 +319,8 @@ export default function CustomersPage() {
               const totalUnpaid = Number(row.outstandingBalancePhp) || 0;
               const unpaidOrders = unpaidOrdersFor(row);
               const lastPurchaseDate = normalizeDate(row.lastPurchaseDate);
+              const customerPayments = paymentRowsFor(row);
+              const totalReceived = paymentTotalFor(customerPayments) || Number(row.totalPaidPhp) || 0;
 
               return (
                 <div key={key} className="border-b border-slate-100 bg-white last:border-b-0">
@@ -287,19 +337,19 @@ export default function CustomersPage() {
                     </div>
                     <div className="flex flex-wrap items-center gap-2 text-xs lg:justify-end">
                       <div className="rounded-xl bg-slate-50 px-3 py-2"><p className="text-[11px] font-semibold text-slate-500">Orders</p><p className="font-bold text-slate-950">{row.totalOrders || 0}</p></div>
-                      <div className="rounded-xl bg-slate-50 px-3 py-2"><p className="text-[11px] font-semibold text-slate-500">Purchased</p><p className="font-bold text-slate-950">{money(row.totalPurchasedPhp)}</p></div>
-                      <div className={`${totalUnpaid > 0 ? "border border-rose-100 bg-rose-50" : "bg-slate-50"} rounded-xl px-3 py-2`}><p className="text-[11px] font-semibold text-rose-500">Total Unpaid</p><p className="font-bold text-rose-700">{money(totalUnpaid)}</p></div>
-                      <button type="button" onClick={() => setExpandedCustomerId(expanded ? "" : key)} className="rounded-xl border border-slate-300 px-3 py-2 text-xs font-bold text-slate-700">{expanded ? "Hide" : "Orders"}</button>
+                      <div className="rounded-xl bg-slate-50 px-3 py-2"><p className="text-[11px] font-semibold text-slate-500">Received</p><p className="font-bold text-emerald-700">{money(totalReceived)}</p></div>
+                      <div className={`${totalUnpaid > 0 ? "border border-rose-100 bg-rose-50" : "bg-slate-50"} rounded-xl px-3 py-2`}><p className="text-[11px] font-semibold text-rose-500">Balance Remaining</p><p className="font-bold text-rose-700">{money(totalUnpaid)}</p></div>
+                      <button type="button" onClick={() => setExpandedCustomerId(expanded ? "" : key)} className="rounded-xl border border-slate-300 px-3 py-2 text-xs font-bold text-slate-700">{expanded ? "Hide" : "Records"}</button>
                       <button type="button" onClick={() => editRow(row)} className="rounded-xl border border-slate-300 px-3 py-2 text-xs font-bold text-slate-700">Edit</button>
                     </div>
                   </div>
                   {expanded ? (
                     <div className="border-t border-slate-100 bg-slate-50/60 p-4">
                       <div className="mb-4 grid gap-3 md:grid-cols-4">
-                        <div className="rounded-xl border border-slate-200 bg-white p-3"><p className="text-[11px] font-semibold text-slate-500">Total Unpaid Balance</p><p className="mt-1 text-base font-bold text-rose-700">{money(totalUnpaid)}</p></div>
+                        <div className="rounded-xl border border-slate-200 bg-white p-3"><p className="text-[11px] font-semibold text-slate-500">Balance Remaining</p><p className="mt-1 text-base font-bold text-rose-700">{money(totalUnpaid)}</p></div>
                         <div className="rounded-xl border border-slate-200 bg-white p-3"><p className="text-[11px] font-semibold text-slate-500">Unpaid Orders</p><p className="mt-1 text-base font-bold text-slate-950">{unpaidOrders.length}</p></div>
-                        <div className="rounded-xl border border-slate-200 bg-white p-3"><p className="text-[11px] font-semibold text-slate-500">Total Paid</p><p className="mt-1 text-base font-bold text-emerald-700">{money(row.totalPaidPhp)}</p></div>
-                        <div className="rounded-xl border border-slate-200 bg-white p-3"><p className="text-[11px] font-semibold text-slate-500">Last Purchase</p><p className="mt-1 text-base font-bold text-slate-950">{lastPurchaseDate || "-"}</p></div>
+                        <div className="rounded-xl border border-slate-200 bg-white p-3"><p className="text-[11px] font-semibold text-slate-500">Amount Received</p><p className="mt-1 text-base font-bold text-emerald-700">{money(totalReceived)}</p></div>
+                        <div className="rounded-xl border border-slate-200 bg-white p-3"><p className="text-[11px] font-semibold text-slate-500">Payment Records</p><p className="mt-1 text-base font-bold text-slate-950">{customerPayments.length}</p></div>
                       </div>
 
                       {unpaidOrders.length ? (
@@ -317,6 +367,19 @@ export default function CustomersPage() {
                       ) : totalUnpaid > 0 ? (
                         <p className="mb-4 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-800">This customer has an unpaid balance. Open Sales/Payments for older unpaid order details if they are not shown in this recent history list.</p>
                       ) : null}
+
+                      <div className="mb-4">
+                        <h3 className="mb-2 text-sm font-bold text-slate-950">Payment History</h3>
+                        <div className="max-h-56 overflow-auto rounded-xl border border-emerald-100 bg-white">
+                          <table className="min-w-full text-left text-xs">
+                            <thead className="sticky top-0 bg-emerald-50 text-emerald-700"><tr><th className="px-3 py-2 font-semibold">Date</th><th className="px-3 py-2 font-semibold">Sale Ref</th><th className="px-3 py-2 font-semibold">Method</th><th className="px-3 py-2 font-semibold">Amount Received</th><th className="px-3 py-2 font-semibold">Balance After</th><th className="px-3 py-2 font-semibold">Status</th><th className="px-3 py-2 font-semibold">Notes</th></tr></thead>
+                            <tbody>
+                              {customerPayments.map((payment, index) => <tr key={payment.paymentId || `${payment.salesRefNo}-${index}`} className="border-t border-emerald-50"><td className="px-3 py-2 text-slate-700">{normalizeDate(payment.paymentDate)}</td><td className="px-3 py-2 font-semibold text-slate-900">{payment.salesRefNo || payment.groupRef || "-"}</td><td className="px-3 py-2 text-slate-700">{payment.paymentMethod || "-"}</td><td className="px-3 py-2 font-bold text-emerald-700">{money(payment.amountPaidPhp)}</td><td className="px-3 py-2 text-rose-700">{money(payment.balanceAfterPhp)}</td><td className="px-3 py-2 text-slate-700">{payment.paymentStatus || payment.entryType}</td><td className="px-3 py-2 text-slate-600">{payment.notes || "-"}</td></tr>)}
+                              {!customerPayments.length ? <tr><td colSpan={7} className="px-3 py-8 text-center text-slate-500">No payment history found for this customer yet.</td></tr> : null}
+                            </tbody>
+                          </table>
+                        </div>
+                      </div>
 
                       <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
                         <h3 className="text-sm font-bold text-slate-950">Order History</h3>
