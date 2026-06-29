@@ -9,13 +9,21 @@ type SaleLine = { productSearch?: string; description: string; specification: st
 type SavedSale = { saleDate: string; salesRefNo: string; customerName: string; customerId?: string; description: string; specification: string; qty: number; unitPricePhp: number; totalSalePhp: number; costPricePhp: number; grossProfitPhp: number; paymentStatus: string; salesperson: string; notes: string; groupRef: string; paymentMethod: string; amountPaidPhp: number; balancePhp: number; transactionRef: string; cashierName: string; saleStatus: string; confirmedAt: string; saleId?: string; grandTotalPhp?: number; deliveryFeePhp?: number; installationFeePhp?: number; otherChargePhp?: number; discountPhp?: number; taxAmountPhp?: number };
 type PaySummary = { key: string; saleId?: string; salesRefNo: string; groupRef: string; totalSalePhp: number; totalPaidPhp: number; balancePhp: number; paymentStatus: string; saleStatus: string };
 type SaleSummary = { key: string; saleDate: string; salesRefNo: string; customerName: string; totalSalePhp: number; paidPhp: number; balancePhp: number; paymentStatus: string; saleStatus: string; paymentMethod: string; lineCount: number; deliveryFeePhp: number; grossProfitPhp: number; sampleRow: SavedSale };
-type PeriodMode = "daily" | "weekly" | "monthly";
+type PeriodMode = "daily" | "weekly" | "monthly" | "ytd" | "lastYear" | "overall";
 
 const emptyLine: SaleLine = { productSearch: "", description: "", specification: "", qty: 1, unitPricePhp: 0 };
 const paymentStatusOptions = ["Pending", "Paid", "Partial"];
 const paymentMethodOptions = ["", "Cash", "Bank Transfer", "GCash", "Maya", "Check", "Credit", "Installment", "Mixed Payment"];
 const saleStatusOptions = ["Draft", "Confirmed", "Cancelled"];
 const salespersonStorageKey = "realights.salespersonName";
+const periodModeOptions: Array<{ value: PeriodMode; label: string }> = [
+  { value: "daily", label: "Daily" },
+  { value: "weekly", label: "Weekly" },
+  { value: "monthly", label: "Monthly" },
+  { value: "ytd", label: "Year to Date" },
+  { value: "lastYear", label: "Last Year" },
+  { value: "overall", label: "Overall" },
+];
 
 function money(value: number) {
   return `PHP ${(Number(value) || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -56,6 +64,11 @@ function normDate(value: string) {
   const raw = String(value || "").trim();
   if (!raw) return "";
   if (/^\d{4}-\d{2}-\d{2}/.test(raw)) return raw.slice(0, 10);
+  if (/^\d{1,2}\/\d{1,2}\/\d{2,4}$/.test(raw)) {
+    const [month, day, yearRaw] = raw.split("/").map(Number);
+    const year = yearRaw < 100 ? 2000 + yearRaw : yearRaw;
+    return `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+  }
   if (/^\d+(\.\d+)?$/.test(raw)) {
     const serial = Number(raw);
     if (serial > 20000 && serial < 90000) return new Date(Math.floor(serial - 25569) * 86400 * 1000).toISOString().slice(0, 10);
@@ -70,7 +83,7 @@ function today() {
 }
 
 function toDate(value: string) {
-  const d = normDate(value);
+  const d = normDate(value || today());
   const [y, m, day] = d.split("-").map(Number);
   return y && m && day ? new Date(y, m - 1, day) : new Date();
 }
@@ -104,9 +117,15 @@ function buildSalesRef(customerName: string, items: SaleLine[], saleDate: string
   return `${initials}-${qty}-${spec}-${date}`;
 }
 
+function formatDate(d: Date) {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
 function periodRange(mode: PeriodMode, value: string) {
-  const start = toDate(value);
-  const end = new Date(start);
+  const anchor = toDate(value || today());
+  const start = new Date(anchor);
+  const end = new Date(anchor);
+
   if (mode === "weekly") {
     const day = start.getDay();
     const offset = day === 0 ? -6 : 1 - day;
@@ -114,13 +133,27 @@ function periodRange(mode: PeriodMode, value: string) {
     end.setTime(start.getTime());
     end.setDate(start.getDate() + 6);
   }
+
   if (mode === "monthly") {
     start.setDate(1);
     end.setTime(start.getTime());
     end.setMonth(start.getMonth() + 1, 0);
   }
-  const f = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
-  return { start: f(start), end: f(end) };
+
+  if (mode === "ytd") {
+    start.setMonth(0, 1);
+    end.setTime(anchor.getTime());
+  }
+
+  if (mode === "lastYear") {
+    const year = anchor.getFullYear() - 1;
+    start.setFullYear(year, 0, 1);
+    end.setFullYear(year, 11, 31);
+  }
+
+  if (mode === "overall") return { start: "1900-01-01", end: "2999-12-31" };
+
+  return { start: formatDate(start), end: formatDate(end) };
 }
 
 function inPeriod(date: string, start: string, end: string) {
@@ -129,7 +162,7 @@ function inPeriod(date: string, start: string, end: string) {
 }
 
 function titleForMode(mode: PeriodMode) {
-  return mode === "weekly" ? "Weekly" : mode === "monthly" ? "Monthly" : "Daily";
+  return periodModeOptions.find((item) => item.value === mode)?.label || "Daily";
 }
 
 function isInactive(value: string) {
@@ -491,10 +524,10 @@ export default function SalesPage() {
 
       <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
         <div className="mb-4 flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
-          <div><h2 className="text-lg font-bold text-slate-900">Sales Ledger Filters</h2><p className="text-xs text-slate-500">Controls Sales Payment Summary and Sales Line Ledger only. Period: {range.start} to {range.end}</p></div>
-          <div className="grid gap-2 md:grid-cols-[160px_180px_auto]">
-            <select className={inputClass} value={periodMode} onChange={(e) => setPeriodMode(e.target.value as PeriodMode)}><option value="daily">Daily</option><option value="weekly">Weekly</option><option value="monthly">Monthly</option></select>
-            <input className={inputClass} type="date" value={periodDate} onChange={(e) => setPeriodDate(e.target.value)} />
+          <div><h2 className="text-lg font-bold text-slate-900">Sales Ledger Filters</h2><p className="text-xs text-slate-500">Controls Sales Payment Summary and Sales Line Ledger only. Period: {periodMode === "overall" ? "all records" : `${range.start} to ${range.end}`}</p></div>
+          <div className="grid gap-2 md:grid-cols-[180px_180px_auto]">
+            <select className={inputClass} value={periodMode} onChange={(e) => setPeriodMode(e.target.value as PeriodMode)}>{periodModeOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select>
+            <input className={inputClass} type="date" value={periodDate} onChange={(e) => setPeriodDate(e.target.value)} disabled={periodMode === "overall"} />
             <button type="button" className="rounded-xl border border-slate-300 px-4 py-2 text-sm font-bold" onClick={loadAll}>Refresh</button>
           </div>
         </div>
