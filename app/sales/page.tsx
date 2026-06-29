@@ -15,6 +15,7 @@ const emptyLine: SaleLine = { productSearch: "", description: "", specification:
 const paymentStatusOptions = ["Pending", "Paid", "Partial"];
 const paymentMethodOptions = ["", "Cash", "Bank Transfer", "GCash", "Maya", "Check", "Credit", "Installment", "Mixed Payment"];
 const saleStatusOptions = ["Draft", "Confirmed", "Cancelled"];
+const currentUserStorageKey = "realights.currentUserName";
 
 function money(value: number) {
   return `PHP ${(Number(value) || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -207,6 +208,7 @@ export default function SalesPage() {
   const [saleDate, setSaleDate] = useState(today());
   const [salesRefNo, setSalesRefNo] = useState("");
   const [salesRefAutoMode, setSalesRefAutoMode] = useState(true);
+  const [currentUserName, setCurrentUserName] = useState("");
   const [customerId, setCustomerId] = useState("");
   const [customerSearch, setCustomerSearch] = useState("");
   const [customerName, setCustomerName] = useState("");
@@ -253,6 +255,15 @@ export default function SalesPage() {
 
   useEffect(() => { loadAll().catch((e) => setAlert(e?.message || "Failed to load sales.")); }, []);
 
+  useEffect(() => {
+    const storedUser = window.localStorage.getItem(currentUserStorageKey) || "";
+    if (storedUser) {
+      setCurrentUserName(storedUser);
+      setSalesperson(storedUser);
+      setCashierName(storedUser);
+    }
+  }, []);
+
   const inputClass = "w-full rounded-xl border border-slate-300 px-3 py-2 text-sm outline-none focus:border-emerald-400";
   const readOnlyClass = "w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm font-bold text-slate-700";
   const productOptions = useMemo(() => pricing.map(productLabel), [pricing]);
@@ -285,6 +296,14 @@ export default function SalesPage() {
 
   function getAvailable(item: SaleLine) { return stockMap.get(itemKey(item.description, item.specification)); }
   function getRequested(item: SaleLine) { return requestedQtyMap.get(itemKey(item.description, item.specification)) || 0; }
+
+  function setRegisteredUser(value: string) {
+    const cleanValue = value.trimStart();
+    setCurrentUserName(cleanValue);
+    window.localStorage.setItem(currentUserStorageKey, cleanValue);
+    setSalesperson(cleanValue);
+    setCashierName(cleanValue);
+  }
 
   function clearCustomer() {
     setCustomerSearch("");
@@ -359,9 +378,9 @@ export default function SalesPage() {
     setDiscountPhp(0);
     setTaxRatePct(0);
     setTransactionRef("");
-    setCashierName("");
+    setCashierName(currentUserName);
     setSaleStatus("Draft");
-    setSalesperson("");
+    setSalesperson(currentUserName);
     setNotes("");
     setItems([{ ...emptyLine }]);
   }
@@ -378,11 +397,13 @@ export default function SalesPage() {
       if (rule) throw new Error(`Payment procedure blocked: ${rule}`);
 
       const finalSalesRefNo = salesRefNo.trim() || suggestedSalesRef;
+      const finalSalesperson = salesperson.trim() || currentUserName.trim();
+      const finalCashierName = cashierName.trim() || currentUserName.trim();
 
       const res = await fetch("/api/sales", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ saleDate, salesRefNo: finalSalesRefNo, customerId, customerName, paymentStatus, paymentMethod, amountPaidPhp, deliveryFeePhp, installationFeePhp, otherChargePhp, discountPhp, taxRatePct, transactionRef, cashierName, saleStatus, salesperson, notes, items: cleanItems }),
+        body: JSON.stringify({ saleDate, salesRefNo: finalSalesRefNo, customerId, customerName, paymentStatus, paymentMethod, amountPaidPhp, deliveryFeePhp, installationFeePhp, otherChargePhp, discountPhp, taxRatePct, transactionRef, cashierName: finalCashierName, saleStatus, salesperson: finalSalesperson, notes, items: cleanItems }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data?.error || "Failed to save sale");
@@ -406,6 +427,7 @@ export default function SalesPage() {
 
       <form onSubmit={onSubmit} className="space-y-5 rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
         <div className="grid gap-4 md:grid-cols-3">
+          <Field label="Registered User / Operator" helper="Auto-fills Salesperson and Cashier for this device."><input className={inputClass} value={currentUserName} onChange={(e) => setRegisteredUser(e.target.value)} placeholder="Enter logged-in user name" /></Field>
           <Field label="Sale Date"><input className={inputClass} type="date" value={saleDate} onChange={(e) => setSaleDate(e.target.value)} /></Field>
           <Field label="Sales Ref No." helper={salesRefAutoMode ? "Auto-fills from customer, qty, product specification, and date." : "Manual Sales Ref mode. Click Auto to resume auto-fill."}>
             <div className="flex gap-2">
@@ -422,7 +444,7 @@ export default function SalesPage() {
           <datalist id="customer-options">{customerOptions.map((x) => <option key={x} value={x} />)}</datalist>
           <Field label="Customer Name"><input className={inputClass} value={customerName} onChange={(e) => { setCustomerName(e.target.value); setCustomerId(""); }} /></Field>
           <Field label="Payment Status"><select className={inputClass} value={paymentStatus} onChange={(e) => setPaymentStatus(e.target.value)}>{paymentStatusOptions.map((x) => <option key={x}>{x}</option>)}</select></Field>
-          <Field label="Salesperson"><input className={inputClass} value={salesperson} onChange={(e) => setSalesperson(e.target.value)} /></Field>
+          <Field label="Salesperson"><input className={inputClass} value={salesperson} onChange={(e) => setSalesperson(e.target.value)} placeholder={currentUserName || "Auto from registered user"} /></Field>
         </div>
 
         <div className="rounded-2xl border border-slate-200 p-4">
@@ -460,7 +482,7 @@ export default function SalesPage() {
             <Field label="Discount"><input className={inputClass} type="number" value={discountPhp} onChange={(e) => setDiscountPhp(Number(e.target.value))} /></Field>
             <Field label="Tax Rate (%)"><input className={inputClass} type="number" value={taxRatePct} onChange={(e) => setTaxRatePct(Number(e.target.value))} /></Field>
             <Field label="Transaction Ref"><input className={inputClass} value={transactionRef} onChange={(e) => setTransactionRef(e.target.value)} /></Field>
-            <Field label="Cashier Name"><input className={inputClass} value={cashierName} onChange={(e) => setCashierName(e.target.value)} /></Field>
+            <Field label="Cashier Name"><input className={inputClass} value={cashierName} onChange={(e) => setCashierName(e.target.value)} placeholder={currentUserName || "Auto from registered user"} /></Field>
             <Field label="Balance"><input className={readOnlyClass} readOnly value={money(balance)} /></Field>
             <Field label="Change Due"><input className={readOnlyClass} readOnly value={money(change)} /></Field>
           </div>
