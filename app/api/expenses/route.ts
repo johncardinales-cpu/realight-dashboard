@@ -6,12 +6,16 @@ const SUPPLIER_COSTS_SHEET = "Supplier_Invoice_Costs";
 const AUDIT_LOG_SHEET = "Audit_Log";
 const SALES_SHEET = "Sales";
 
-const EXPENSE_HEADERS = ["Expense Date", "Category", "Description", "Base Amount", "Tax / VAT / Fee", "Total Amount", "Payment Method", "Reference No.", "Related Sales Ref No.", "Payee", "Notes", "Created At", "Expense ID", "Customer / Expense For"];
+const EXPENSE_HEADERS = ["Expense Date", "Category", "Description", "Base Amount", "Tax / VAT / Fee", "Total Amount", "Payment Method", "Reference No.", "Related Sales Ref No.", "Payee", "Notes", "Created At", "Expense ID", "Customer / Expense For", "Expense Payment Status", "Amount Paid", "Balance Amount"];
 const SUPPLIER_HEADERS = ["Upload Date", "Supplier", "Batch / Reference", "Invoice No.", "Invoice Valid", "Product Subtotal", "Freight Cost", "Delivery Cost", "Customs Cost", "Other Cost", "Total Invoice Cost", "Notes"];
 const AUDIT_HEADERS = ["Audit ID", "Created At", "Module", "Action", "Record ID", "Record Ref", "Actor", "Summary", "Before JSON", "After JSON"];
 
 function toNumber(value: string | number | undefined) {
   return Number(String(value || "").replace(/[^0-9.-]/g, "")) || 0;
+}
+
+function round(value: number) {
+  return Math.round((Number(value) || 0) * 100) / 100;
 }
 
 function safeText(value: unknown) {
@@ -54,6 +58,18 @@ function makeId(prefix: string) {
   const stamp = new Date().toISOString().replace(/[-:.TZ]/g, "").slice(0, 14);
   const random = Math.random().toString(36).slice(2, 8).toUpperCase();
   return `${prefix}_${stamp}_${random}`;
+}
+
+function paymentStatusFromAmounts(totalAmount: number, amountPaid: number, preferredStatus = "") {
+  const status = safeText(preferredStatus).toLowerCase();
+  const total = round(totalAmount);
+  const paid = round(amountPaid);
+  const balance = round(Math.max(total - paid, 0));
+  if (status === "pending") return "Pending";
+  if (status === "installment") return balance > 0 ? "Installment" : "Paid";
+  if (paid <= 0 && total > 0) return "Pending";
+  if (balance > 0) return "Installment";
+  return "Paid";
 }
 
 async function ensureSheetExists(sheets: any, title: string, headers: string[]) {
@@ -113,8 +129,12 @@ function parseExpenseRow(row: string[], header: string[]) {
   const payee = map["Payee"] || "";
   const customerName = map["Customer / Expense For"] || map["Customer"] || map["Expense For"] || "";
   const expenseId = map["Expense ID"] || "";
+  const hasPaymentColumns = Boolean(map["Expense Payment Status"] || map["Payment Status"] || map["Amount Paid"] || map["Balance Amount"] || map["Balance"]);
+  const amountPaid = hasPaymentColumns ? toNumber(map["Amount Paid"] || map["Paid Amount"]) : totalAmount;
+  const balanceAmount = hasPaymentColumns ? (toNumber(map["Balance Amount"] || map["Balance"]) || Math.max(totalAmount - amountPaid, 0)) : 0;
+  const expensePaymentStatus = hasPaymentColumns ? paymentStatusFromAmounts(totalAmount, amountPaid, map["Expense Payment Status"] || map["Payment Status"]) : "Paid";
   if (!date && !description && !totalAmount) return null;
-  return { Date: date, Category: category, Description: description, BaseAmount: baseAmount, TaxFee: taxFee, Amount: totalAmount, PaymentMethod: paymentMethod, Reference: reference, RelatedSalesRefNo: relatedSalesRefNo, CustomerName: customerName, Payee: payee, Source: "Expenses", Notes: notes, ExpenseID: expenseId };
+  return { Date: date, Category: category, Description: description, BaseAmount: baseAmount, TaxFee: taxFee, Amount: totalAmount, PaymentMethod: paymentMethod, Reference: reference, RelatedSalesRefNo: relatedSalesRefNo, CustomerName: customerName, Payee: payee, ExpensePaymentStatus: expensePaymentStatus, AmountPaid: round(amountPaid), BalanceAmount: round(balanceAmount), Source: "Expenses", Notes: notes, ExpenseID: expenseId };
 }
 
 function parseSupplierRow(row: string[]) {
@@ -132,7 +152,7 @@ function parseSupplierRow(row: string[]) {
   const taxFee = customsCost + otherCost;
   const baseAmount = productSubtotal + freightCost + deliveryCost;
   if (!date && !supplier && !totalInvoiceCost) return null;
-  return { Date: date, Category: "Supplier Invoice Cost", Description: supplier, BaseAmount: baseAmount || totalInvoiceCost, TaxFee: taxFee, Amount: totalInvoiceCost, PaymentMethod: "", Reference: invoiceNo || batchReference, RelatedSalesRefNo: "", CustomerName: "", Payee: supplier, Source: "Supplier_Invoice_Costs", Notes: notes, ExpenseID: "" };
+  return { Date: date, Category: "Supplier Invoice Cost", Description: supplier, BaseAmount: baseAmount || totalInvoiceCost, TaxFee: taxFee, Amount: totalInvoiceCost, PaymentMethod: "", Reference: invoiceNo || batchReference, RelatedSalesRefNo: "", CustomerName: "", Payee: supplier, ExpensePaymentStatus: "Paid", AmountPaid: totalInvoiceCost, BalanceAmount: 0, Source: "Supplier_Invoice_Costs", Notes: notes, ExpenseID: "" };
 }
 
 async function ensureSupplierSheetExists(sheets: any) {
@@ -145,7 +165,7 @@ export async function GET() {
     await ensureSheetExists(sheets, EXPENSES_SHEET, EXPENSE_HEADERS);
     await ensureSupplierSheetExists(sheets);
     const [expensesRes, supplierRes] = await Promise.all([
-      sheets.spreadsheets.values.get({ spreadsheetId: SHEET_ID, range: `${EXPENSES_SHEET}!A:N` }).catch(() => ({ data: { values: [] } })),
+      sheets.spreadsheets.values.get({ spreadsheetId: SHEET_ID, range: `${EXPENSES_SHEET}!A:Q` }).catch(() => ({ data: { values: [] } })),
       sheets.spreadsheets.values.get({ spreadsheetId: SHEET_ID, range: `${SUPPLIER_COSTS_SHEET}!A:L` }),
     ]);
     const expenseRows = expensesRes.data.values || [];
@@ -160,7 +180,9 @@ export async function GET() {
     const totalAmount = items.reduce((sum, item) => sum + item.Amount, 0);
     const totalTaxFee = items.reduce((sum, item) => sum + (Number(item.TaxFee) || 0), 0);
     const totalBaseAmount = items.reduce((sum, item) => sum + (Number(item.BaseAmount) || 0), 0);
-    return NextResponse.json({ rows: items, totalAmount, totalTaxFee, totalBaseAmount });
+    const totalPaid = items.reduce((sum, item) => sum + (Number(item.AmountPaid) || 0), 0);
+    const totalBalance = items.reduce((sum, item) => sum + (Number(item.BalanceAmount) || 0), 0);
+    return NextResponse.json({ rows: items, totalAmount, totalTaxFee, totalBaseAmount, totalPaid, totalBalance });
   } catch (error: any) {
     console.error("EXPENSES API ERROR:", error);
     return NextResponse.json({ error: error?.message || String(error) || "Failed to load expenses" }, { status: 500 });
@@ -181,12 +203,17 @@ export async function POST(req: Request) {
     const relatedSalesRefNo = safeText(body?.relatedSalesRefNo);
     const payee = safeText(body?.payee);
     const customerName = safeText(body?.customerName || body?.expenseFor);
+    const requestedPaymentStatus = safeText(body?.expensePaymentStatus || body?.paymentStatus || "Paid");
+    const amountPaid = requestedPaymentStatus.toLowerCase() === "paid" ? totalAmount : requestedPaymentStatus.toLowerCase() === "pending" ? 0 : Math.min(toNumber(body?.amountPaid ?? body?.amountPaidPhp), totalAmount);
+    const balanceAmount = round(Math.max(totalAmount - amountPaid, 0));
+    const expensePaymentStatus = paymentStatusFromAmounts(totalAmount, amountPaid, requestedPaymentStatus);
     const notes = safeText(body?.notes);
     const actor = safeText(body?.actor || "Admin");
     if (!expenseDate) return NextResponse.json({ error: "Expense Date is required" }, { status: 400 });
     if (!category) return NextResponse.json({ error: "Category is required" }, { status: 400 });
     if (!description) return NextResponse.json({ error: "Description is required" }, { status: 400 });
     if (totalAmount <= 0) return NextResponse.json({ error: "Total Amount must be greater than zero" }, { status: 400 });
+    if (expensePaymentStatus === "Installment" && amountPaid <= 0) return NextResponse.json({ error: "Installment expense needs an initial amount paid" }, { status: 400 });
     const sheets = await getSheetsClient();
     await ensureSheetExists(sheets, EXPENSES_SHEET, EXPENSE_HEADERS);
     await ensureSheetExists(sheets, AUDIT_LOG_SHEET, AUDIT_HEADERS);
@@ -198,10 +225,10 @@ export async function POST(req: Request) {
     const expenseId = makeId("EXP");
     await sheets.spreadsheets.values.append({
       spreadsheetId: SHEET_ID,
-      range: `${EXPENSES_SHEET}!A:N`,
+      range: `${EXPENSES_SHEET}!A:Q`,
       valueInputOption: "USER_ENTERED",
       insertDataOption: "INSERT_ROWS",
-      requestBody: { values: [[expenseDate, category, description, baseAmount, taxFee, totalAmount, paymentMethod, referenceNo, relatedSalesRefNo, payee, notes, createdAt, expenseId, customerName]] },
+      requestBody: { values: [[expenseDate, category, description, baseAmount, taxFee, totalAmount, paymentMethod, referenceNo, relatedSalesRefNo, payee, notes, createdAt, expenseId, customerName, expensePaymentStatus, amountPaid, balanceAmount]] },
     });
     await appendAuditLog(sheets, {
       module: "Expenses",
@@ -209,10 +236,10 @@ export async function POST(req: Request) {
       recordId: expenseId,
       recordRef: referenceNo || relatedSalesRefNo || category,
       actor,
-      summary: `Recorded expense ${totalAmount} for ${customerName ? `${customerName} / ` : ""}${category}: ${description}${taxFee ? ` including tax/fee ${taxFee}` : ""}${relatedSalesRefNo ? ` linked to sale ${relatedSalesRefNo}` : ""}`,
-      after: { expenseId, expenseDate, category, description, baseAmount, taxFee, totalAmount, paymentMethod, referenceNo, relatedSalesRefNo, customerName, payee, notes },
+      summary: `Recorded ${expensePaymentStatus.toLowerCase()} expense ${totalAmount} for ${customerName ? `${customerName} / ` : ""}${category}: ${description}${balanceAmount ? ` with balance ${balanceAmount}` : ""}${relatedSalesRefNo ? ` linked to sale ${relatedSalesRefNo}` : ""}`,
+      after: { expenseId, expenseDate, category, description, baseAmount, taxFee, totalAmount, paymentMethod, referenceNo, relatedSalesRefNo, customerName, payee, expensePaymentStatus, amountPaid, balanceAmount, notes },
     });
-    return NextResponse.json({ ok: true, expenseId, baseAmount, taxFee, totalAmount, customerName });
+    return NextResponse.json({ ok: true, expenseId, baseAmount, taxFee, totalAmount, customerName, expensePaymentStatus, amountPaid, balanceAmount });
   } catch (error: any) {
     console.error("EXPENSES POST ERROR:", error);
     return NextResponse.json({ error: error?.message || String(error) || "Failed to save expense" }, { status: 500 });
