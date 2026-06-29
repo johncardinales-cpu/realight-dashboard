@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useState } from "react";
 
 type SaleRow = {
   saleId: string;
@@ -60,6 +60,15 @@ type PaymentEdit = {
   cashierName: string;
 };
 
+type CustomerGroup = {
+  key: string;
+  customerName: string;
+  saleCount: number;
+  totalSalePhp: number;
+  paidPhp: number;
+  balancePhp: number;
+};
+
 type SaleAction = "confirm" | "undo" | "void";
 
 const paymentStatusOptions = ["Paid", "Partial", "Pending"];
@@ -94,6 +103,38 @@ function normalizeDate(value: string) {
   }
   const parsed = new Date(raw);
   return Number.isNaN(parsed.getTime()) ? raw.slice(0, 10) : `${parsed.getFullYear()}-${String(parsed.getMonth() + 1).padStart(2, "0")}-${String(parsed.getDate()).padStart(2, "0")}`;
+}
+
+function cleanCustomerName(value: string) {
+  return String(value || "").trim().replace(/\s+/g, " ") || "Unknown Customer";
+}
+
+function customerGroupKey(value: string) {
+  return cleanCustomerName(value).toLowerCase();
+}
+
+function totalsFor(sales: SaleSummary[]) {
+  return {
+    saleCount: sales.length,
+    totalSalePhp: round(sales.reduce((sum, sale) => sum + (Number(sale.totalSalePhp) || 0), 0)),
+    paidPhp: round(sales.reduce((sum, sale) => sum + (Number(sale.paidPhp) || 0), 0)),
+    balancePhp: round(sales.reduce((sum, sale) => sum + (Number(sale.balancePhp) || 0), 0)),
+  };
+}
+
+function groupByCustomer(sales: SaleSummary[]) {
+  const map = new Map<string, CustomerGroup>();
+  sales.forEach((sale) => {
+    const customerName = cleanCustomerName(sale.customerName);
+    const key = customerGroupKey(customerName);
+    const current = map.get(key) || { key, customerName, saleCount: 0, totalSalePhp: 0, paidPhp: 0, balancePhp: 0 };
+    current.saleCount += 1;
+    current.totalSalePhp = round(current.totalSalePhp + (Number(sale.totalSalePhp) || 0));
+    current.paidPhp = round(current.paidPhp + (Number(sale.paidPhp) || 0));
+    current.balancePhp = round(current.balancePhp + (Number(sale.balancePhp) || 0));
+    map.set(key, current);
+  });
+  return Array.from(map.values()).sort((a, b) => b.balancePhp - a.balancePhp || a.customerName.localeCompare(b.customerName));
 }
 
 function StatusPill({ value }: { value: string }) {
@@ -215,6 +256,7 @@ export default function ConfirmSalesPage() {
   const [workingKey, setWorkingKey] = useState("");
   const [paymentEdits, setPaymentEdits] = useState<Record<string, PaymentEdit>>({});
   const [expandedPaymentEditKey, setExpandedPaymentEditKey] = useState("");
+  const [customerFilter, setCustomerFilter] = useState("all");
 
   async function loadSales() {
     setLoading(true);
@@ -241,7 +283,16 @@ export default function ConfirmSalesPage() {
 
   const summaries = useMemo(() => summarizeSales(rows, payments), [rows, payments]);
   const reviewSales = summaries.filter((sale) => !isInactive(sale.saleStatus));
+  const customerGroups = useMemo(() => groupByCustomer(reviewSales), [reviewSales]);
+  const filteredReviewSales = useMemo(() => customerFilter === "all" ? reviewSales : reviewSales.filter((sale) => customerGroupKey(sale.customerName) === customerFilter), [reviewSales, customerFilter]);
+  const overallTotals = useMemo(() => totalsFor(reviewSales), [reviewSales]);
+  const selectedTotals = useMemo(() => totalsFor(filteredReviewSales), [filteredReviewSales]);
+  const selectedCustomer = customerFilter === "all" ? "All customers" : customerGroups.find((group) => group.key === customerFilter)?.customerName || "Selected customer";
   const compactInputClass = "h-9 rounded-lg border border-slate-300 bg-white px-2 text-xs font-semibold text-slate-700 outline-none focus:border-emerald-400";
+
+  useEffect(() => {
+    if (customerFilter !== "all" && !customerGroups.some((group) => group.key === customerFilter)) setCustomerFilter("all");
+  }, [customerFilter, customerGroups]);
 
   function getPaymentEdit(sale: SaleSummary) {
     return paymentEdits[sale.key] || buildPaymentEdit(sale);
@@ -315,11 +366,52 @@ export default function ConfirmSalesPage() {
         <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
           <div>
             <h1 className="text-2xl font-semibold text-slate-900">Confirm Sales</h1>
-            <p className="mt-1 text-xs text-slate-600">Compact review for confirmation, balance, and payment corrections.</p>
+            <p className="mt-1 text-xs text-slate-600">Compact review by customer, confirmation, balance, and payment corrections.</p>
           </div>
           <button type="button" onClick={loadSales} disabled={loading} className="rounded-xl border border-slate-300 px-4 py-2 text-sm font-bold text-slate-700 disabled:opacity-60">{loading ? "Loading..." : "Refresh"}</button>
         </div>
         {message ? <p className="mt-3 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-semibold text-slate-700">{message}</p> : null}
+      </div>
+
+      <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
+        <div className="mb-4 flex flex-col gap-3 xl:flex-row xl:items-end xl:justify-between">
+          <div>
+            <h2 className="text-lg font-bold text-slate-900">Customer Group Summary</h2>
+            <p className="text-xs text-slate-500">Filter sales under a customer name and see overall amount, paid, and balance.</p>
+          </div>
+          <div className="w-full xl:w-72">
+            <label className="text-[11px] font-bold uppercase tracking-wide text-slate-500">Customer Filter</label>
+            <select value={customerFilter} onChange={(event) => setCustomerFilter(event.target.value)} className="mt-1 w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm font-semibold text-slate-700">
+              <option value="all">All customers</option>
+              {customerGroups.map((group) => <option key={group.key} value={group.key}>{group.customerName} - {money(group.balancePhp)} balance</option>)}
+            </select>
+          </div>
+        </div>
+
+        <div className="grid gap-3 md:grid-cols-4">
+          <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4"><p className="text-xs font-semibold text-slate-500">Viewing</p><p className="mt-1 truncate text-base font-bold text-slate-950">{selectedCustomer}</p><p className="mt-1 text-xs text-slate-500">{selectedTotals.saleCount} sale(s)</p></div>
+          <div className="rounded-2xl border border-slate-200 bg-white p-4"><p className="text-xs font-semibold text-slate-500">Overall Amount</p><p className="mt-1 text-lg font-bold text-slate-950">{money(selectedTotals.totalSalePhp)}</p><p className="mt-1 text-xs text-slate-500">All selected sales</p></div>
+          <div className="rounded-2xl border border-emerald-100 bg-emerald-50 p-4"><p className="text-xs font-semibold text-emerald-600">Paid</p><p className="mt-1 text-lg font-bold text-emerald-700">{money(selectedTotals.paidPhp)}</p><p className="mt-1 text-xs text-emerald-600">Collected/recorded</p></div>
+          <div className="rounded-2xl border border-rose-100 bg-rose-50 p-4"><p className="text-xs font-semibold text-rose-600">Balance</p><p className="mt-1 text-lg font-bold text-rose-700">{money(selectedTotals.balancePhp)}</p><p className="mt-1 text-xs text-rose-600">Remaining unpaid</p></div>
+        </div>
+
+        <div className="mt-4 max-h-44 overflow-auto rounded-2xl border border-slate-200">
+          <table className="min-w-full text-left text-xs">
+            <thead className="sticky top-0 bg-slate-100 text-slate-600"><tr>{["Customer", "Sales", "Overall Amount", "Paid", "Balance", "View"].map((head) => <th key={head} className="px-3 py-2 font-bold whitespace-nowrap">{head}</th>)}</tr></thead>
+            <tbody>
+              <tr className={`border-t border-slate-100 ${customerFilter === "all" ? "bg-emerald-50" : "bg-white"}`}>
+                <td className="px-3 py-2 font-bold text-slate-900">All customers</td>
+                <td className="px-3 py-2 text-slate-700">{overallTotals.saleCount}</td>
+                <td className="px-3 py-2 font-semibold text-slate-900">{money(overallTotals.totalSalePhp)}</td>
+                <td className="px-3 py-2 font-semibold text-emerald-700">{money(overallTotals.paidPhp)}</td>
+                <td className="px-3 py-2 font-bold text-rose-700">{money(overallTotals.balancePhp)}</td>
+                <td className="px-3 py-2"><button type="button" onClick={() => setCustomerFilter("all")} className="rounded-lg border border-slate-300 px-2 py-1 text-[11px] font-bold text-slate-700">View</button></td>
+              </tr>
+              {customerGroups.map((group) => <tr key={group.key} className={`border-t border-slate-100 ${customerFilter === group.key ? "bg-emerald-50" : "bg-white"}`}><td className="px-3 py-2 font-bold text-slate-900">{group.customerName}</td><td className="px-3 py-2 text-slate-700">{group.saleCount}</td><td className="px-3 py-2 font-semibold text-slate-900">{money(group.totalSalePhp)}</td><td className="px-3 py-2 font-semibold text-emerald-700">{money(group.paidPhp)}</td><td className="px-3 py-2 font-bold text-rose-700">{money(group.balancePhp)}</td><td className="px-3 py-2"><button type="button" onClick={() => setCustomerFilter(group.key)} className="rounded-lg border border-slate-300 px-2 py-1 text-[11px] font-bold text-slate-700">View</button></td></tr>)}
+              {!customerGroups.length ? <tr><td colSpan={6} className="px-3 py-6 text-center text-slate-500">No active sales to group.</td></tr> : null}
+            </tbody>
+          </table>
+        </div>
       </div>
 
       <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
@@ -328,7 +420,7 @@ export default function ConfirmSalesPage() {
             <h2 className="text-lg font-bold text-slate-900">Sales Confirmation Review</h2>
             <p className="text-xs text-slate-500">Payment edit is hidden until needed so the table stays clean.</p>
           </div>
-          <p className="text-xs font-semibold text-slate-500">{reviewSales.length} active sale(s)</p>
+          <p className="text-xs font-semibold text-slate-500">{filteredReviewSales.length} shown / {reviewSales.length} active sale(s)</p>
         </div>
         <div className="max-h-[70vh] overflow-auto rounded-2xl border border-slate-200">
           <table className="w-full min-w-[980px] text-sm">
@@ -336,14 +428,14 @@ export default function ConfirmSalesPage() {
               <tr>{["Date", "Sales / Customer", "Item", "Amounts", "Status", "Actions"].map((head) => <th key={head} className="px-4 py-3 text-left font-medium whitespace-nowrap">{head}</th>)}</tr>
             </thead>
             <tbody>
-              {reviewSales.map((sale) => {
+              {filteredReviewSales.map((sale) => {
                 const isConfirmed = sale.saleStatus.toLowerCase() === "confirmed";
                 const edit = getPaymentEdit(sale);
                 const editOpen = expandedPaymentEditKey === sale.key;
                 const firstItem = sale.items[0] || "No item detail";
                 return (
-                  <>
-                    <tr key={sale.key} className="border-t border-slate-100 align-middle hover:bg-slate-50/60">
+                  <Fragment key={sale.key}>
+                    <tr className="border-t border-slate-100 align-middle hover:bg-slate-50/60">
                       <td className="px-4 py-3 text-slate-700 whitespace-nowrap">{normalizeDate(sale.saleDate)}</td>
                       <td className="px-4 py-3 text-slate-700">
                         <p className="font-bold text-slate-900">{sale.salesRefNo || sale.groupRef || sale.saleId}</p>
@@ -381,7 +473,7 @@ export default function ConfirmSalesPage() {
                       </td>
                     </tr>
                     {editOpen ? (
-                      <tr key={`${sale.key}-edit`} className="border-t border-emerald-100 bg-emerald-50/40">
+                      <tr className="border-t border-emerald-100 bg-emerald-50/40">
                         <td colSpan={6} className="px-4 py-3">
                           <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
                             <div>
@@ -400,10 +492,10 @@ export default function ConfirmSalesPage() {
                         </td>
                       </tr>
                     ) : null}
-                  </>
+                  </Fragment>
                 );
               })}
-              {!reviewSales.length ? <tr><td colSpan={6} className="px-4 py-8 text-center text-slate-500">No active sales to review.</td></tr> : null}
+              {!filteredReviewSales.length ? <tr><td colSpan={6} className="px-4 py-8 text-center text-slate-500">No active sales for this customer filter.</td></tr> : null}
             </tbody>
           </table>
         </div>
