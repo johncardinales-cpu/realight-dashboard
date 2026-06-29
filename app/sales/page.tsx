@@ -206,6 +206,7 @@ export default function SalesPage() {
   const [payments, setPayments] = useState<PaySummary[]>([]);
   const [saleDate, setSaleDate] = useState(today());
   const [salesRefNo, setSalesRefNo] = useState("");
+  const [salesRefAutoMode, setSalesRefAutoMode] = useState(true);
   const [customerId, setCustomerId] = useState("");
   const [customerSearch, setCustomerSearch] = useState("");
   const [customerName, setCustomerName] = useState("");
@@ -273,6 +274,11 @@ export default function SalesPage() {
   }, [items, deliveryFeePhp, installationFeePhp, otherChargePhp, discountPhp, taxRatePct]);
   const suggestedSalesRef = useMemo(() => buildSalesRef(customerName, items, saleDate), [customerName, items, saleDate]);
 
+  useEffect(() => {
+    if (!salesRefAutoMode) return;
+    setSalesRefNo(suggestedSalesRef);
+  }, [suggestedSalesRef, salesRefAutoMode]);
+
   const collected = Math.min(Number(amountPaidPhp) || 0, totals.grandTotal);
   const balance = round(Math.max(totals.grandTotal - collected, 0));
   const change = round(Math.max((Number(amountPaidPhp) || 0) - totals.grandTotal, 0));
@@ -313,6 +319,7 @@ export default function SalesPage() {
       setAlert("Add customer name, quantity, product specification, and sale date before generating Sales Ref No.");
       return;
     }
+    setSalesRefAutoMode(true);
     setSalesRefNo(suggestedSalesRef);
     setAlert("");
   }
@@ -340,6 +347,7 @@ export default function SalesPage() {
 
   function resetForm() {
     setSaleDate(today());
+    setSalesRefAutoMode(true);
     setSalesRefNo("");
     clearCustomer();
     setPaymentStatus("Pending");
@@ -399,10 +407,10 @@ export default function SalesPage() {
       <form onSubmit={onSubmit} className="space-y-5 rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
         <div className="grid gap-4 md:grid-cols-3">
           <Field label="Sale Date"><input className={inputClass} type="date" value={saleDate} onChange={(e) => setSaleDate(e.target.value)} /></Field>
-          <Field label="Sales Ref No." helper={suggestedSalesRef ? `Suggested: ${suggestedSalesRef}` : "Format: Initials-Qty-Spec-MMDDYY"}>
+          <Field label="Sales Ref No." helper={salesRefAutoMode ? "Auto-fills from customer, qty, product specification, and date." : "Manual Sales Ref mode. Click Auto to resume auto-fill."}>
             <div className="flex gap-2">
-              <input className={inputClass} value={salesRefNo} onChange={(e) => setSalesRefNo(e.target.value.toUpperCase().replace(/\s+/g, ""))} placeholder="RS-11-BSM610M10-042425" />
-              <button type="button" onClick={applySuggestedSalesRef} className="rounded-xl border border-slate-300 px-3 text-xs font-bold text-slate-700">Generate</button>
+              <input className={inputClass} value={salesRefNo} onChange={(e) => { setSalesRefAutoMode(false); setSalesRefNo(e.target.value.toUpperCase().replace(/\s+/g, "")); }} placeholder="RS-11-BSM610M10-042425" />
+              <button type="button" onClick={applySuggestedSalesRef} className="rounded-xl border border-slate-300 px-3 text-xs font-bold text-slate-700">Auto</button>
             </div>
           </Field>
           <Field label="Customer Search" helper="Type freely, select an exact customer from the list, or clear it anytime.">
