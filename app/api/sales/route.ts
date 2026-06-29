@@ -7,14 +7,6 @@ const PRICING_SHEET = "Pricing_Base";
 const INVENTORY_SHEET = "App_Deliveries";
 const AUDIT_LOG_SHEET = "Audit_Log";
 
-const auth = new google.auth.GoogleAuth({
-  credentials: {
-    client_email: process.env.GOOGLE_CLIENT_EMAIL as string,
-    private_key: process.env.GOOGLE_PRIVATE_KEY?.replace(/\n/g, "\n"),
-  },
-  scopes: ["https://www.googleapis.com/auth/spreadsheets"],
-});
-
 const SALES_HEADERS = [
   "Sale Date", "Sales Ref No.", "Customer Name", "Description", "Specification", "Qty",
   "Manual Unit Price (PHP)", "Total Sale (PHP)", "Cost Price (PHP)", "Total Cost (PHP)",
@@ -27,6 +19,14 @@ const SALES_HEADERS = [
 ];
 
 const AUDIT_HEADERS = ["Audit ID", "Created At", "Module", "Action", "Record ID", "Record Ref", "Actor", "Summary", "Before JSON", "After JSON"];
+
+const auth = new google.auth.GoogleAuth({
+  credentials: {
+    client_email: process.env.GOOGLE_CLIENT_EMAIL as string,
+    private_key: process.env.GOOGLE_PRIVATE_KEY?.replace(/\n/g, "\n"),
+  },
+  scopes: ["https://www.googleapis.com/auth/spreadsheets"],
+});
 
 function toNumber(value: string | number | undefined) {
   return Number(String(value || "").replace(/[^0-9.-]/g, "")) || 0;
@@ -80,12 +80,13 @@ function isValidSalesRow(row: string[]) {
   const description = String(row[3] || "").trim();
   const specification = String(row[4] || "").trim();
   const qty = toNumber(row[5]);
+  const grandTotal = toNumber(row[28] || row[7]);
   if (!saleDate || saleDate.toLowerCase() === "date") return false;
   if (!customerName || customerName.toLowerCase() === "customer") return false;
   if (!description || description.toLowerCase() === "description") return false;
   if (!specification || specification.toLowerCase() === "specification") return false;
   if (description.includes("One sold item per row")) return false;
-  return qty > 0;
+  return qty > 0 || grandTotal > 0;
 }
 
 async function ensureSheetExists(sheets: any, title: string, headers: string[]) {
@@ -152,8 +153,10 @@ async function getConfirmedSoldMap(sheets: any) {
   rows.slice(1).filter(isValidSalesRow).forEach((row: string[]) => {
     const saleStatus = String(row[20] || "Draft").trim().toLowerCase();
     if (saleStatus !== "confirmed") return;
+    const qty = toNumber(row[5]);
+    if (qty <= 0) return;
     const key = itemKey(String(row[3] || ""), String(row[4] || ""));
-    map.set(key, (map.get(key) || 0) + toNumber(row[5]));
+    map.set(key, (map.get(key) || 0) + qty);
   });
   return map;
 }
@@ -258,30 +261,46 @@ export async function POST(req: Request) {
     const createdAt = new Date().toISOString();
     const confirmedAt = normalizedSaleStatus === "confirmed" ? String(body?.confirmedAt || createdAt).trim() : String(body?.confirmedAt || "").trim();
     const items = Array.isArray(body?.items) ? body.items : [];
+    const chargeOnly = Boolean(body?.chargeOnly || body?.entryType === "customer-charge");
+    const chargeType = String(body?.chargeType || "Customer Charge").trim();
+    const chargeAmountPhp = Math.max(toNumber(body?.chargeAmountPhp), 0);
 
-    if (!saleDate || !customerName || !items.length) return NextResponse.json({ error: "Sale Date, Customer Name, and at least one product are required" }, { status: 400 });
+    let deliveryFeePhp = Math.max(toNumber(body?.deliveryFeePhp), 0);
+    let installationFeePhp = Math.max(toNumber(body?.installationFeePhp), 0);
+    let otherChargePhp = Math.max(toNumber(body?.otherChargePhp), 0);
+    const discountPhp = Math.max(toNumber(body?.discountPhp), 0);
+
+    if (chargeOnly && chargeAmountPhp > 0 && deliveryFeePhp + installationFeePhp + otherChargePhp <= 0) {
+      const normalizedChargeType = chargeType.toLowerCase();
+      if (normalizedChargeType.includes("delivery")) deliveryFeePhp = chargeAmountPhp;
+      else if (normalizedChargeType.includes("install")) installationFeePhp = chargeAmountPhp;
+      else otherChargePhp = chargeAmountPhp;
+    }
+
+    if (!saleDate || !customerName) return NextResponse.json({ error: "Sale Date and Customer Name are required" }, { status: 400 });
 
     const client = await auth.getClient();
     const sheets = google.sheets({ version: "v4", auth: client as any });
     await ensureSheetExists(sheets, SALES_SHEET, SALES_HEADERS);
     await ensureSheetExists(sheets, AUDIT_LOG_SHEET, AUDIT_HEADERS);
 
-    const validItems = items.filter((item: any) => String(item?.description || "").trim() && String(item?.specification || "").trim() && toNumber(item?.qty) > 0);
-    if (!validItems.length) return NextResponse.json({ error: "At least one valid product line is required" }, { status: 400 });
+    const validProductItems = items.filter((item: any) => String(item?.description || "").trim() && String(item?.specification || "").trim() && toNumber(item?.qty) > 0);
+    const hasCustomerCharge = chargeOnly && deliveryFeePhp + installationFeePhp + otherChargePhp > 0;
+    const validItems = hasCustomerCharge && !validProductItems.length
+      ? [{ description: "Customer Charge", specification: chargeType, qty: 0, unitPricePhp: 0 }]
+      : validProductItems;
 
-    const stockError = await validateAvailableStock(sheets, validItems);
+    if (!validItems.length) return NextResponse.json({ error: "Add at least one product line or customer charge amount" }, { status: 400 });
+
+    const stockError = await validateAvailableStock(sheets, validProductItems);
     if (stockError) return NextResponse.json({ error: stockError }, { status: 409 });
 
-    if (normalizedSaleStatus === "confirmed") {
-      if (!paymentMethod) return NextResponse.json({ error: "Payment Method is required before confirming a sale" }, { status: 400 });
-      if (!cashierName) return NextResponse.json({ error: "Cashier Name is required before confirming a sale" }, { status: 400 });
+    if (normalizedSaleStatus === "confirmed" && tenderedAmountPhp > 0) {
+      if (!paymentMethod) return NextResponse.json({ error: "Payment Method is required when recording a payment" }, { status: 400 });
+      if (!cashierName) return NextResponse.json({ error: "Cashier Name is required when recording a payment" }, { status: 400 });
     }
 
     const productSubtotalPhp = roundMoney(validItems.reduce((sum: number, item: any) => sum + (toNumber(item?.qty) * toNumber(item?.unitPricePhp)), 0));
-    const deliveryFeePhp = Math.max(toNumber(body?.deliveryFeePhp), 0);
-    const installationFeePhp = Math.max(toNumber(body?.installationFeePhp), 0);
-    const otherChargePhp = Math.max(toNumber(body?.otherChargePhp), 0);
-    const discountPhp = Math.max(toNumber(body?.discountPhp), 0);
     const taxableBasePhp = roundMoney(Math.max(productSubtotalPhp + deliveryFeePhp + installationFeePhp + otherChargePhp - discountPhp, 0));
     const taxRatePct = Math.max(toNumber(body?.taxRatePct), 0);
     const requestedTaxAmountPhp = toNumber(body?.taxAmountPhp);
@@ -300,7 +319,7 @@ export async function POST(req: Request) {
       const key = itemKey(description, specification);
       const costPricePhp = pricingMap.get(key) || 0;
       const lineProductSubtotalPhp = roundMoney(qty * unitPricePhp);
-      const lineShare = productSubtotalPhp > 0 ? lineProductSubtotalPhp / productSubtotalPhp : 0;
+      const lineShare = productSubtotalPhp > 0 ? lineProductSubtotalPhp / productSubtotalPhp : (validItems.length ? 1 / validItems.length : 0);
       const lineDeliveryFeePhp = roundMoney(deliveryFeePhp * lineShare);
       const lineInstallationFeePhp = roundMoney(installationFeePhp * lineShare);
       const lineOtherChargePhp = roundMoney(otherChargePhp * lineShare);
@@ -321,15 +340,15 @@ export async function POST(req: Request) {
     await sheets.spreadsheets.values.append({ spreadsheetId: SHEET_ID, range: `${SALES_SHEET}!A:AJ`, valueInputOption: "USER_ENTERED", insertDataOption: "INSERT_ROWS", requestBody: { values: rowsToAppend } });
     await appendAuditLog(sheets, {
       module: "Sales",
-      action: "CREATE_SALE",
+      action: hasCustomerCharge ? "CREATE_CUSTOMER_CHARGE" : "CREATE_SALE",
       recordId: saleId,
       recordRef: salesRefNo || groupRef,
       actor: cashierName || salesperson || "System",
-      summary: `Created sale with ${rowsToAppend.length} line(s), subtotal ${productSubtotalPhp}, delivery ${deliveryFeePhp}, installation ${installationFeePhp}, tax ${taxAmountPhp}, grand total ${transactionTotal}, tendered ${tenderedAmountPhp}, collected ${amountPaidPhp}, change ${changeDuePhp}`,
-      after: { saleId, salesRefNo, groupRef, customerId, customerName, productSubtotalPhp, deliveryFeePhp, installationFeePhp, otherChargePhp, discountPhp, taxRatePct, taxAmountPhp, transactionTotal, tenderedAmountPhp, amountPaidPhp, changeDuePhp, paymentStatus, saleStatus, itemCount: rowsToAppend.length },
+      summary: `${hasCustomerCharge ? "Created customer charge" : "Created sale"} with ${rowsToAppend.length} line(s), subtotal ${productSubtotalPhp}, delivery ${deliveryFeePhp}, installation ${installationFeePhp}, other ${otherChargePhp}, tax ${taxAmountPhp}, grand total ${transactionTotal}, tendered ${tenderedAmountPhp}, collected ${amountPaidPhp}, change ${changeDuePhp}`,
+      after: { saleId, salesRefNo, groupRef, customerId, customerName, productSubtotalPhp, deliveryFeePhp, installationFeePhp, otherChargePhp, discountPhp, taxRatePct, taxAmountPhp, transactionTotal, tenderedAmountPhp, amountPaidPhp, changeDuePhp, paymentStatus, saleStatus, itemCount: rowsToAppend.length, chargeOnly: hasCustomerCharge, chargeType },
     });
 
-    return NextResponse.json({ ok: true, lines: rowsToAppend.length, saleId, customerId, productSubtotalPhp, deliveryFeePhp, installationFeePhp, otherChargePhp, discountPhp, taxRatePct, taxAmountPhp, grandTotalPhp: transactionTotal, amountPaidPhp, tenderedAmountPhp, changeDuePhp });
+    return NextResponse.json({ ok: true, lines: rowsToAppend.length, saleId, customerId, productSubtotalPhp, deliveryFeePhp, installationFeePhp, otherChargePhp, discountPhp, taxRatePct, taxAmountPhp, grandTotalPhp: transactionTotal, amountPaidPhp, tenderedAmountPhp, changeDuePhp, chargeOnly: hasCustomerCharge, chargeType });
   } catch (error: any) {
     console.error("SALES POST ERROR:", error);
     return NextResponse.json({ error: error?.message || String(error) || "Failed to save sale" }, { status: 500 });
