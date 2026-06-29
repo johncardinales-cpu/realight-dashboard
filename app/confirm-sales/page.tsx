@@ -84,6 +84,18 @@ function isInactive(value: string) {
   return ["cancelled", "canceled", "voided"].includes(String(value || "").toLowerCase());
 }
 
+function normalizeDate(value: string) {
+  const raw = String(value || "").trim();
+  if (!raw) return "";
+  if (/^\d{4}-\d{2}-\d{2}/.test(raw)) return raw.slice(0, 10);
+  if (/^\d+(\.\d+)?$/.test(raw)) {
+    const serial = Number(raw);
+    if (serial > 20000 && serial < 90000) return new Date(Math.floor(serial - 25569) * 86400 * 1000).toISOString().slice(0, 10);
+  }
+  const parsed = new Date(raw);
+  return Number.isNaN(parsed.getTime()) ? raw.slice(0, 10) : `${parsed.getFullYear()}-${String(parsed.getMonth() + 1).padStart(2, "0")}-${String(parsed.getDate()).padStart(2, "0")}`;
+}
+
 function StatusPill({ value }: { value: string }) {
   const normalized = value.toLowerCase();
   const color = normalized === "confirmed" || normalized === "paid"
@@ -126,7 +138,7 @@ function summarizeSales(rows: SaleRow[], paymentRows: PaymentSummary[]) {
     const current = map.get(key) || {
       saleId: row.saleId || "",
       key,
-      saleDate: row.saleDate,
+      saleDate: normalizeDate(row.saleDate),
       salesRefNo: row.salesRefNo,
       groupRef: row.groupRef,
       customerName: row.customerName,
@@ -202,6 +214,7 @@ export default function ConfirmSalesPage() {
   const [loading, setLoading] = useState(false);
   const [workingKey, setWorkingKey] = useState("");
   const [paymentEdits, setPaymentEdits] = useState<Record<string, PaymentEdit>>({});
+  const [expandedPaymentEditKey, setExpandedPaymentEditKey] = useState("");
 
   async function loadSales() {
     setLoading(true);
@@ -228,7 +241,7 @@ export default function ConfirmSalesPage() {
 
   const summaries = useMemo(() => summarizeSales(rows, payments), [rows, payments]);
   const reviewSales = summaries.filter((sale) => !isInactive(sale.saleStatus));
-  const compactInputClass = "h-8 rounded-lg border border-slate-300 bg-white px-2 text-[11px] font-semibold text-slate-700 outline-none focus:border-emerald-400";
+  const compactInputClass = "h-9 rounded-lg border border-slate-300 bg-white px-2 text-xs font-semibold text-slate-700 outline-none focus:border-emerald-400";
 
   function getPaymentEdit(sale: SaleSummary) {
     return paymentEdits[sale.key] || buildPaymentEdit(sale);
@@ -257,6 +270,7 @@ export default function ConfirmSalesPage() {
       if (!res.ok) throw new Error(data?.error || "Failed to update payment");
       setMessage(data?.message || "Payment updated successfully.");
       setPaymentEdits((current) => { const next = { ...current }; delete next[sale.key]; return next; });
+      setExpandedPaymentEditKey("");
       await loadSales();
     } catch (error: any) {
       setMessage(error?.message || "Failed to update payment.");
@@ -286,6 +300,7 @@ export default function ConfirmSalesPage() {
       if (!res.ok) throw new Error(data?.error || "Failed to update sale confirmation");
       setMessage(data?.message || "Sale confirmation updated successfully.");
       setPaymentEdits((current) => { const next = { ...current }; delete next[sale.key]; return next; });
+      setExpandedPaymentEditKey("");
       await loadSales();
     } catch (error: any) {
       setMessage(error?.message || "Failed to update sale confirmation.");
@@ -295,71 +310,100 @@ export default function ConfirmSalesPage() {
   }
 
   return (
-    <section className="space-y-6">
-      <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
-        <div className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
+    <section className="space-y-5">
+      <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
+        <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
           <div>
-            <h1 className="text-3xl font-semibold text-slate-900">Confirm Sales</h1>
-            <p className="mt-1 text-sm text-slate-600">Confirm sales for inventory and reporting. Paid/balance uses the same reconciled totals as Payments and Reports.</p>
+            <h1 className="text-2xl font-semibold text-slate-900">Confirm Sales</h1>
+            <p className="mt-1 text-xs text-slate-600">Compact review for confirmation, balance, and payment corrections.</p>
           </div>
           <button type="button" onClick={loadSales} disabled={loading} className="rounded-xl border border-slate-300 px-4 py-2 text-sm font-bold text-slate-700 disabled:opacity-60">{loading ? "Loading..." : "Refresh"}</button>
         </div>
-        {message ? <p className="mt-4 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-semibold text-slate-700">{message}</p> : null}
+        {message ? <p className="mt-3 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-semibold text-slate-700">{message}</p> : null}
       </div>
 
       <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
-        <h2 className="mb-4 text-xl font-semibold text-slate-900">Sales Confirmation Review</h2>
-        <div className="overflow-x-auto rounded-2xl border border-slate-200">
-          <table className="w-full text-sm">
-            <thead className="bg-slate-100 text-slate-700">
-              <tr>{["Date", "Sales Ref", "Customer", "Items", "Total", "Paid", "Balance", "Payment", "Sale", "Payment Edit", "Action"].map((head) => <th key={head} className="px-4 py-3 text-left font-medium whitespace-nowrap">{head}</th>)}</tr>
+        <div className="mb-4 flex flex-col gap-1 md:flex-row md:items-end md:justify-between">
+          <div>
+            <h2 className="text-lg font-bold text-slate-900">Sales Confirmation Review</h2>
+            <p className="text-xs text-slate-500">Payment edit is hidden until needed so the table stays clean.</p>
+          </div>
+          <p className="text-xs font-semibold text-slate-500">{reviewSales.length} active sale(s)</p>
+        </div>
+        <div className="max-h-[70vh] overflow-auto rounded-2xl border border-slate-200">
+          <table className="w-full min-w-[980px] text-sm">
+            <thead className="sticky top-0 z-10 bg-slate-100 text-slate-700">
+              <tr>{["Date", "Sales / Customer", "Item", "Amounts", "Status", "Actions"].map((head) => <th key={head} className="px-4 py-3 text-left font-medium whitespace-nowrap">{head}</th>)}</tr>
             </thead>
             <tbody>
               {reviewSales.map((sale) => {
                 const isConfirmed = sale.saleStatus.toLowerCase() === "confirmed";
                 const edit = getPaymentEdit(sale);
+                const editOpen = expandedPaymentEditKey === sale.key;
+                const firstItem = sale.items[0] || "No item detail";
                 return (
-                  <tr key={sale.key} className="border-t border-slate-100 align-top">
-                    <td className="px-4 py-3 text-slate-700">{sale.saleDate}</td>
-                    <td className="px-4 py-3 text-slate-700">{sale.salesRefNo}</td>
-                    <td className="px-4 py-3 text-slate-700">{sale.customerName}</td>
-                    <td className="px-4 py-3 text-slate-700"><div className="max-w-sm space-y-1">{sale.items.slice(0, 3).map((item) => <p key={item}>{item}</p>)}{sale.items.length > 3 ? <p className="text-xs font-semibold text-slate-500">+{sale.items.length - 3} more</p> : null}</div></td>
-                    <td className="px-4 py-3 text-slate-700">{money(sale.totalSalePhp)}</td>
-                    <td className="px-4 py-3 text-slate-700">{money(sale.paidPhp)}</td>
-                    <td className="px-4 py-3 font-semibold text-slate-900">{money(sale.balancePhp)}</td>
-                    <td className="px-4 py-3"><StatusPill value={sale.paymentStatus} /></td>
-                    <td className="px-4 py-3"><StatusPill value={sale.saleStatus} /></td>
-                    <td className="px-4 py-3">
-                      <div className="w-[300px] rounded-xl border border-slate-200 bg-slate-50/70 p-2">
-                        <div className="mb-1 flex items-center justify-between">
-                          <span className="text-[11px] font-bold text-slate-600">Edit Payment</span>
-                          <button type="button" onClick={() => updateSalePayment(sale)} disabled={workingKey === `payment-${sale.key}`} className="rounded-lg bg-emerald-600 px-2.5 py-1 text-[11px] font-bold text-white disabled:opacity-50">{workingKey === `payment-${sale.key}` ? "Saving..." : "Save"}</button>
+                  <>
+                    <tr key={sale.key} className="border-t border-slate-100 align-middle hover:bg-slate-50/60">
+                      <td className="px-4 py-3 text-slate-700 whitespace-nowrap">{normalizeDate(sale.saleDate)}</td>
+                      <td className="px-4 py-3 text-slate-700">
+                        <p className="font-bold text-slate-900">{sale.salesRefNo || sale.groupRef || sale.saleId}</p>
+                        <p className="text-xs text-slate-500">{sale.customerName}</p>
+                      </td>
+                      <td className="px-4 py-3 text-slate-700">
+                        <p className="max-w-[380px] truncate">{firstItem}</p>
+                        {sale.items.length > 1 ? <p className="text-xs font-semibold text-slate-500">+{sale.items.length - 1} more line(s)</p> : null}
+                      </td>
+                      <td className="px-4 py-3">
+                        <div className="grid min-w-[220px] grid-cols-3 gap-2 text-xs">
+                          <div className="rounded-xl bg-slate-50 px-3 py-2"><p className="text-[10px] font-semibold text-slate-500">Total</p><p className="font-bold text-slate-900">{money(sale.totalSalePhp)}</p></div>
+                          <div className="rounded-xl bg-emerald-50 px-3 py-2"><p className="text-[10px] font-semibold text-emerald-600">Paid</p><p className="font-bold text-emerald-700">{money(sale.paidPhp)}</p></div>
+                          <div className="rounded-xl bg-rose-50 px-3 py-2"><p className="text-[10px] font-semibold text-rose-600">Balance</p><p className="font-bold text-rose-700">{money(sale.balancePhp)}</p></div>
                         </div>
-                        <div className="grid grid-cols-2 gap-1.5">
-                          <select value={edit.paymentStatus} onChange={(event) => updatePaymentEdit(sale, { paymentStatus: event.target.value, amountPaidPhp: event.target.value === "Paid" ? String(sale.totalSalePhp) : event.target.value === "Pending" ? "0" : edit.amountPaidPhp })} className={compactInputClass}>{paymentStatusOptions.map((status) => <option key={status} value={status}>{status}</option>)}</select>
-                          <input type="number" step="0.01" min="0" value={edit.amountPaidPhp} onChange={(event) => updatePaymentEdit(sale, { amountPaidPhp: event.target.value, paymentStatus: computedPaymentStatus(Number(event.target.value) || 0, sale.totalSalePhp) })} className={compactInputClass} placeholder="Amount" />
-                          <select value={edit.paymentMethod} onChange={(event) => updatePaymentEdit(sale, { paymentMethod: event.target.value })} className={compactInputClass}>{paymentMethodOptions.map((method) => <option key={method || "blank"} value={method}>{method || "Method"}</option>)}</select>
-                          <input value={edit.cashierName} onChange={(event) => updatePaymentEdit(sale, { cashierName: event.target.value })} className={compactInputClass} placeholder="Cashier" />
-                          <input value={edit.transactionRef} onChange={(event) => updatePaymentEdit(sale, { transactionRef: event.target.value })} className={`${compactInputClass} col-span-2`} placeholder="Receipt / transaction ref" />
+                      </td>
+                      <td className="px-4 py-3">
+                        <div className="flex flex-col gap-1.5">
+                          <StatusPill value={sale.paymentStatus} />
+                          <StatusPill value={sale.saleStatus} />
                         </div>
-                      </div>
-                    </td>
-                    <td className="px-4 py-3">
-                      <div className="flex flex-col gap-2">
-                        {isConfirmed ? (
-                          <button type="button" onClick={() => updateConfirmation(sale, "undo")} disabled={workingKey === `undo-${sale.key}`} className="rounded-xl bg-amber-500 px-3 py-2 text-xs font-bold text-white disabled:opacity-50">{workingKey === `undo-${sale.key}` ? "Undoing..." : "Undo Confirm"}</button>
-                        ) : (
-                          <>
-                            <button type="button" onClick={() => updateConfirmation(sale, "confirm")} disabled={workingKey === `confirm-${sale.key}`} className="rounded-xl bg-emerald-600 px-3 py-2 text-xs font-bold text-white disabled:opacity-50">{workingKey === `confirm-${sale.key}` ? "Confirming..." : "Confirm Sale"}</button>
-                            <button type="button" onClick={() => updateConfirmation(sale, "void")} disabled={workingKey === `void-${sale.key}`} className="rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-bold text-rose-700 disabled:opacity-50">{workingKey === `void-${sale.key}` ? "Voiding..." : "Void Sale + Payment"}</button>
-                          </>
-                        )}
-                      </div>
-                    </td>
-                  </tr>
+                      </td>
+                      <td className="px-4 py-3">
+                        <div className="flex flex-wrap gap-2">
+                          <button type="button" onClick={() => setExpandedPaymentEditKey(editOpen ? "" : sale.key)} className="rounded-xl border border-slate-300 px-3 py-2 text-xs font-bold text-slate-700">{editOpen ? "Hide Edit" : "Edit Payment"}</button>
+                          {isConfirmed ? (
+                            <button type="button" onClick={() => updateConfirmation(sale, "undo")} disabled={workingKey === `undo-${sale.key}`} className="rounded-xl bg-amber-500 px-3 py-2 text-xs font-bold text-white disabled:opacity-50">{workingKey === `undo-${sale.key}` ? "Undoing..." : "Undo"}</button>
+                          ) : (
+                            <>
+                              <button type="button" onClick={() => updateConfirmation(sale, "confirm")} disabled={workingKey === `confirm-${sale.key}`} className="rounded-xl bg-emerald-600 px-3 py-2 text-xs font-bold text-white disabled:opacity-50">{workingKey === `confirm-${sale.key}` ? "Confirming..." : "Confirm"}</button>
+                              <button type="button" onClick={() => updateConfirmation(sale, "void")} disabled={workingKey === `void-${sale.key}`} className="rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-bold text-rose-700 disabled:opacity-50">{workingKey === `void-${sale.key}` ? "Voiding..." : "Void"}</button>
+                            </>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                    {editOpen ? (
+                      <tr key={`${sale.key}-edit`} className="border-t border-emerald-100 bg-emerald-50/40">
+                        <td colSpan={6} className="px-4 py-3">
+                          <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
+                            <div>
+                              <p className="text-xs font-bold uppercase tracking-wide text-emerald-700">Payment Edit</p>
+                              <p className="text-xs text-slate-500">Adjust only when the payment status or amount needs correction.</p>
+                            </div>
+                            <div className="grid flex-1 gap-2 md:grid-cols-[130px_130px_160px_150px_minmax(180px,1fr)_auto]">
+                              <select value={edit.paymentStatus} onChange={(event) => updatePaymentEdit(sale, { paymentStatus: event.target.value, amountPaidPhp: event.target.value === "Paid" ? String(sale.totalSalePhp) : event.target.value === "Pending" ? "0" : edit.amountPaidPhp })} className={compactInputClass}>{paymentStatusOptions.map((status) => <option key={status} value={status}>{status}</option>)}</select>
+                              <input type="number" step="0.01" min="0" value={edit.amountPaidPhp} onChange={(event) => updatePaymentEdit(sale, { amountPaidPhp: event.target.value, paymentStatus: computedPaymentStatus(Number(event.target.value) || 0, sale.totalSalePhp) })} className={compactInputClass} placeholder="Amount" />
+                              <select value={edit.paymentMethod} onChange={(event) => updatePaymentEdit(sale, { paymentMethod: event.target.value })} className={compactInputClass}>{paymentMethodOptions.map((method) => <option key={method || "blank"} value={method}>{method || "Method"}</option>)}</select>
+                              <input value={edit.cashierName} onChange={(event) => updatePaymentEdit(sale, { cashierName: event.target.value })} className={compactInputClass} placeholder="Cashier" />
+                              <input value={edit.transactionRef} onChange={(event) => updatePaymentEdit(sale, { transactionRef: event.target.value })} className={compactInputClass} placeholder="Receipt / transaction ref" />
+                              <button type="button" onClick={() => updateSalePayment(sale)} disabled={workingKey === `payment-${sale.key}`} className="h-9 rounded-lg bg-emerald-600 px-4 text-xs font-bold text-white disabled:opacity-50">{workingKey === `payment-${sale.key}` ? "Saving..." : "Save"}</button>
+                            </div>
+                          </div>
+                        </td>
+                      </tr>
+                    ) : null}
+                  </>
                 );
               })}
-              {!reviewSales.length ? <tr><td colSpan={11} className="px-4 py-8 text-center text-slate-500">No active sales to review.</td></tr> : null}
+              {!reviewSales.length ? <tr><td colSpan={6} className="px-4 py-8 text-center text-slate-500">No active sales to review.</td></tr> : null}
             </tbody>
           </table>
         </div>
