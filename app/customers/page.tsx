@@ -68,6 +68,25 @@ function money(value: number | undefined) {
   return `₱${(Number(value) || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
 
+function normalizeDate(value: string | undefined) {
+  const raw = String(value || "").trim();
+  if (!raw) return "";
+  if (/^\d{4}-\d{2}-\d{2}/.test(raw)) return raw.slice(0, 10);
+  if (/^\d{1,2}\/\d{1,2}\/\d{2,4}$/.test(raw)) {
+    const [month, day, yearRaw] = raw.split("/").map(Number);
+    const year = yearRaw < 100 ? 2000 + yearRaw : yearRaw;
+    return `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+  }
+  if (/^\d+(\.\d+)?$/.test(raw)) {
+    const serial = Number(raw);
+    if (serial > 20000 && serial < 90000) {
+      return new Date(Math.floor(serial - 25569) * 86400 * 1000).toISOString().slice(0, 10);
+    }
+  }
+  const parsed = new Date(raw);
+  return Number.isNaN(parsed.getTime()) ? raw : parsed.toISOString().slice(0, 10);
+}
+
 function customerKey(row: CustomerRow) {
   return row.customerId || `${row.rowNumber}-${row.customerName}`;
 }
@@ -82,10 +101,11 @@ function unpaidOrdersFor(row: CustomerRow) {
   (row.purchases || [])
     .filter((sale) => Number(sale.balancePhp) > 0 && !inactiveSale(sale.saleStatus))
     .forEach((sale) => {
-      const key = sale.salesRefNo || `${sale.saleDate}-${sale.description}-${sale.specification}`;
+      const saleDate = normalizeDate(sale.saleDate);
+      const key = sale.salesRefNo || `${saleDate}-${sale.description}-${sale.specification}`;
       const current = map.get(key) || {
         key,
-        saleDate: sale.saleDate,
+        saleDate,
         salesRefNo: sale.salesRefNo || "-",
         grandTotalPhp: 0,
         amountPaidPhp: 0,
@@ -250,6 +270,7 @@ export default function CustomersPage() {
               const extraInfo = [row.address, row.notes].filter(Boolean).join(" · ");
               const totalUnpaid = Number(row.outstandingBalancePhp) || 0;
               const unpaidOrders = unpaidOrdersFor(row);
+              const lastPurchaseDate = normalizeDate(row.lastPurchaseDate);
 
               return (
                 <div key={key} className="border-b border-slate-100 bg-white last:border-b-0">
@@ -278,7 +299,7 @@ export default function CustomersPage() {
                         <div className="rounded-xl border border-slate-200 bg-white p-3"><p className="text-[11px] font-semibold text-slate-500">Total Unpaid Balance</p><p className="mt-1 text-base font-bold text-rose-700">{money(totalUnpaid)}</p></div>
                         <div className="rounded-xl border border-slate-200 bg-white p-3"><p className="text-[11px] font-semibold text-slate-500">Unpaid Orders</p><p className="mt-1 text-base font-bold text-slate-950">{unpaidOrders.length}</p></div>
                         <div className="rounded-xl border border-slate-200 bg-white p-3"><p className="text-[11px] font-semibold text-slate-500">Total Paid</p><p className="mt-1 text-base font-bold text-emerald-700">{money(row.totalPaidPhp)}</p></div>
-                        <div className="rounded-xl border border-slate-200 bg-white p-3"><p className="text-[11px] font-semibold text-slate-500">Last Purchase</p><p className="mt-1 text-base font-bold text-slate-950">{row.lastPurchaseDate || "-"}</p></div>
+                        <div className="rounded-xl border border-slate-200 bg-white p-3"><p className="text-[11px] font-semibold text-slate-500">Last Purchase</p><p className="mt-1 text-base font-bold text-slate-950">{lastPurchaseDate || "-"}</p></div>
                       </div>
 
                       {unpaidOrders.length ? (
@@ -288,7 +309,7 @@ export default function CustomersPage() {
                             <table className="min-w-full text-left text-xs">
                               <thead className="sticky top-0 bg-rose-50 text-rose-700"><tr><th className="px-3 py-2 font-semibold">Date</th><th className="px-3 py-2 font-semibold">Sale Ref</th><th className="px-3 py-2 font-semibold">Lines</th><th className="px-3 py-2 font-semibold">Grand Total</th><th className="px-3 py-2 font-semibold">Paid</th><th className="px-3 py-2 font-semibold">Balance</th><th className="px-3 py-2 font-semibold">Payment</th></tr></thead>
                               <tbody>
-                                {unpaidOrders.map((order) => <tr key={order.key} className="border-t border-rose-50"><td className="px-3 py-2 text-slate-700">{order.saleDate}</td><td className="px-3 py-2 font-semibold text-slate-900">{order.salesRefNo}</td><td className="px-3 py-2 text-slate-700">{order.lineCount}</td><td className="px-3 py-2 text-slate-700">{money(order.grandTotalPhp)}</td><td className="px-3 py-2 text-slate-700">{money(order.amountPaidPhp)}</td><td className="px-3 py-2 font-bold text-rose-700">{money(order.balancePhp)}</td><td className="px-3 py-2 text-slate-700">{order.paymentStatus}</td></tr>)}
+                                {unpaidOrders.map((order) => <tr key={order.key} className="border-t border-rose-50"><td className="px-3 py-2 text-slate-700">{normalizeDate(order.saleDate)}</td><td className="px-3 py-2 font-semibold text-slate-900">{order.salesRefNo}</td><td className="px-3 py-2 text-slate-700">{order.lineCount}</td><td className="px-3 py-2 text-slate-700">{money(order.grandTotalPhp)}</td><td className="px-3 py-2 text-slate-700">{money(order.amountPaidPhp)}</td><td className="px-3 py-2 font-bold text-rose-700">{money(order.balancePhp)}</td><td className="px-3 py-2 text-slate-700">{order.paymentStatus}</td></tr>)}
                               </tbody>
                             </table>
                           </div>
@@ -299,13 +320,13 @@ export default function CustomersPage() {
 
                       <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
                         <h3 className="text-sm font-bold text-slate-950">Order History</h3>
-                        <p className="text-xs font-semibold text-slate-500">Last purchase: {row.lastPurchaseDate || "-"}</p>
+                        <p className="text-xs font-semibold text-slate-500">Last purchase: {lastPurchaseDate || "-"}</p>
                       </div>
                       <div className="max-h-80 overflow-auto rounded-xl border border-slate-200 bg-white">
                         <table className="min-w-full text-left text-xs">
                           <thead className="sticky top-0 bg-slate-50 text-slate-500"><tr><th className="px-3 py-2 font-semibold">Date</th><th className="px-3 py-2 font-semibold">Sale Ref</th><th className="px-3 py-2 font-semibold">Item</th><th className="px-3 py-2 font-semibold">Qty</th><th className="px-3 py-2 font-semibold">Grand Total</th><th className="px-3 py-2 font-semibold">Paid</th><th className="px-3 py-2 font-semibold">Balance</th><th className="px-3 py-2 font-semibold">Payment</th><th className="px-3 py-2 font-semibold">Sale</th></tr></thead>
                           <tbody>
-                            {(row.purchases || []).map((sale, index) => <tr key={`${sale.salesRefNo}-${index}`} className="border-t border-slate-100"><td className="px-3 py-2 text-slate-700">{sale.saleDate}</td><td className="px-3 py-2 font-semibold text-slate-900">{sale.salesRefNo || "-"}</td><td className="px-3 py-2 text-slate-700">{sale.description}<p className="text-[11px] text-slate-500">{sale.specification}</p></td><td className="px-3 py-2 text-slate-700">{sale.qty}</td><td className="px-3 py-2 text-slate-700">{money(sale.grandTotalPhp)}</td><td className="px-3 py-2 text-slate-700">{money(sale.amountPaidPhp)}</td><td className="px-3 py-2 font-semibold text-rose-600">{money(sale.balancePhp)}</td><td className="px-3 py-2 text-slate-700">{sale.paymentStatus}</td><td className="px-3 py-2 text-slate-700">{sale.saleStatus}</td></tr>)}
+                            {(row.purchases || []).map((sale, index) => <tr key={`${sale.salesRefNo}-${index}`} className="border-t border-slate-100"><td className="px-3 py-2 text-slate-700">{normalizeDate(sale.saleDate)}</td><td className="px-3 py-2 font-semibold text-slate-900">{sale.salesRefNo || "-"}</td><td className="px-3 py-2 text-slate-700">{sale.description}<p className="text-[11px] text-slate-500">{sale.specification}</p></td><td className="px-3 py-2 text-slate-700">{sale.qty}</td><td className="px-3 py-2 text-slate-700">{money(sale.grandTotalPhp)}</td><td className="px-3 py-2 text-slate-700">{money(sale.amountPaidPhp)}</td><td className="px-3 py-2 font-semibold text-rose-600">{money(sale.balancePhp)}</td><td className="px-3 py-2 text-slate-700">{sale.paymentStatus}</td><td className="px-3 py-2 text-slate-700">{sale.saleStatus}</td></tr>)}
                             {!(row.purchases || []).length ? <tr><td colSpan={9} className="px-3 py-8 text-center text-slate-500">No purchases/orders found for this customer yet.</td></tr> : null}
                           </tbody>
                         </table>
