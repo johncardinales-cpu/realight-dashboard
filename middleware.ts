@@ -40,6 +40,11 @@ function errorResponse(error: string) {
   return NextResponse.json({ error }, { status: 400 });
 }
 
+function chargeOnlyAmount(body: any) {
+  if (!body?.chargeOnly && body?.entryType !== "customer-charge") return 0;
+  return toNumber(body?.chargeAmountPhp || body?.chargeAmount || body?.grandTotalPhp || body?.totalSalePhp);
+}
+
 function auditPaymentProcedure(body: any) {
   const status = String(body?.paymentStatus || "Pending").trim().toLowerCase();
   const method = String(body?.paymentMethod || "").trim().toLowerCase();
@@ -47,7 +52,8 @@ function auditPaymentProcedure(body: any) {
   const productSubtotal = Array.isArray(body?.items)
     ? body.items.reduce((sum: number, item: any) => sum + toNumber(item?.qty) * toNumber(item?.unitPricePhp), 0)
     : toNumber(body?.grandTotalPhp || body?.totalSalePhp);
-  const charges = toNumber(body?.deliveryFeePhp) + toNumber(body?.installationFeePhp) + toNumber(body?.otherChargePhp);
+  const explicitCharges = toNumber(body?.deliveryFeePhp) + toNumber(body?.installationFeePhp) + toNumber(body?.otherChargePhp);
+  const charges = explicitCharges || chargeOnlyAmount(body);
   const discount = toNumber(body?.discountPhp);
   const taxableBase = roundMoney(Math.max(productSubtotal + charges - discount, 0));
   const taxAmount = body?.taxAmountPhp !== undefined ? toNumber(body?.taxAmountPhp) : roundMoney(taxableBase * (toNumber(body?.taxRatePct) / 100));
