@@ -70,9 +70,19 @@ type CustomerGroup = {
 };
 
 type SaleAction = "confirm" | "undo" | "void";
+type DateFilterMode = "overall" | "daily" | "weekly" | "monthly" | "ytd" | "lastYear" | "custom";
 
 const paymentStatusOptions = ["Paid", "Partial", "Pending"];
 const paymentMethodOptions = ["", "Cash", "Bank Transfer", "GCash", "Maya", "Check", "Credit", "Installment", "Mixed Payment"];
+const dateFilterOptions: Array<{ value: DateFilterMode; label: string }> = [
+  { value: "overall", label: "Overall" },
+  { value: "daily", label: "Daily" },
+  { value: "weekly", label: "Weekly" },
+  { value: "monthly", label: "Monthly" },
+  { value: "ytd", label: "Year to Date" },
+  { value: "lastYear", label: "Last Year" },
+  { value: "custom", label: "Custom Range" },
+];
 
 function money(value: number) {
   return `₱${(Number(value) || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -93,16 +103,81 @@ function isInactive(value: string) {
   return ["cancelled", "canceled", "voided"].includes(String(value || "").toLowerCase());
 }
 
+function formatDate(date: Date) {
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+}
+
+function today() {
+  return formatDate(new Date());
+}
+
 function normalizeDate(value: string) {
   const raw = String(value || "").trim();
   if (!raw) return "";
   if (/^\d{4}-\d{2}-\d{2}/.test(raw)) return raw.slice(0, 10);
+  if (/^\d{1,2}\/\d{1,2}\/\d{2,4}$/.test(raw)) {
+    const [month, day, yearRaw] = raw.split("/").map(Number);
+    const year = yearRaw < 100 ? 2000 + yearRaw : yearRaw;
+    return `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+  }
   if (/^\d+(\.\d+)?$/.test(raw)) {
     const serial = Number(raw);
     if (serial > 20000 && serial < 90000) return new Date(Math.floor(serial - 25569) * 86400 * 1000).toISOString().slice(0, 10);
   }
   const parsed = new Date(raw);
-  return Number.isNaN(parsed.getTime()) ? raw.slice(0, 10) : `${parsed.getFullYear()}-${String(parsed.getMonth() + 1).padStart(2, "0")}-${String(parsed.getDate()).padStart(2, "0")}`;
+  return Number.isNaN(parsed.getTime()) ? raw.slice(0, 10) : formatDate(parsed);
+}
+
+function toDate(value: string) {
+  const normalized = normalizeDate(value || today());
+  const [year, month, day] = normalized.split("-").map(Number);
+  return year && month && day ? new Date(year, month - 1, day) : new Date();
+}
+
+function rangeForDateFilter(mode: DateFilterMode, anchorValue: string, customStart: string, customEnd: string) {
+  if (mode === "overall") return { start: "1900-01-01", end: "2999-12-31" };
+  if (mode === "custom") return { start: normalizeDate(customStart || today()), end: normalizeDate(customEnd || today()) };
+
+  const anchor = toDate(anchorValue || today());
+  const start = new Date(anchor);
+  const end = new Date(anchor);
+
+  if (mode === "weekly") {
+    const day = start.getDay();
+    const offset = day === 0 ? -6 : 1 - day;
+    start.setDate(start.getDate() + offset);
+    end.setTime(start.getTime());
+    end.setDate(start.getDate() + 6);
+  }
+
+  if (mode === "monthly") {
+    start.setDate(1);
+    end.setTime(start.getTime());
+    end.setMonth(start.getMonth() + 1, 0);
+  }
+
+  if (mode === "ytd") {
+    start.setMonth(0, 1);
+    end.setTime(anchor.getTime());
+  }
+
+  if (mode === "lastYear") {
+    const year = anchor.getFullYear() - 1;
+    start.setFullYear(year, 0, 1);
+    end.setFullYear(year, 11, 31);
+  }
+
+  return { start: formatDate(start), end: formatDate(end) };
+}
+
+function dateRangeLabel(mode: DateFilterMode, start: string, end: string) {
+  if (mode === "overall") return "All available dates";
+  return `${start} to ${end}`;
+}
+
+function inDateRange(value: string, start: string, end: string) {
+  const date = normalizeDate(value);
+  return date >= start && date <= end;
 }
 
 function cleanCustomerName(value: string) {
@@ -257,6 +332,10 @@ export default function ConfirmSalesPage() {
   const [paymentEdits, setPaymentEdits] = useState<Record<string, PaymentEdit>>({});
   const [expandedPaymentEditKey, setExpandedPaymentEditKey] = useState("");
   const [customerFilter, setCustomerFilter] = useState("all");
+  const [dateFilterMode, setDateFilterMode] = useState<DateFilterMode>("overall");
+  const [dateAnchor, setDateAnchor] = useState(today());
+  const [customStart, setCustomStart] = useState(today());
+  const [customEnd, setCustomEnd] = useState(today());
 
   async function loadSales() {
     setLoading(true);
@@ -283,9 +362,11 @@ export default function ConfirmSalesPage() {
 
   const summaries = useMemo(() => summarizeSales(rows, payments), [rows, payments]);
   const reviewSales = summaries.filter((sale) => !isInactive(sale.saleStatus));
-  const customerGroups = useMemo(() => groupByCustomer(reviewSales), [reviewSales]);
-  const filteredReviewSales = useMemo(() => customerFilter === "all" ? reviewSales : reviewSales.filter((sale) => customerGroupKey(sale.customerName) === customerFilter), [reviewSales, customerFilter]);
-  const overallTotals = useMemo(() => totalsFor(reviewSales), [reviewSales]);
+  const dateRange = useMemo(() => rangeForDateFilter(dateFilterMode, dateAnchor, customStart, customEnd), [dateFilterMode, dateAnchor, customStart, customEnd]);
+  const dateFilteredSales = useMemo(() => reviewSales.filter((sale) => inDateRange(sale.saleDate, dateRange.start, dateRange.end)), [reviewSales, dateRange.start, dateRange.end]);
+  const customerGroups = useMemo(() => groupByCustomer(dateFilteredSales), [dateFilteredSales]);
+  const filteredReviewSales = useMemo(() => customerFilter === "all" ? dateFilteredSales : dateFilteredSales.filter((sale) => customerGroupKey(sale.customerName) === customerFilter), [dateFilteredSales, customerFilter]);
+  const overallTotals = useMemo(() => totalsFor(dateFilteredSales), [dateFilteredSales]);
   const selectedTotals = useMemo(() => totalsFor(filteredReviewSales), [filteredReviewSales]);
   const selectedCustomer = customerFilter === "all" ? "All customers" : customerGroups.find((group) => group.key === customerFilter)?.customerName || "Selected customer";
   const compactInputClass = "h-9 rounded-lg border border-slate-300 bg-white px-2 text-xs font-semibold text-slate-700 outline-none focus:border-emerald-400";
@@ -366,7 +447,7 @@ export default function ConfirmSalesPage() {
         <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
           <div>
             <h1 className="text-2xl font-semibold text-slate-900">Confirm Sales</h1>
-            <p className="mt-1 text-xs text-slate-600">Compact review by customer, confirmation, balance, and payment corrections.</p>
+            <p className="mt-1 text-xs text-slate-600">Compact review by date, customer, confirmation, balance, and payment corrections.</p>
           </div>
           <button type="button" onClick={loadSales} disabled={loading} className="rounded-xl border border-slate-300 px-4 py-2 text-sm font-bold text-slate-700 disabled:opacity-60">{loading ? "Loading..." : "Refresh"}</button>
         </div>
@@ -377,20 +458,20 @@ export default function ConfirmSalesPage() {
         <div className="mb-4 flex flex-col gap-3 xl:flex-row xl:items-end xl:justify-between">
           <div>
             <h2 className="text-lg font-bold text-slate-900">Customer Group Summary</h2>
-            <p className="text-xs text-slate-500">Filter sales under a customer name and see overall amount, paid, and balance.</p>
+            <p className="text-xs text-slate-500">Filter by date and customer name, then see overall amount, paid, and balance.</p>
+            <p className="mt-1 text-xs font-semibold text-slate-600">Date range: {dateRangeLabel(dateFilterMode, dateRange.start, dateRange.end)}</p>
           </div>
-          <div className="w-full xl:w-72">
-            <label className="text-[11px] font-bold uppercase tracking-wide text-slate-500">Customer Filter</label>
-            <select value={customerFilter} onChange={(event) => setCustomerFilter(event.target.value)} className="mt-1 w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm font-semibold text-slate-700">
-              <option value="all">All customers</option>
-              {customerGroups.map((group) => <option key={group.key} value={group.key}>{group.customerName} - {money(group.balancePhp)} balance</option>)}
-            </select>
+          <div className="flex flex-wrap items-end gap-2">
+            <label className="block min-w-40"><span className="text-[11px] font-bold uppercase tracking-wide text-slate-500">Date Filter</span><select value={dateFilterMode} onChange={(event) => setDateFilterMode(event.target.value as DateFilterMode)} className="mt-1 w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm font-semibold text-slate-700">{dateFilterOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></label>
+            {dateFilterMode !== "overall" && dateFilterMode !== "custom" ? <label className="block"><span className="text-[11px] font-bold uppercase tracking-wide text-slate-500">Anchor Date</span><input type="date" value={dateAnchor} onChange={(event) => setDateAnchor(event.target.value)} className="mt-1 rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm font-semibold text-slate-700" /></label> : null}
+            {dateFilterMode === "custom" ? <><label className="block"><span className="text-[11px] font-bold uppercase tracking-wide text-slate-500">From</span><input type="date" value={customStart} onChange={(event) => setCustomStart(event.target.value)} className="mt-1 rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm font-semibold text-slate-700" /></label><label className="block"><span className="text-[11px] font-bold uppercase tracking-wide text-slate-500">To</span><input type="date" value={customEnd} onChange={(event) => setCustomEnd(event.target.value)} className="mt-1 rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm font-semibold text-slate-700" /></label></> : null}
+            <label className="block min-w-72"><span className="text-[11px] font-bold uppercase tracking-wide text-slate-500">Customer Filter</span><select value={customerFilter} onChange={(event) => setCustomerFilter(event.target.value)} className="mt-1 w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm font-semibold text-slate-700"><option value="all">All customers</option>{customerGroups.map((group) => <option key={group.key} value={group.key}>{group.customerName} - {money(group.balancePhp)} balance</option>)}</select></label>
           </div>
         </div>
 
         <div className="grid gap-3 md:grid-cols-4">
           <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4"><p className="text-xs font-semibold text-slate-500">Viewing</p><p className="mt-1 truncate text-base font-bold text-slate-950">{selectedCustomer}</p><p className="mt-1 text-xs text-slate-500">{selectedTotals.saleCount} sale(s)</p></div>
-          <div className="rounded-2xl border border-slate-200 bg-white p-4"><p className="text-xs font-semibold text-slate-500">Overall Amount</p><p className="mt-1 text-lg font-bold text-slate-950">{money(selectedTotals.totalSalePhp)}</p><p className="mt-1 text-xs text-slate-500">All selected sales</p></div>
+          <div className="rounded-2xl border border-slate-200 bg-white p-4"><p className="text-xs font-semibold text-slate-500">Overall Amount</p><p className="mt-1 text-lg font-bold text-slate-950">{money(selectedTotals.totalSalePhp)}</p><p className="mt-1 text-xs text-slate-500">Selected date/customer</p></div>
           <div className="rounded-2xl border border-emerald-100 bg-emerald-50 p-4"><p className="text-xs font-semibold text-emerald-600">Paid</p><p className="mt-1 text-lg font-bold text-emerald-700">{money(selectedTotals.paidPhp)}</p><p className="mt-1 text-xs text-emerald-600">Collected/recorded</p></div>
           <div className="rounded-2xl border border-rose-100 bg-rose-50 p-4"><p className="text-xs font-semibold text-rose-600">Balance</p><p className="mt-1 text-lg font-bold text-rose-700">{money(selectedTotals.balancePhp)}</p><p className="mt-1 text-xs text-rose-600">Remaining unpaid</p></div>
         </div>
@@ -408,7 +489,7 @@ export default function ConfirmSalesPage() {
                 <td className="px-3 py-2"><button type="button" onClick={() => setCustomerFilter("all")} className="rounded-lg border border-slate-300 px-2 py-1 text-[11px] font-bold text-slate-700">View</button></td>
               </tr>
               {customerGroups.map((group) => <tr key={group.key} className={`border-t border-slate-100 ${customerFilter === group.key ? "bg-emerald-50" : "bg-white"}`}><td className="px-3 py-2 font-bold text-slate-900">{group.customerName}</td><td className="px-3 py-2 text-slate-700">{group.saleCount}</td><td className="px-3 py-2 font-semibold text-slate-900">{money(group.totalSalePhp)}</td><td className="px-3 py-2 font-semibold text-emerald-700">{money(group.paidPhp)}</td><td className="px-3 py-2 font-bold text-rose-700">{money(group.balancePhp)}</td><td className="px-3 py-2"><button type="button" onClick={() => setCustomerFilter(group.key)} className="rounded-lg border border-slate-300 px-2 py-1 text-[11px] font-bold text-slate-700">View</button></td></tr>)}
-              {!customerGroups.length ? <tr><td colSpan={6} className="px-3 py-6 text-center text-slate-500">No active sales to group.</td></tr> : null}
+              {!customerGroups.length ? <tr><td colSpan={6} className="px-3 py-6 text-center text-slate-500">No active sales in this date range.</td></tr> : null}
             </tbody>
           </table>
         </div>
@@ -495,7 +576,7 @@ export default function ConfirmSalesPage() {
                   </Fragment>
                 );
               })}
-              {!filteredReviewSales.length ? <tr><td colSpan={6} className="px-4 py-8 text-center text-slate-500">No active sales for this customer filter.</td></tr> : null}
+              {!filteredReviewSales.length ? <tr><td colSpan={6} className="px-4 py-8 text-center text-slate-500">No active sales for this date/customer filter.</td></tr> : null}
             </tbody>
           </table>
         </div>
