@@ -31,6 +31,10 @@ function normDate(v: unknown) {
     const y = y0 < 100 ? 2000 + y0 : y0;
     return `${y}-${pad(m)}-${pad(d)}`;
   }
+  if (/^\d+(\.\d+)?$/.test(s)) {
+    const serial = Number(s);
+    if (serial > 20000 && serial < 90000) return new Date(Math.floor(serial - 25569) * 86400 * 1000).toISOString().slice(0, 10);
+  }
   const parsed = new Date(s);
   return Number.isNaN(parsed.getTime()) ? s.slice(0, 10) : localDate(parsed);
 }
@@ -41,20 +45,40 @@ function toDate(v: string) {
 }
 
 function period(mode: string, value: string) {
-  const m = ["daily", "weekly", "monthly"].includes(mode) ? mode : "daily";
-  const start = toDate(value || today());
-  const end = new Date(start);
+  const allowed = ["daily", "weekly", "monthly", "ytd", "lastYear", "overall"];
+  const m = allowed.includes(mode) ? mode : "daily";
+  const anchor = toDate(value || today());
+  const start = new Date(anchor);
+  const end = new Date(anchor);
+
   if (m === "weekly") {
     const off = start.getDay() === 0 ? -6 : 1 - start.getDay();
     start.setDate(start.getDate() + off);
     end.setTime(start.getTime());
     end.setDate(start.getDate() + 6);
   }
+
   if (m === "monthly") {
     start.setDate(1);
     end.setTime(start.getTime());
     end.setMonth(start.getMonth() + 1, 0);
   }
+
+  if (m === "ytd") {
+    start.setMonth(0, 1);
+    end.setTime(anchor.getTime());
+  }
+
+  if (m === "lastYear") {
+    const year = anchor.getFullYear() - 1;
+    start.setFullYear(year, 0, 1);
+    end.setFullYear(year, 11, 31);
+  }
+
+  if (m === "overall") {
+    return { mode: m, startDate: "1900-01-01", endDate: "2999-12-31" };
+  }
+
   return { mode: m, startDate: localDate(start), endDate: localDate(end) };
 }
 
