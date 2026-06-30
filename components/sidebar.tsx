@@ -18,7 +18,6 @@ const mainNavItems = [
   { label: "Payments", href: "/payments", icon: "M4 7h16v10H4V7Zm0 3h16M7 15h4" },
   { label: "Expenses", href: "/expenses", icon: "M4 7h16v12H4V7Zm0 4h16M16 15h2" },
   { label: "Reports", href: "/reports", icon: "M6 3h9l3 3v15H6V3Zm8 0v4h4M9 13h6M9 17h6" },
-  { label: "Accounting Audit", href: "/accounting-audit", icon: "M4 4h16v16H4V4Zm4 5h8M8 13h8M8 17h5M17 9l2 2 3-4" },
   { label: "AI Agents", href: "/ai-agents", icon: "M12 3c1.2 2.8 3.2 4.8 6 6-2.8 1.2-4.8 3.2-6 6-1.2-2.8-3.2-4.8-6-6 2.8-1.2 4.8-3.2 6-6Zm6 9c.7 1.6 1.8 2.7 3 3-1.2.3-2.3 1.4-3 3-.7-1.6-1.8-2.7-3-3 1.2-.3 2.3-3 3-3ZM6 15c.5 1.1 1.4 2 2.5 2.5C7.4 18 6.5 18.9 6 20c-.5-1.1-1.4-1.4-2.5-2.5C4.6 17 5.5 16.1 6 15Z" },
 ];
 
@@ -31,13 +30,8 @@ function NavLink({ item }: { item: { label: string; href: string; icon: string }
   const pathname = usePathname();
   const active = item.href === "/" ? pathname === "/" : pathname.startsWith(item.href);
   return (
-    <Link
-      href={item.href}
-      className={`group flex items-center gap-3 rounded-2xl px-4 py-3 transition ${active ? "bg-emerald-50 text-emerald-700 shadow-sm" : "text-slate-600 hover:bg-slate-50 hover:text-slate-950"}`}
-    >
-      <svg viewBox="0 0 24 24" aria-hidden="true" className={`h-5 w-5 ${active ? "text-emerald-600" : "text-slate-500 group-hover:text-slate-700"}`} fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-        <path d={item.icon} />
-      </svg>
+    <Link href={item.href} className={`group flex items-center gap-3 rounded-2xl px-4 py-3 transition ${active ? "bg-emerald-50 text-emerald-700 shadow-sm" : "text-slate-600 hover:bg-slate-50 hover:text-slate-950"}`}>
+      <svg viewBox="0 0 24 24" aria-hidden="true" className={`h-5 w-5 ${active ? "text-emerald-600" : "text-slate-500 group-hover:text-slate-700"}`} fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d={item.icon} /></svg>
       {item.label}
     </Link>
   );
@@ -45,33 +39,11 @@ function NavLink({ item }: { item: { label: string; href: string; icon: string }
 
 export default function Sidebar() {
   const showAdminTools = true;
-
   return (
     <aside className="hidden border-r border-slate-200/80 bg-white/95 px-4 py-6 shadow-[10px_0_40px_rgba(15,23,42,0.03)] backdrop-blur lg:block">
-      <div className="mb-8 px-1">
-        <div className="flex items-center gap-3">
-          <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl bg-gradient-to-br from-amber-50 via-white to-emerald-50 ring-1 ring-slate-200 shadow-sm">
-            <span className="text-xl font-bold text-amber-600">R</span>
-          </div>
-          <div className="min-w-0">
-            <h1 className="truncate text-2xl font-bold tracking-tight text-slate-950">Reallights</h1>
-            <p className="truncate text-sm font-semibold tracking-[0.18em] text-amber-600">SOLAR</p>
-          </div>
-        </div>
-      </div>
-
-      <nav className="space-y-2 text-sm font-medium">
-        {mainNavItems.map((item) => <NavLink key={item.href} item={item} />)}
-      </nav>
-
-      {showAdminTools ? (
-        <div className="mt-6 border-t border-slate-100 pt-4">
-          <p className="mb-2 px-4 text-[11px] font-black uppercase tracking-[0.22em] text-slate-400">Admin</p>
-          <nav className="space-y-2 text-sm font-medium">
-            {adminNavItems.map((item) => <NavLink key={item.href} item={item} />)}
-          </nav>
-        </div>
-      ) : null}
+      <div className="mb-8 px-1"><div className="flex items-center gap-3"><div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl bg-gradient-to-br from-amber-50 via-white to-emerald-50 ring-1 ring-slate-200 shadow-sm"><span className="text-xl font-bold text-amber-600">R</span></div><div className="min-w-0"><h1 className="truncate text-2xl font-bold tracking-tight text-slate-950">Reallights</h1><p className="truncate text-sm font-semibold tracking-[0.18em] text-amber-600">SOLAR</p></div></div></div>
+      <nav className="space-y-2 text-sm font-medium">{mainNavItems.map((item) => <NavLink key={item.href} item={item} />)}</nav>
+      {showAdminTools ? <div className="mt-6 border-t border-slate-100 pt-4"><p className="mb-2 px-4 text-[11px] font-black uppercase tracking-[0.22em] text-slate-400">Admin</p><nav className="space-y-2 text-sm font-medium">{adminNavItems.map((item) => <NavLink key={item.href} item={item} />)}</nav></div> : null}
     </aside>
   );
 }
