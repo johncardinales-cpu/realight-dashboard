@@ -107,7 +107,7 @@ function StatCard({ label, value, status, helper, tone = "emerald" }: { label: s
 function MiniChart({ rows }: { rows: Trend[] }) {
   const max = Math.max(...rows.map((r) => Math.max(r.sales || 0, r.collections || 0, r.grossProfit || 0, r.expenses || 0)), 1);
   const hasData = rows.some((r) => Number(r.sales || 0) > 0 || Number(r.collections || 0) > 0 || Number(r.grossProfit || 0) > 0 || Number(r.expenses || 0) > 0);
-  const bars = [{ key: "sales", label: "Sales", color: "bg-emerald-500" }, { key: "collections", label: "Collections", color: "bg-blue-500" }, { key: "grossProfit", label: "Gross Profit", color: "bg-violet-500" }, { key: "expenses", label: "Expenses", color: "bg-orange-500" }] as const;
+  const bars = [{ key: "sales", label: "Sales", color: "bg-emerald-500" }, { key: "collections", label: "Collections", color: "bg-blue-500" }, { key: "grossProfit", label: "Gross Profit", color: "bg-violet-500" }, { key: "expenses", label: "Expenses" , color: "bg-orange-500" }] as const;
   if (!rows.length) return <div className="flex h-[240px] items-center justify-center rounded-2xl border border-dashed border-slate-200 bg-slate-50 text-center"><p className="font-bold text-slate-500">No date range selected.</p></div>;
   return <div className="rounded-2xl border border-slate-100 bg-slate-50 p-5">{!hasData ? <p className="mb-3 text-center text-sm font-semibold text-slate-500">No sales or collections by transaction date in this selected period.</p> : null}<div className="flex h-[220px] items-end gap-4 overflow-x-auto pb-2">{rows.map((row) => <div key={row.date} className="flex min-w-[90px] flex-1 flex-col items-center justify-end gap-2"><div className="flex h-[170px] items-end gap-1.5">{bars.map((bar) => <div key={bar.key} className={`w-4 rounded-t-lg ${bar.color}`} style={{ height: `${Math.max((Number(row[bar.key] || 0) / max) * 170, hasData ? 2 : 0)}px` }} />)}</div><p className="text-xs font-semibold text-slate-500">{row.date.slice(5)}</p></div>)}</div><div className="mt-3 flex flex-wrap gap-4 text-xs font-semibold text-slate-500">{bars.map((bar) => <span key={bar.key} className="inline-flex items-center gap-2"><span className={`h-3 w-3 rounded ${bar.color}`} />{bar.label}</span>)}</div></div>;
 }
@@ -125,7 +125,7 @@ export default function DashboardClient() {
 
   async function fetchReports(start: string, end: string, mode: PeriodMode): Promise<ReportsData> {
     if (mode !== "custom") {
-      const reportDate = mode === "overall" ? today() : end;
+      const reportDate = mode === "overall" || mode === "lastYear" ? today() : end;
       const res = await fetch(`/api/reports?mode=${mode}&date=${reportDate}&fresh=1&t=${Date.now()}`, { cache: "no-store" });
       const json = await res.json();
       return json && !json.error ? json : emptyReports();
@@ -161,7 +161,7 @@ export default function DashboardClient() {
 
   function selectPreset(mode: PeriodMode) {
     if (mode === "custom") { setPeriodMode("custom"); return; }
-    const next = rangeForMode(mode, rangeEnd || today());
+    const next = rangeForMode(mode, today());
     setPeriodMode(mode);
     setRangeStart(next.start);
     setRangeEnd(next.end);
