@@ -1,3 +1,4 @@
+import AccountingAuditPanel from "@/components/ai/AccountingAuditPanel";
 import AgentTestPanel from "@/components/ai/AgentTestPanel";
 
 const safeguards = [
@@ -8,10 +9,10 @@ const safeguards = [
 ];
 
 const quickActions = [
+  "Run accounting audit",
   "Check app health",
   "Create restore point plan",
   "Run data audit review",
-  "Generate QA checklist",
   "Prepare deployment readiness report",
 ];
 
@@ -24,7 +25,7 @@ export default function AIAgentsPage() {
           <div>
             <h1 className="text-3xl font-bold tracking-tight text-slate-950">AI Agents</h1>
             <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-600">
-              Manage and test Realights AI agents in safe mode. Agents are active for monitoring, audit, QA, and recommendations, but production writes and destructive actions stay disabled.
+              Manage and test Realights AI agents in safe mode. Agents are active for monitoring, audit, QA, and recommendations. Production write actions remain disabled.
             </p>
           </div>
           <div className="rounded-2xl border border-emerald-100 bg-emerald-50 px-5 py-3 text-sm font-bold text-emerald-700">
@@ -42,6 +43,8 @@ export default function AIAgentsPage() {
           </div>
         ))}
       </div>
+
+      <AccountingAuditPanel />
 
       <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
         <h2 className="text-xl font-bold text-slate-950">Recommended Admin Actions</h2>
