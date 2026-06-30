@@ -73,10 +73,7 @@ function buildPaymentTotals(paymentRows: string[][]) {
   return { totals, counts };
 }
 
-function firstLedgerValue(map: Map<string, number>, keys: string[]) {
-  for (const key of keys) if (map.has(key)) return map.get(key) || 0;
-  return 0;
-}
+function firstLedgerValue(map: Map<string, number>, keys: string[]) { for (const key of keys) if (map.has(key)) return map.get(key) || 0; return 0; }
 
 function buildSaleSummaries(salesRows: string[][], paymentRows: string[][]) {
   const { totals: paymentTotals, counts: paymentCounts } = buildPaymentTotals(paymentRows);
@@ -135,14 +132,18 @@ function parseCreditRows(rows: string[][]) {
   return rows.slice(1).map((row) => ({ creditDate: normalizeDate(row[0]), customerName: text(row[1]), customerId: text(row[2]), creditAmountPhp: toNumber(row[3]), paymentMethod: text(row[4]), transactionRef: text(row[5]), cashierName: text(row[6]), notes: text(row[7]), createdAt: text(row[8]), creditId: text(row[9]), sourcePaymentId: text(row[10]), status: text(row[11]) || "Open" })).filter((row) => row.customerName && row.creditAmountPhp > 0);
 }
 
+function parsePaymentRows(rows: string[][]) {
+  return rows.slice(1).map((row) => ({ paymentDate: normalizeDate(row[0]), salesRefNo: text(row[1]), groupRef: text(row[2]), customerName: text(row[3]), paymentMethod: text(row[4]), amountPaidPhp: toNumber(row[5]), transactionRef: text(row[6]), cashierName: text(row[7]), notes: text(row[8]), createdAt: text(row[9]), paymentId: text(row[10]), saleId: text(row[11]), paymentStatus: text(row[12]) || "Active", voidedAt: text(row[13]), voidReason: text(row[14]) })).filter((row) => row.customerName && row.amountPaidPhp > 0 && !["voided", "cancelled", "canceled"].includes(norm(row.paymentStatus)));
+}
+
 export async function GET() {
   try {
     const sheets = await getSheetsClient();
-    const creditRows = await readCreditRows(sheets);
-    return NextResponse.json({ credits: parseCreditRows(creditRows) });
+    const [creditRows, paymentRows] = await Promise.all([readCreditRows(sheets), readPaymentRows(sheets)]);
+    return NextResponse.json({ credits: parseCreditRows(creditRows), payments: parsePaymentRows(paymentRows) });
   } catch (error: any) {
     console.error("CUSTOMER PAYMENTS GET ERROR:", error);
-    return NextResponse.json({ error: error?.message || String(error) || "Failed to load customer credits" }, { status: 500 });
+    return NextResponse.json({ error: error?.message || String(error) || "Failed to load customer payment history" }, { status: 500 });
   }
 }
 
