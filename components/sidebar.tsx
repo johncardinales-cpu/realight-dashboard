@@ -13,6 +13,7 @@ const mainNavItems = [
   { label: "Customers", href: "/customers", icon: "M16 21v-2a4 4 0 0 0-8 0v2M12 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8Zm6-6a3 3 0 1 1 0 6" },
   { label: "Sales", href: "/sales", icon: "M4 19h16M7 16l4-4 3 3 5-7" },
   { label: "Customer Charges", href: "/customer-charges", icon: "M4 7h16v10H4V7Zm3 4h10M8 15h4M16 15h1" },
+  { label: "Customer Payments", href: "/customer-payments", icon: "M4 7h16v10H4V7Zm3 4h5M14 14l2 2 4-4" },
   { label: "Confirm Sales", href: "/confirm-sales", icon: "M9 12l2 2 4-5M4 4h16v16H4V4Z" },
   { label: "Payments", href: "/payments", icon: "M4 7h16v10H4V7Zm0 3h16M7 15h4" },
   { label: "Expenses", href: "/expenses", icon: "M4 7h16v12H4V7Zm0 4h16M16 15h2" },
