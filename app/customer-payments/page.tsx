@@ -2,43 +2,152 @@
 
 import { FormEvent, useEffect, useMemo, useState } from "react";
 
-type Customer = { customerId: string; customerName: string; phone?: string; customerType?: string };
-type Balance = { key: string; saleDate: string; salesRefNo: string; customerName: string; totalSalePhp: number; totalPaidPhp: number; balancePhp: number; paymentStatus: string; saleStatus: string };
-type Credit = { customerName: string; creditAmountPhp: number; status: string; creditDate: string; transactionRef: string };
-type PaymentHistory = { paymentDate: string; salesRefNo: string; groupRef: string; customerName: string; paymentMethod: string; amountPaidPhp: number; transactionRef: string; cashierName: string; notes: string; createdAt: string; paymentId: string; saleId: string; paymentStatus: string };
+type Customer = {
+  customerId: string;
+  customerName: string;
+  phone?: string;
+  customerType?: string;
+};
+
+type Balance = {
+  key: string;
+  saleDate: string;
+  salesRefNo: string;
+  customerName: string;
+  totalSalePhp: number;
+  totalPaidPhp: number;
+  balancePhp: number;
+  paymentStatus: string;
+  saleStatus: string;
+};
+
+type Credit = {
+  customerName: string;
+  creditAmountPhp: number;
+  status: string;
+  creditDate: string;
+  transactionRef: string;
+};
+
+type PaymentHistory = {
+  paymentDate: string;
+  salesRefNo: string;
+  groupRef: string;
+  customerName: string;
+  paymentMethod: string;
+  amountPaidPhp: number;
+  transactionRef: string;
+  cashierName: string;
+  notes: string;
+  createdAt: string;
+  paymentId: string;
+  saleId: string;
+  paymentStatus: string;
+};
 
 const methods = ["Bank Transfer", "GCash", "Maya", "Check", "Cash", "Mixed Payment"];
 const storageKey = "realights.salespersonName";
+const inputClass = "w-full rounded-xl border border-slate-300 px-3 py-2 text-sm outline-none focus:border-emerald-400 focus:ring-4 focus:ring-emerald-50";
+const readonlyClass = "w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm font-bold text-slate-800";
 
-function money(value: number) { return `PHP ${(Number(value) || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`; }
-function today() { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`; }
-function text(value: unknown) { return String(value || "").trim(); }
-function norm(value: unknown) { return text(value).toLowerCase().replace(/\s+/g, " "); }
+function money(value: number) {
+  return `PHP ${(Number(value) || 0).toLocaleString(undefined, {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  })}`;
+}
+
+function today() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
+function text(value: unknown) {
+  return String(value || "").trim();
+}
+
+function norm(value: unknown) {
+  return text(value).toLowerCase().replace(/\s+/g, " ");
+}
+
 function normalizeDate(value: unknown) {
   const raw = text(value);
   if (!raw) return "";
   if (/^\d{4}-\d{2}-\d{2}/.test(raw)) return raw.slice(0, 10);
-  if (/^\d+(\.\d+)?$/.test(raw)) { const serial = Number(raw); if (serial > 20000 && serial < 90000) return new Date(Math.floor(serial - 25569) * 86400 * 1000).toISOString().slice(0, 10); }
+  if (/^\d+(\.\d+)?$/.test(raw)) {
+    const serial = Number(raw);
+    if (serial > 20000 && serial < 90000) {
+      return new Date(Math.floor(serial - 25569) * 86400 * 1000).toISOString().slice(0, 10);
+    }
+  }
   const parsed = new Date(raw);
   return Number.isNaN(parsed.getTime()) ? raw : parsed.toISOString().slice(0, 10);
 }
-function customerLabel(customer: Customer) { return `${customer.customerName}${customer.phone ? ` | ${customer.phone}` : ""}${customer.customerType ? ` | ${customer.customerType}` : ""}`; }
-function isInactive(value: string) { return ["voided", "cancelled", "canceled"].includes(norm(value)); }
-function pillClass(value: string) { const n = norm(value); return n === "paid" || n === "confirmed" || n === "active" ? "bg-emerald-50 text-emerald-700" : n === "partial" ? "bg-amber-50 text-amber-700" : "bg-rose-50 text-rose-700"; }
-function StatusPill({ value }: { value: string }) { return <span className={`rounded-full px-2.5 py-1 text-xs font-bold ${pillClass(value)}`}>{value}</span>; }
-function Field({ label, children }: { label: string; children: React.ReactNode }) { return <label className="block space-y-1"><span className="block text-xs font-bold uppercase tracking-wide text-slate-600">{label}</span>{children}</label>; }
+
+function customerLabel(customer: Customer) {
+  return `${customer.customerName}${customer.phone ? ` | ${customer.phone}` : ""}${customer.customerType ? ` | ${customer.customerType}` : ""}`;
+}
+
+function isInactive(value: string) {
+  return ["voided", "cancelled", "canceled"].includes(norm(value));
+}
+
+function pillClass(value: string) {
+  const n = norm(value);
+  if (n === "paid" || n === "confirmed" || n === "active") return "bg-emerald-50 text-emerald-700";
+  if (n === "partial") return "bg-amber-50 text-amber-700";
+  return "bg-rose-50 text-rose-700";
+}
+
+function StatusPill({ value }: { value: string }) {
+  return <span className={`rounded-full px-2.5 py-1 text-xs font-bold ${pillClass(value)}`}>{value}</span>;
+}
+
+function Field({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <label className="block space-y-1">
+      <span className="block text-xs font-bold uppercase tracking-wide text-slate-600">{label}</span>
+      {children}
+    </label>
+  );
+}
+
+function paymentGroupKey(row: PaymentHistory) {
+  const marker = "Group payment ";
+  const note = text(row.notes);
+  const markerIndex = note.indexOf(marker);
+  if (markerIndex >= 0) {
+    const afterMarker = note.slice(markerIndex + marker.length).trim();
+    return afterMarker.split("|")[0].trim().split(" ")[0] || row.paymentId;
+  }
+  return row.paymentId || `${row.paymentDate}-${row.transactionRef}-${row.salesRefNo}`;
+}
 
 function previewAllocation(rows: Balance[], amount: number) {
   let remaining = Math.max(Number(amount) || 0, 0);
-  const items: Array<{ saleDate: string; salesRefNo: string; balanceBefore: number; applied: number; balanceAfter: number }> = [];
+  const items: Array<{
+    saleDate: string;
+    salesRefNo: string;
+    balanceBefore: number;
+    applied: number;
+    balanceAfter: number;
+  }> = [];
+
   for (const row of rows) {
     if (remaining <= 0.009) break;
     const balance = Number(row.balancePhp) || 0;
     const applied = Math.min(remaining, balance);
     if (applied <= 0) continue;
-    items.push({ saleDate: normalizeDate(row.saleDate), salesRefNo: row.salesRefNo, balanceBefore: balance, applied, balanceAfter: Math.max(balance - applied, 0) });
+    items.push({
+      saleDate: normalizeDate(row.saleDate),
+      salesRefNo: row.salesRefNo,
+      balanceBefore: balance,
+      applied,
+      balanceAfter: Math.max(balance - applied, 0),
+    });
     remaining = Math.max(remaining - applied, 0);
   }
+
   return { items, applied: Math.max((Number(amount) || 0) - remaining, 0), credit: remaining };
 }
 
@@ -60,15 +169,30 @@ export default function CustomerPaymentsPage() {
   const [isError, setIsError] = useState(false);
   const [saving, setSaving] = useState(false);
   const [loading, setLoading] = useState(false);
-  const input = "w-full rounded-xl border border-slate-300 px-3 py-2 text-sm outline-none focus:border-emerald-400 focus:ring-4 focus:ring-emerald-50";
-  const readonly = "w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm font-bold text-slate-800";
 
   const customerOptions = useMemo(() => customers.map(customerLabel), [customers]);
-  const openRows = useMemo(() => balances.filter((row) => !isInactive(row.saleStatus) && Number(row.balancePhp || 0) > 0 && norm(row.customerName) === norm(customerName)).sort((a, b) => `${normalizeDate(a.saleDate)}-${a.salesRefNo}`.localeCompare(`${normalizeDate(b.saleDate)}-${b.salesRefNo}`)), [balances, customerName]);
+  const openRows = useMemo(() => balances
+    .filter((row) => !isInactive(row.saleStatus))
+    .filter((row) => Number(row.balancePhp || 0) > 0)
+    .filter((row) => norm(row.customerName) === norm(customerName))
+    .sort((a, b) => `${normalizeDate(a.saleDate)}-${a.salesRefNo}`.localeCompare(`${normalizeDate(b.saleDate)}-${b.salesRefNo}`)), [balances, customerName]);
   const openBalance = useMemo(() => openRows.reduce((sum, row) => sum + Number(row.balancePhp || 0), 0), [openRows]);
   const allocation = useMemo(() => previewAllocation(openRows, paymentAmount), [openRows, paymentAmount]);
-  const creditTotal = useMemo(() => credits.filter((credit) => norm(credit.customerName) === norm(customerName) && norm(credit.status || "Open") === "open").reduce((sum, credit) => sum + Number(credit.creditAmountPhp || 0), 0), [credits, customerName]);
-  const customerPayments = useMemo(() => paymentHistory.filter((row) => norm(row.customerName) === norm(customerName)).sort((a, b) => `${b.paymentDate}-${b.createdAt}-${b.paymentId}`.localeCompare(`${a.paymentDate}-${a.createdAt}-${a.paymentId}`)), [paymentHistory, customerName]);
+  const creditTotal = useMemo(() => credits
+    .filter((credit) => norm(credit.customerName) === norm(customerName))
+    .filter((credit) => norm(credit.status || "Open") === "open")
+    .reduce((sum, credit) => sum + Number(credit.creditAmountPhp || 0), 0), [credits, customerName]);
+  const customerPayments = useMemo(() => paymentHistory
+    .filter((row) => norm(row.customerName) === norm(customerName))
+    .sort((a, b) => `${b.paymentDate}-${b.createdAt}-${b.paymentId}`.localeCompare(`${a.paymentDate}-${a.createdAt}-${a.paymentId}`)), [paymentHistory, customerName]);
+  const transactionTotals = useMemo(() => {
+    const map = new Map<string, number>();
+    customerPayments.forEach((row) => {
+      const key = paymentGroupKey(row);
+      map.set(key, (map.get(key) || 0) + (Number(row.amountPaidPhp) || 0));
+    });
+    return map;
+  }, [customerPayments]);
   const totalPayments = useMemo(() => customerPayments.reduce((sum, row) => sum + Number(row.amountPaidPhp || 0), 0), [customerPayments]);
 
   async function loadData() {
@@ -93,15 +217,31 @@ export default function CustomerPaymentsPage() {
     }
   }
 
-  useEffect(() => { setCashierName(window.localStorage.getItem(storageKey) || "Admin"); loadData().catch((error: any) => { setIsError(true); setMessage(error?.message || "Failed to load customer payment data."); }); }, []);
+  useEffect(() => {
+    setCashierName(window.localStorage.getItem(storageKey) || "Admin");
+    loadData().catch((error: any) => {
+      setIsError(true);
+      setMessage(error?.message || "Failed to load customer payment data.");
+    });
+  }, []);
 
   function chooseCustomer(value: string) {
     setCustomerSearch(value);
     const clean = value.trim();
-    if (!clean) { setCustomerName(""); setCustomerId(""); return; }
+    if (!clean) {
+      setCustomerName("");
+      setCustomerId("");
+      return;
+    }
     const match = customers.find((customer) => customerLabel(customer).toLowerCase() === clean.toLowerCase() || customer.customerName.toLowerCase() === clean.toLowerCase());
-    if (match) { setCustomerName(match.customerName); setCustomerId(match.customerId || ""); setCustomerSearch(customerLabel(match)); }
-    else { setCustomerName(clean); setCustomerId(""); }
+    if (match) {
+      setCustomerName(match.customerName);
+      setCustomerId(match.customerId || "");
+      setCustomerSearch(customerLabel(match));
+    } else {
+      setCustomerName(clean);
+      setCustomerId("");
+    }
   }
 
   async function savePayment(event: FormEvent<HTMLFormElement>) {
@@ -112,11 +252,17 @@ export default function CustomerPaymentsPage() {
     try {
       if (!customerName) throw new Error("Select a customer first.");
       if ((Number(paymentAmount) || 0) <= 0) throw new Error("Payment amount must be greater than zero.");
-      const response = await fetch("/api/customer-payments", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ customerName, customerId, paymentDate, paymentMethod, transactionRef, cashierName, notes, paymentAmount, allocationMode: "fifo" }) });
+      const response = await fetch("/api/customer-payments", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ customerName, customerId, paymentDate, paymentMethod, transactionRef, cashierName, notes, paymentAmount, allocationMode: "fifo" }),
+      });
       const data = await response.json();
       if (!response.ok) throw new Error(data?.error || "Failed to save group payment.");
       setMessage(`Saved. Applied ${money(data.appliedAmountPhp || 0)}${data.creditAmountPhp ? ` and saved ${money(data.creditAmountPhp)} as customer credit` : ""}.`);
-      setPaymentAmount(0); setTransactionRef(""); setNotes("");
+      setPaymentAmount(0);
+      setTransactionRef("");
+      setNotes("");
       await loadData();
     } catch (error: any) {
       setIsError(true);
@@ -129,7 +275,10 @@ export default function CustomerPaymentsPage() {
   return <section className="space-y-6">
     <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
       <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
-        <div><h1 className="text-3xl font-semibold text-slate-900">Customer Group Payments</h1><p className="mt-1 max-w-4xl text-sm leading-6 text-slate-600">Enter one customer payment. The system auto-allocates it to the oldest unpaid records first. Excess becomes customer credit.</p></div>
+        <div>
+          <h1 className="text-3xl font-semibold text-slate-900">Customer Group Payments</h1>
+          <p className="mt-1 max-w-4xl text-sm leading-6 text-slate-600">Enter one customer payment. The system auto-allocates it to the oldest unpaid records first. Excess becomes customer credit.</p>
+        </div>
         <button type="button" onClick={() => loadData().catch(console.error)} disabled={loading} className="rounded-xl border border-slate-300 px-4 py-2 text-sm font-bold text-slate-700 disabled:opacity-60">{loading ? "Refreshing..." : "Refresh"}</button>
       </div>
       {message ? <p className={`mt-4 rounded-2xl border px-4 py-3 text-sm font-semibold ${isError ? "border-rose-200 bg-rose-50 text-rose-700" : "border-emerald-200 bg-emerald-50 text-emerald-700"}`}>{message}</p> : null}
@@ -140,18 +289,21 @@ export default function CustomerPaymentsPage() {
       <p className="mb-5 text-sm text-slate-600">Use this for Rudy-style staggered payments. Allocation is FIFO: oldest unpaid first.</p>
       <datalist id="customer-group-payment-options">{customerOptions.map((item) => <option key={item} value={item} />)}</datalist>
       <div className="grid gap-4 md:grid-cols-3">
-        <Field label="Customer Search"><input list="customer-group-payment-options" className={input} value={customerSearch} onChange={(e) => chooseCustomer(e.target.value)} placeholder="Search customer" /></Field>
-        <Field label="Customer Name"><input className={input} value={customerName} onChange={(e) => { setCustomerName(e.target.value); setCustomerId(""); }} required /></Field>
-        <Field label="Payment Date"><input className={input} type="date" value={paymentDate} onChange={(e) => setPaymentDate(e.target.value)} required /></Field>
-        <Field label="Payment Amount"><input className={input} type="number" min="0" step="0.01" value={paymentAmount} onChange={(e) => setPaymentAmount(Number(e.target.value))} required /></Field>
-        <Field label="Payment Method"><select className={input} value={paymentMethod} onChange={(e) => setPaymentMethod(e.target.value)}>{methods.map((method) => <option key={method} value={method}>{method}</option>)}</select></Field>
-        <Field label="Transaction Ref"><input className={input} value={transactionRef} onChange={(e) => setTransactionRef(e.target.value)} placeholder="BPI ref / receipt no." /></Field>
-        <Field label="Cashier / Encoder"><input className={input} value={cashierName} onChange={(e) => { setCashierName(e.target.value); window.localStorage.setItem(storageKey, e.target.value); }} /></Field>
-        <Field label="Open Balance"><input className={readonly} value={money(openBalance)} readOnly /></Field>
-        <Field label="New Credit If Overpaid"><input className={readonly} value={money(allocation.credit)} readOnly /></Field>
-        <Field label="Notes"><input className={input} value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Optional allocation note" /></Field>
+        <Field label="Customer Search"><input list="customer-group-payment-options" className={inputClass} value={customerSearch} onChange={(e) => chooseCustomer(e.target.value)} placeholder="Search customer" /></Field>
+        <Field label="Customer Name"><input className={inputClass} value={customerName} onChange={(e) => { setCustomerName(e.target.value); setCustomerId(""); }} required /></Field>
+        <Field label="Payment Date"><input className={inputClass} type="date" value={paymentDate} onChange={(e) => setPaymentDate(e.target.value)} required /></Field>
+        <Field label="Payment Amount"><input className={inputClass} type="number" min="0" step="0.01" value={paymentAmount} onChange={(e) => setPaymentAmount(Number(e.target.value))} required /></Field>
+        <Field label="Payment Method"><select className={inputClass} value={paymentMethod} onChange={(e) => setPaymentMethod(e.target.value)}>{methods.map((method) => <option key={method} value={method}>{method}</option>)}</select></Field>
+        <Field label="Transaction Ref"><input className={inputClass} value={transactionRef} onChange={(e) => setTransactionRef(e.target.value)} placeholder="BPI ref / receipt no." /></Field>
+        <Field label="Cashier / Encoder"><input className={inputClass} value={cashierName} onChange={(e) => { setCashierName(e.target.value); window.localStorage.setItem(storageKey, e.target.value); }} /></Field>
+        <Field label="Open Balance"><input className={readonlyClass} value={money(openBalance)} readOnly /></Field>
+        <Field label="New Credit If Overpaid"><input className={readonlyClass} value={money(allocation.credit)} readOnly /></Field>
+        <Field label="Notes"><input className={inputClass} value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Optional allocation note" /></Field>
       </div>
-      <div className="mt-5 flex gap-3"><button type="submit" disabled={saving || !customerName || paymentAmount <= 0} className="rounded-xl bg-emerald-600 px-5 py-3 text-sm font-bold text-white disabled:opacity-60">{saving ? "Saving..." : "Save Group Payment"}</button><button type="button" onClick={() => { setPaymentAmount(0); setTransactionRef(""); setNotes(""); }} className="rounded-xl border border-slate-300 px-5 py-3 text-sm font-bold text-slate-700">Clear</button></div>
+      <div className="mt-5 flex gap-3">
+        <button type="submit" disabled={saving || !customerName || paymentAmount <= 0} className="rounded-xl bg-emerald-600 px-5 py-3 text-sm font-bold text-white disabled:opacity-60">{saving ? "Saving..." : "Save Group Payment"}</button>
+        <button type="button" onClick={() => { setPaymentAmount(0); setTransactionRef(""); setNotes(""); }} className="rounded-xl border border-slate-300 px-5 py-3 text-sm font-bold text-slate-700">Clear</button>
+      </div>
     </form>
 
     <div className="grid gap-4 md:grid-cols-5">
@@ -163,8 +315,27 @@ export default function CustomerPaymentsPage() {
     </div>
 
     <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
-      <h2 className="mb-4 text-xl font-semibold text-slate-900">Payment History for Selected Customer</h2>
-      <div className="overflow-auto rounded-2xl border border-slate-200"><table className="w-full min-w-[980px] text-sm"><thead className="bg-slate-100 text-slate-700"><tr>{["Payment Date", "Sales Ref", "Group Ref", "Amount", "Method", "Transaction Ref", "Cashier", "Status", "Notes"].map((h) => <th key={h} className="px-4 py-3 text-left font-medium whitespace-nowrap">{h}</th>)}</tr></thead><tbody>{customerPayments.map((row) => <tr key={row.paymentId || `${row.paymentDate}-${row.salesRefNo}-${row.amountPaidPhp}`} className="border-t border-slate-100"><td className="px-4 py-3 text-slate-700">{normalizeDate(row.paymentDate)}</td><td className="px-4 py-3 font-semibold text-slate-900">{row.salesRefNo}</td><td className="px-4 py-3 text-slate-700">{row.groupRef || "-"}</td><td className="px-4 py-3 font-bold text-emerald-700">{money(row.amountPaidPhp)}</td><td className="px-4 py-3 text-slate-700">{row.paymentMethod}</td><td className="px-4 py-3 text-slate-700">{row.transactionRef || "-"}</td><td className="px-4 py-3 text-slate-700">{row.cashierName || "-"}</td><td className="px-4 py-3"><StatusPill value={row.paymentStatus || "Active"} /></td><td className="px-4 py-3 text-slate-700">{row.notes || "-"}</td></tr>)}{!customerPayments.length ? <tr><td colSpan={9} className="px-4 py-8 text-center text-slate-500">No payment history for selected customer yet.</td></tr> : null}</tbody></table></div>
+      <h2 className="mb-1 text-xl font-semibold text-slate-900">Payment History for Selected Customer</h2>
+      <p className="mb-4 text-xs text-slate-500">Transaction Amount is the exact amount received in one payment. Applied to Sales Ref is the part allocated to that sales record.</p>
+      <div className="overflow-auto rounded-2xl border border-slate-200">
+        <table className="w-full min-w-[1120px] text-sm">
+          <thead className="bg-slate-100 text-slate-700"><tr>{["Payment Date", "Sales Ref", "Transaction Amount", "Applied to Sales Ref", "Method", "Transaction Ref", "Cashier", "Status", "Notes"].map((h) => <th key={h} className="px-4 py-3 text-left font-medium whitespace-nowrap">{h}</th>)}</tr></thead>
+          <tbody>{customerPayments.map((row) => {
+            const transactionAmount = transactionTotals.get(paymentGroupKey(row)) || row.amountPaidPhp;
+            return <tr key={row.paymentId || `${row.paymentDate}-${row.salesRefNo}-${row.amountPaidPhp}`} className="border-t border-slate-100">
+              <td className="px-4 py-3 text-slate-700">{normalizeDate(row.paymentDate)}</td>
+              <td className="px-4 py-3 font-semibold text-slate-900">{row.salesRefNo}</td>
+              <td className="px-4 py-3 font-bold text-slate-950">{money(transactionAmount)}</td>
+              <td className="px-4 py-3 font-bold text-emerald-700">{money(row.amountPaidPhp)}</td>
+              <td className="px-4 py-3 text-slate-700">{row.paymentMethod}</td>
+              <td className="px-4 py-3 text-slate-700">{row.transactionRef || "-"}</td>
+              <td className="px-4 py-3 text-slate-700">{row.cashierName || "-"}</td>
+              <td className="px-4 py-3"><StatusPill value={row.paymentStatus || "Active"} /></td>
+              <td className="px-4 py-3 text-slate-700">{row.notes || "-"}</td>
+            </tr>;
+          })}{!customerPayments.length ? <tr><td colSpan={9} className="px-4 py-8 text-center text-slate-500">No payment history for selected customer yet.</td></tr> : null}</tbody>
+        </table>
+      </div>
     </div>
 
     <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
