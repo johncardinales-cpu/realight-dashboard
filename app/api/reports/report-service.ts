@@ -5,9 +5,11 @@ const PAYMENTS = "Payments!A:O";
 const EXPENSES = "Expenses!A:Z";
 const SUPPLIERS = "Supplier_Invoice_Costs!A:L";
 const AUDIT_LOG = "Audit_Log!A:J";
-const CACHE_MS = 3000;
+const CACHE_MS = 15000;
+const ROW_CACHE_MS = 15000;
 
 let cache: { key: string; time: number; data: any } | null = null;
+let rowCache: { time: number; rows: string[][][] } | null = null;
 
 const txt = (v: unknown) => String(v || "").trim();
 const num = (v: unknown) => Number(String(v || "").replace(/[^0-9.-]/g, "")) || 0;
@@ -85,10 +87,14 @@ function inRange(v: unknown, start: string, end: string) {
 }
 
 async function batchRead() {
+  const now = Date.now();
+  if (rowCache && now - rowCache.time < ROW_CACHE_MS) return rowCache.rows;
   const sheets = await getSheetsClient();
   const ranges = [SALES, PAYMENTS, EXPENSES, SUPPLIERS, AUDIT_LOG];
   const res = await sheets.spreadsheets.values.batchGet({ spreadsheetId: SHEET_ID, ranges });
-  return ranges.map((_, index) => (res.data.valueRanges?.[index]?.values || []) as string[][]);
+  const rows = ranges.map((_, index) => (res.data.valueRanges?.[index]?.values || []) as string[][]);
+  rowCache = { time: now, rows };
+  return rows;
 }
 
 function keysForPayment(r: string[]) {
