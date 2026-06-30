@@ -6,6 +6,9 @@ const PAYMENTS_SHEET = "Payments";
 const AUDIT_LOG_SHEET = "Audit_Log";
 const PAYMENT_HEADERS = ["Payment Date","Sales Ref No.","Group Ref","Customer Name","Payment Method","Amount Paid (PHP)","Transaction Ref","Cashier Name","Notes","Created At","Payment ID","Sale ID","Payment Status","Voided At","Void Reason"];
 const AUDIT_HEADERS = ["Audit ID","Created At","Module","Action","Record ID","Record Ref","Actor","Summary","Before JSON","After JSON"];
+const READ_CACHE_MS = 15000;
+
+let readCache: { expiresAt: number; salesRows: string[][]; paymentRows: string[][] } | null = null;
 
 function toNumber(value: unknown) { return Number(String(value || "").replace(/[^0-9.-]/g, "")) || 0; }
 function text(value: unknown) { return String(value || "").trim(); }
@@ -23,6 +26,8 @@ function keysForSale(row: string[]) { return [text(row[22]), text(row[14]), text
 function keysForPayment(row: string[]) { return [text(row[11]), text(row[2]), text(row[1])].filter(Boolean); }
 function normalizeDate(value: unknown) { const raw = text(value); if (!raw) return ""; if (/^\d{4}-\d{2}-\d{2}/.test(raw)) return raw.slice(0, 10); const parsed = new Date(raw); if (Number.isNaN(parsed.getTime())) return raw.slice(0, 10); return `${parsed.getFullYear()}-${String(parsed.getMonth() + 1).padStart(2, "0")}-${String(parsed.getDate()).padStart(2, "0")}`; }
 function paymentIdentity(row: string[], index: number) { return text(row[10]) || `${normalizeDate(row[0])}-${text(row[1])}-${text(row[2])}-${text(row[11])}-${toNumber(row[5])}-${index}`; }
+function clearReadCache() { readCache = null; }
+function isQuotaError(error: any) { const message = String(error?.message || error?.response?.data?.error?.message || error || "").toLowerCase(); return message.includes("quota") || message.includes("read requests per minute"); }
 
 async function ensureSheetExists(sheets: any, title: string, headers: string[]) {
   const meta = await sheets.spreadsheets.get({ spreadsheetId: SHEET_ID });
@@ -38,6 +43,20 @@ async function appendAuditLog(sheets: any, entry: { module: string; action: stri
 
 async function readSalesRows(sheets: any) { const response = await sheets.spreadsheets.values.get({ spreadsheetId: SHEET_ID, range: `${SALES_SHEET}!A:AJ` }); return (response.data.values || []) as string[][]; }
 async function readPaymentRows(sheets: any) { await ensureSheetExists(sheets, PAYMENTS_SHEET, PAYMENT_HEADERS); const response = await sheets.spreadsheets.values.get({ spreadsheetId: SHEET_ID, range: `${PAYMENTS_SHEET}!A:O` }); return (response.data.values || []) as string[][]; }
+async function readPaymentRowsFast(sheets: any) { const response = await sheets.spreadsheets.values.get({ spreadsheetId: SHEET_ID, range: `${PAYMENTS_SHEET}!A:O` }); return (response.data.values || []) as string[][]; }
+async function readPaymentGetRows() {
+  const now = Date.now();
+  if (readCache && readCache.expiresAt > now) return readCache;
+  const sheets = await getSheetsClient();
+  const response = await sheets.spreadsheets.values.batchGet({ spreadsheetId: SHEET_ID, ranges: [`${SALES_SHEET}!A:AJ`, `${PAYMENTS_SHEET}!A:O`] });
+  const nextCache = {
+    expiresAt: now + READ_CACHE_MS,
+    salesRows: (response.data.valueRanges?.[0]?.values || []) as string[][],
+    paymentRows: (response.data.valueRanges?.[1]?.values || []) as string[][],
+  };
+  readCache = nextCache;
+  return nextCache;
+}
 
 function buildPaymentTotals(paymentRows: string[][]) {
   const totals = new Map<string, number>();
@@ -160,13 +179,15 @@ async function voidPaymentRowsForKey(sheets: any, paymentRows: string[][], key: 
 export async function GET(req: Request) {
   try {
     const url = new URL(req.url);
-    const sheets = await getSheetsClient();
-    await ensureSheetExists(sheets, AUDIT_LOG_SHEET, AUDIT_HEADERS);
-    const [salesRows, paymentRows] = await Promise.all([readSalesRows(sheets), readPaymentRows(sheets)]);
-    if (url.searchParams.get("history") === "1") return NextResponse.json(buildPaymentHistory(salesRows, paymentRows));
-    return NextResponse.json(buildSaleSummaries(salesRows, paymentRows));
+    const { salesRows, paymentRows } = await readPaymentGetRows();
+    const data = url.searchParams.get("history") === "1" ? buildPaymentHistory(salesRows, paymentRows) : buildSaleSummaries(salesRows, paymentRows);
+    const response = NextResponse.json(data);
+    response.headers.set("Cache-Control", "private, max-age=10");
+    response.headers.set("X-Realights-Read-Cache", readCache && readCache.expiresAt > Date.now() ? "hit" : "miss");
+    return response;
   } catch (error: any) {
     console.error("PAYMENTS GET ERROR:", error);
+    if (isQuotaError(error)) return NextResponse.json({ error: "Google Sheets is temporarily rate-limiting payment reads. Please wait 30 to 60 seconds, then refresh once." }, { status: 429 });
     return NextResponse.json({ error: error?.message || String(error) || "Failed to load payment summaries" }, { status: 500 });
   }
 }
@@ -183,12 +204,13 @@ export async function PATCH(req: Request) {
     const sheets = await getSheetsClient();
     await ensureSheetExists(sheets, PAYMENTS_SHEET, PAYMENT_HEADERS);
     await ensureSheetExists(sheets, AUDIT_LOG_SHEET, AUDIT_HEADERS);
-    const [salesRows, paymentRows] = await Promise.all([readSalesRows(sheets), readPaymentRows(sheets)]);
+    const [salesRows, paymentRows] = await Promise.all([readSalesRows(sheets), readPaymentRowsFast(sheets)]);
     const beforeSummary = buildSaleSummaries(salesRows, paymentRows).find((item) => [item.key, item.groupRef, item.saleId, item.salesRefNo].some((value) => norm(value) === norm(key)));
     const result = await voidPaymentRowsForKey(sheets, paymentRows, key, actor, reason);
     const restoredPaid = roundMoney(Math.max(0, Math.min(toNumber(body?.restorePaidPhp) || ((beforeSummary?.totalPaidPhp || 0) - result.voidedAmount), beforeSummary?.grandTotalPhp || beforeSummary?.totalSalePhp || 0)));
     const restoredStatus = getPaymentStatus(restoredPaid, beforeSummary?.grandTotalPhp || beforeSummary?.totalSalePhp || 0);
     await updateSalePaymentFields(sheets, salesRows, key, restoredPaid, restoredStatus);
+    clearReadCache();
     return NextResponse.json({ ok: true, message: `Voided ${result.voidedCount} payment record(s). Restored payment to ${restoredStatus}.`, ...result, restoredPaidPhp: restoredPaid, paymentStatus: restoredStatus });
   } catch (error: any) {
     console.error("PAYMENTS PATCH ERROR:", error);
@@ -214,7 +236,7 @@ export async function POST(req: Request) {
     const sheets = await getSheetsClient();
     await ensureSheetExists(sheets, PAYMENTS_SHEET, PAYMENT_HEADERS);
     await ensureSheetExists(sheets, AUDIT_LOG_SHEET, AUDIT_HEADERS);
-    const [salesRows, paymentRows] = await Promise.all([readSalesRows(sheets), readPaymentRows(sheets)]);
+    const [salesRows, paymentRows] = await Promise.all([readSalesRows(sheets), readPaymentRowsFast(sheets)]);
     const summaries = buildSaleSummaries(salesRows, paymentRows);
     const candidates = [key, groupRef, saleId, salesRefNo].filter(Boolean).map(norm);
     const summary = summaries.find((item) => [item.key, item.groupRef, item.saleId, item.salesRefNo].some((value) => candidates.includes(norm(value))));
@@ -229,6 +251,7 @@ export async function POST(req: Request) {
     const newPaymentStatus = getPaymentStatus(newTotalPaid, summary.grandTotalPhp);
     await updateSalePaymentFields(sheets, salesRows, summary.key, newTotalPaid, newPaymentStatus);
     await appendAuditLog(sheets, { module: "Payments", action: "CREATE_PAYMENT", recordId: paymentId, recordRef: summary.salesRefNo, actor: cashierName, summary: `Recorded payment ${amountPaidPhp} for ${summary.salesRefNo}`, before: { totalPaidPhp: summary.totalPaidPhp, balancePhp: summary.balancePhp, paymentStatus: summary.paymentStatus }, after: { totalPaidPhp: newTotalPaid, balancePhp: newBalance, paymentStatus: newPaymentStatus, paymentMethod, transactionRef } });
+    clearReadCache();
     return NextResponse.json({ ok: true, paymentId, salesRefNo: summary.salesRefNo, grandTotalPhp: summary.grandTotalPhp, totalSalePhp: summary.grandTotalPhp, totalPaidPhp: newTotalPaid, balancePhp: newBalance, paymentStatus: newPaymentStatus });
   } catch (error: any) {
     console.error("PAYMENTS POST ERROR:", error);
