@@ -5,6 +5,7 @@ const SHEET_ID = process.env.GOOGLE_SHEET_ID as string;
 const CUSTOMERS_SHEET = "Customers";
 const SALES_SHEET = "Sales";
 const AUDIT_LOG_SHEET = "Audit_Log";
+const READ_CACHE_MS = 15000;
 
 const CUSTOMER_HEADERS = [
   "Customer ID",
@@ -40,6 +41,8 @@ const auth = new google.auth.GoogleAuth({
   scopes: ["https://www.googleapis.com/auth/spreadsheets"],
 });
 
+let readCache: { expiresAt: number; customers: any[] } | null = null;
+
 function safeText(value: unknown) {
   return String(value || "").trim();
 }
@@ -67,6 +70,20 @@ function makeId(prefix: string) {
   const stamp = new Date().toISOString().replace(/[-:.TZ]/g, "").slice(0, 14);
   const random = Math.random().toString(36).slice(2, 8).toUpperCase();
   return `${prefix}_${stamp}_${random}`;
+}
+
+function clearReadCache() {
+  readCache = null;
+}
+
+function isQuotaError(error: any) {
+  const message = String(error?.message || error?.response?.data?.error?.message || error || "").toLowerCase();
+  return message.includes("quota") || message.includes("read requests per minute") || message.includes("rate limit");
+}
+
+async function getSheets() {
+  const client = await auth.getClient();
+  return google.sheets({ version: "v4", auth: client as any });
 }
 
 async function ensureSheetExists(sheets: any, title: string, headers: string[]) {
@@ -183,28 +200,36 @@ function attachSalesHistory(customers: any[], salesRows: string[][]) {
   });
 }
 
+async function readCustomersForGet() {
+  const now = Date.now();
+  if (readCache && readCache.expiresAt > now) return readCache.customers;
+  const sheets = await getSheets();
+  const response = await sheets.spreadsheets.values.batchGet({
+    spreadsheetId: SHEET_ID,
+    ranges: [`${CUSTOMERS_SHEET}!A:J`, `${SALES_SHEET}!A:AJ`],
+  });
+  const customerRows = (response.data.valueRanges?.[0]?.values || []) as string[][];
+  const salesRows = (response.data.valueRanges?.[1]?.values || []) as string[][];
+  const customers = customerRows
+    .slice(1)
+    .map(parseCustomer)
+    .filter((row) => row.customerName || row.phone || row.email)
+    .sort((a, b) => a.customerName.localeCompare(b.customerName));
+  const result = attachSalesHistory(customers, salesRows);
+  readCache = { expiresAt: now + READ_CACHE_MS, customers: result };
+  return result;
+}
+
 export async function GET() {
   try {
-    const client = await auth.getClient();
-    const sheets = google.sheets({ version: "v4", auth: client as any });
-    await ensureSheetExists(sheets, CUSTOMERS_SHEET, CUSTOMER_HEADERS);
-
-    const [customerResponse, salesResponse] = await Promise.all([
-      sheets.spreadsheets.values.get({ spreadsheetId: SHEET_ID, range: `${CUSTOMERS_SHEET}!A:J` }).catch(() => ({ data: { values: [] } })),
-      sheets.spreadsheets.values.get({ spreadsheetId: SHEET_ID, range: `${SALES_SHEET}!A:AJ` }).catch(() => ({ data: { values: [] } })),
-    ]);
-
-    const rows = (customerResponse.data.values || []) as string[][];
-    const salesRows = (salesResponse.data.values || []) as string[][];
-    const customers = rows
-      .slice(1)
-      .map(parseCustomer)
-      .filter((row) => row.customerName || row.phone || row.email)
-      .sort((a, b) => a.customerName.localeCompare(b.customerName));
-
-    return NextResponse.json(attachSalesHistory(customers, salesRows));
+    const customers = await readCustomersForGet();
+    const response = NextResponse.json(customers);
+    response.headers.set("Cache-Control", "private, max-age=10");
+    response.headers.set("X-Realights-Read-Cache", readCache && readCache.expiresAt > Date.now() ? "hit" : "miss");
+    return response;
   } catch (error: any) {
     console.error("CUSTOMERS GET ERROR:", error);
+    if (isQuotaError(error)) return NextResponse.json({ error: "Google Sheets is temporarily rate-limiting customer reads. Please wait 30 to 60 seconds, then refresh once." }, { status: 429 });
     return NextResponse.json({ error: error?.message || String(error) || "Failed to load customers" }, { status: 500 });
   }
 }
@@ -224,8 +249,7 @@ export async function POST(req: Request) {
     const notes = safeText(body?.notes);
     if (!customerName) return NextResponse.json({ error: "Customer Name is required" }, { status: 400 });
 
-    const client = await auth.getClient();
-    const sheets = google.sheets({ version: "v4", auth: client as any });
+    const sheets = await getSheets();
     await ensureSheetExists(sheets, CUSTOMERS_SHEET, CUSTOMER_HEADERS);
     await ensureSheetExists(sheets, AUDIT_LOG_SHEET, AUDIT_HEADERS);
 
@@ -238,6 +262,7 @@ export async function POST(req: Request) {
         requestBody: { values: [row] },
       });
       await appendAuditLog(sheets, { action: "UPDATE_CUSTOMER", recordId: customerId, recordRef: customerName, actor: "Admin", summary: `Updated customer ${customerName}`, after: { customerId, customerName, contactPerson, phone, email, address, customerType, status, notes } });
+      clearReadCache();
       return NextResponse.json({ ok: true, mode: "updated", customerId });
     }
 
@@ -249,6 +274,7 @@ export async function POST(req: Request) {
       requestBody: { values: [row] },
     });
     await appendAuditLog(sheets, { action: "CREATE_CUSTOMER", recordId: customerId, recordRef: customerName, actor: "Admin", summary: `Created customer ${customerName}`, after: { customerId, customerName, contactPerson, phone, email, address, customerType, status, notes } });
+    clearReadCache();
     return NextResponse.json({ ok: true, mode: "created", customerId });
   } catch (error: any) {
     console.error("CUSTOMERS POST ERROR:", error);
