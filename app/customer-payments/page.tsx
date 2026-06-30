@@ -5,6 +5,7 @@ import { FormEvent, useEffect, useMemo, useState } from "react";
 type Customer = { customerId: string; customerName: string; phone?: string; customerType?: string };
 type Balance = { key: string; saleDate: string; salesRefNo: string; customerName: string; totalSalePhp: number; totalPaidPhp: number; balancePhp: number; paymentStatus: string; saleStatus: string };
 type Credit = { customerName: string; creditAmountPhp: number; status: string; creditDate: string; transactionRef: string };
+type PaymentHistory = { paymentDate: string; salesRefNo: string; groupRef: string; customerName: string; paymentMethod: string; amountPaidPhp: number; transactionRef: string; cashierName: string; notes: string; createdAt: string; paymentId: string; saleId: string; paymentStatus: string };
 
 const methods = ["Bank Transfer", "GCash", "Maya", "Check", "Cash", "Mixed Payment"];
 const storageKey = "realights.salespersonName";
@@ -45,6 +46,7 @@ export default function CustomerPaymentsPage() {
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [balances, setBalances] = useState<Balance[]>([]);
   const [credits, setCredits] = useState<Credit[]>([]);
+  const [paymentHistory, setPaymentHistory] = useState<PaymentHistory[]>([]);
   const [customerSearch, setCustomerSearch] = useState("");
   const [customerName, setCustomerName] = useState("");
   const [customerId, setCustomerId] = useState("");
@@ -66,23 +68,26 @@ export default function CustomerPaymentsPage() {
   const openBalance = useMemo(() => openRows.reduce((sum, row) => sum + Number(row.balancePhp || 0), 0), [openRows]);
   const allocation = useMemo(() => previewAllocation(openRows, paymentAmount), [openRows, paymentAmount]);
   const creditTotal = useMemo(() => credits.filter((credit) => norm(credit.customerName) === norm(customerName) && norm(credit.status || "Open") === "open").reduce((sum, credit) => sum + Number(credit.creditAmountPhp || 0), 0), [credits, customerName]);
+  const customerPayments = useMemo(() => paymentHistory.filter((row) => norm(row.customerName) === norm(customerName)).sort((a, b) => `${b.paymentDate}-${b.createdAt}-${b.paymentId}`.localeCompare(`${a.paymentDate}-${a.createdAt}-${a.paymentId}`)), [paymentHistory, customerName]);
+  const totalPayments = useMemo(() => customerPayments.reduce((sum, row) => sum + Number(row.amountPaidPhp || 0), 0), [customerPayments]);
 
   async function loadData() {
     setLoading(true);
     try {
-      const [customerRes, paymentRes, creditRes] = await Promise.all([
+      const [customerRes, paymentRes, historyRes] = await Promise.all([
         fetch("/api/customers", { cache: "no-store" }),
         fetch(`/api/payments?t=${Date.now()}`, { cache: "no-store" }),
         fetch(`/api/customer-payments?t=${Date.now()}`, { cache: "no-store" }).catch(() => null),
       ]);
       const customerData = await customerRes.json();
       const paymentData = await paymentRes.json();
-      const creditData = creditRes ? await creditRes.json().catch(() => ({ credits: [] })) : { credits: [] };
+      const historyData = historyRes ? await historyRes.json().catch(() => ({ credits: [], payments: [] })) : { credits: [], payments: [] };
       if (!customerRes.ok) throw new Error(customerData?.error || "Failed to load customers.");
       if (!paymentRes.ok) throw new Error(paymentData?.error || "Failed to load balances.");
       setCustomers(Array.isArray(customerData) ? customerData : []);
       setBalances(Array.isArray(paymentData) ? paymentData : []);
-      setCredits(Array.isArray(creditData?.credits) ? creditData.credits : []);
+      setCredits(Array.isArray(historyData?.credits) ? historyData.credits : []);
+      setPaymentHistory(Array.isArray(historyData?.payments) ? historyData.payments : []);
     } finally {
       setLoading(false);
     }
@@ -149,11 +154,17 @@ export default function CustomerPaymentsPage() {
       <div className="mt-5 flex gap-3"><button type="submit" disabled={saving || !customerName || paymentAmount <= 0} className="rounded-xl bg-emerald-600 px-5 py-3 text-sm font-bold text-white disabled:opacity-60">{saving ? "Saving..." : "Save Group Payment"}</button><button type="button" onClick={() => { setPaymentAmount(0); setTransactionRef(""); setNotes(""); }} className="rounded-xl border border-slate-300 px-5 py-3 text-sm font-bold text-slate-700">Clear</button></div>
     </form>
 
-    <div className="grid gap-4 md:grid-cols-4">
+    <div className="grid gap-4 md:grid-cols-5">
       <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm"><p className="text-xs font-semibold text-slate-500">Selected Customer</p><p className="mt-1 truncate text-lg font-bold text-slate-950">{customerName || "-"}</p></div>
+      <div className="rounded-2xl border border-emerald-100 bg-emerald-50 p-4 shadow-sm"><p className="text-xs font-semibold text-emerald-600">Payment History Total</p><p className="mt-1 text-lg font-bold text-emerald-700">{money(totalPayments)}</p></div>
       <div className="rounded-2xl border border-rose-100 bg-rose-50 p-4 shadow-sm"><p className="text-xs font-semibold text-rose-600">Open Balance</p><p className="mt-1 text-lg font-bold text-rose-700">{money(openBalance)}</p></div>
       <div className="rounded-2xl border border-emerald-100 bg-emerald-50 p-4 shadow-sm"><p className="text-xs font-semibold text-emerald-600">Will Apply</p><p className="mt-1 text-lg font-bold text-emerald-700">{money(allocation.applied)}</p></div>
       <div className="rounded-2xl border border-amber-100 bg-amber-50 p-4 shadow-sm"><p className="text-xs font-semibold text-amber-600">Existing Credit</p><p className="mt-1 text-lg font-bold text-amber-700">{money(creditTotal)}</p></div>
+    </div>
+
+    <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
+      <h2 className="mb-4 text-xl font-semibold text-slate-900">Payment History for Selected Customer</h2>
+      <div className="overflow-auto rounded-2xl border border-slate-200"><table className="w-full min-w-[980px] text-sm"><thead className="bg-slate-100 text-slate-700"><tr>{["Payment Date", "Sales Ref", "Group Ref", "Amount", "Method", "Transaction Ref", "Cashier", "Status", "Notes"].map((h) => <th key={h} className="px-4 py-3 text-left font-medium whitespace-nowrap">{h}</th>)}</tr></thead><tbody>{customerPayments.map((row) => <tr key={row.paymentId || `${row.paymentDate}-${row.salesRefNo}-${row.amountPaidPhp}`} className="border-t border-slate-100"><td className="px-4 py-3 text-slate-700">{normalizeDate(row.paymentDate)}</td><td className="px-4 py-3 font-semibold text-slate-900">{row.salesRefNo}</td><td className="px-4 py-3 text-slate-700">{row.groupRef || "-"}</td><td className="px-4 py-3 font-bold text-emerald-700">{money(row.amountPaidPhp)}</td><td className="px-4 py-3 text-slate-700">{row.paymentMethod}</td><td className="px-4 py-3 text-slate-700">{row.transactionRef || "-"}</td><td className="px-4 py-3 text-slate-700">{row.cashierName || "-"}</td><td className="px-4 py-3"><StatusPill value={row.paymentStatus || "Active"} /></td><td className="px-4 py-3 text-slate-700">{row.notes || "-"}</td></tr>)}{!customerPayments.length ? <tr><td colSpan={9} className="px-4 py-8 text-center text-slate-500">No payment history for selected customer yet.</td></tr> : null}</tbody></table></div>
     </div>
 
     <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
