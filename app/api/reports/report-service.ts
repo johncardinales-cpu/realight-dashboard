@@ -86,9 +86,9 @@ function inRange(v: unknown, start: string, end: string) {
   return d >= start && d <= end;
 }
 
-async function batchRead() {
+async function batchRead(forceFresh = false) {
   const now = Date.now();
-  if (rowCache && now - rowCache.time < ROW_CACHE_MS) return rowCache.rows;
+  if (!forceFresh && rowCache && now - rowCache.time < ROW_CACHE_MS) return rowCache.rows;
   const sheets = await getSheetsClient();
   const ranges = [SALES, PAYMENTS, EXPENSES, SUPPLIERS, AUDIT_LOG];
   const res = await sheets.spreadsheets.values.batchGet({ spreadsheetId: SHEET_ID, ranges });
@@ -177,14 +177,7 @@ function parseExpenses(rows: string[][]) {
   return rows.slice(1).map((r) => {
     const m: Record<string, string> = {};
     headers.forEach((h, i) => { m[h] = txt(r[i]); });
-    return {
-      date: normDate(m["Expense Date"] || m.Date || m["Upload Date"]),
-      category: m.Category || "General Expense",
-      description: m.Description || m.Expense || "",
-      amount: num(m["Total Amount"] || m.Amount || m.Total || m["Expense Amount"]),
-      source: "Expenses",
-      relatedSalesRefNo: m["Related Sales Ref No."] || "",
-    };
+    return { date: normDate(m["Expense Date"] || m.Date || m["Upload Date"]), category: m.Category || "General Expense", description: m.Description || m.Expense || "", amount: num(m["Total Amount"] || m.Amount || m.Total || m["Expense Amount"]), source: "Expenses", relatedSalesRefNo: m["Related Sales Ref No."] || "" };
   }).filter((e) => e.date || e.description || e.amount > 0);
 }
 
@@ -270,11 +263,12 @@ function collectionDetails(collections: any[], start: string) {
 }
 
 export async function getReportPayload(url: URL) {
+  const forceFresh = url.searchParams.get("fresh") === "1";
   const p = period(url.searchParams.get("mode") || "daily", url.searchParams.get("date") || today());
   const cacheKey = `${p.mode}:${p.startDate}:${p.endDate}:${Date.now() - (Date.now() % CACHE_MS)}`;
-  if (cache?.key === cacheKey && Date.now() - cache.time < CACHE_MS) return cache.data;
+  if (!forceFresh && cache?.key === cacheKey && Date.now() - cache.time < CACHE_MS) return cache.data;
 
-  const [salesRows, paymentRows, expenseRows, supplierRows] = await batchRead();
+  const [salesRows, paymentRows, expenseRows, supplierRows] = await batchRead(forceFresh);
   const expenses = [...parseExpenses(expenseRows), ...parseSuppliers(supplierRows)];
   const allSales = attachExpenses(parseSales(salesRows, paymentRows), expenses);
   const saleLookup = makeSaleLookup(allSales);
@@ -298,49 +292,14 @@ export async function getReportPayload(url: URL) {
   const timing = collectionTiming(collections, p.startDate, periodSalesTotal);
 
   const summary = {
-    productSubtotalPhp: sum(sales, "productSubtotalPhp"),
-    deliveryFeePhp: sum(sales, "deliveryFeePhp"),
-    installationFeePhp: sum(sales, "installationFeePhp"),
-    otherChargePhp: sum(sales, "otherChargePhp"),
-    discountPhp: sum(sales, "discountPhp"),
-    taxAmountPhp: sum(sales, "taxAmountPhp"),
-    grandTotalPhp: periodSalesTotal,
-    totalSalesToday: periodSalesTotal,
-    confirmedSalesToday: periodSalesTotal,
-    grossProfitToday: grossProfit,
-    expensesToday: expensesTotal,
-    linkedExpensesToday: sum(sales, "linkedExpensesPhp"),
-    unlinkedExpensesToday: periodExpenses.filter((e) => !txt(e.relatedSalesRefNo)).reduce((a, e) => a + e.amount, 0),
-    netProfitToday: round(grossProfit - expensesTotal),
-    initialCollectionsToday: sum(initial, "amount"),
-    followUpCollectionsToday: sum(follow, "amount"),
-    currentPeriodSaleCollectionsToday: timing.currentPeriodSaleCollections,
-    priorReceivableCollectionsToday: timing.priorReceivableCollections,
-    unclassifiedCollectionsToday: timing.unclassifiedCollections,
-    collectionsToday: sum(collections, "amount"),
-    cashReceivedToday: cashReceived,
-    changeGivenToday: changeGiven,
-    netCashAfterChangeToday: round(cashReceived - changeGiven),
-    newReceivablesToday: sum(sales, "balancePhp"),
-    endingReceivables: sum(allSales, "balancePhp"),
-    dailySaleCount: sales.length,
-    paymentStatusCounts: sales.reduce((a: Record<string, number>, s) => { a[s.paymentStatus] = (a[s.paymentStatus] || 0) + 1; return a; }, {}),
+    productSubtotalPhp: sum(sales, "productSubtotalPhp"), deliveryFeePhp: sum(sales, "deliveryFeePhp"), installationFeePhp: sum(sales, "installationFeePhp"), otherChargePhp: sum(sales, "otherChargePhp"), discountPhp: sum(sales, "discountPhp"), taxAmountPhp: sum(sales, "taxAmountPhp"), grandTotalPhp: periodSalesTotal, totalSalesToday: periodSalesTotal, confirmedSalesToday: periodSalesTotal, grossProfitToday: grossProfit, expensesToday: expensesTotal, linkedExpensesToday: sum(sales, "linkedExpensesPhp"), unlinkedExpensesToday: periodExpenses.filter((e) => !txt(e.relatedSalesRefNo)).reduce((a, e) => a + e.amount, 0), netProfitToday: round(grossProfit - expensesTotal), initialCollectionsToday: sum(initial, "amount"), followUpCollectionsToday: sum(follow, "amount"), currentPeriodSaleCollectionsToday: timing.currentPeriodSaleCollections, priorReceivableCollectionsToday: timing.priorReceivableCollections, unclassifiedCollectionsToday: timing.unclassifiedCollections, collectionsToday: sum(collections, "amount"), cashReceivedToday: cashReceived, changeGivenToday: changeGiven, netCashAfterChangeToday: round(cashReceived - changeGiven), newReceivablesToday: sum(sales, "balancePhp"), endingReceivables: sum(allSales, "balancePhp"), dailySaleCount: sales.length, paymentStatusCounts: sales.reduce((a: Record<string, number>, s) => { a[s.paymentStatus] = (a[s.paymentStatus] || 0) + 1; return a; }, {})
   };
 
   const payload = {
     reportDate: url.searchParams.get("date") || today(), mode: p.mode, startDate: p.startDate, endDate: p.endDate, summary,
     accountingBreakdown: { productSubtotalPhp: summary.productSubtotalPhp, deliveryFeePhp: summary.deliveryFeePhp, installationFeePhp: summary.installationFeePhp, otherChargePhp: summary.otherChargePhp, discountPhp: summary.discountPhp, taxAmountPhp: summary.taxAmountPhp, grandTotalPhp: summary.grandTotalPhp, grossProfitPhp: grossProfit, linkedExpensesPhp: summary.linkedExpensesToday, totalExpensesPhp: expensesTotal, netProfitPhp: round(grossProfit - expensesTotal) },
     collectionTiming: { currentPeriodSaleCollectionsPhp: timing.currentPeriodSaleCollections, priorReceivableCollectionsPhp: timing.priorReceivableCollections, unclassifiedCollectionsPhp: timing.unclassifiedCollections },
-    collectionDetails: collectionDetails(collections, p.startDate),
-    collectionsByMethod: byMethod(collections),
-    cashByMethod: byMethod(collections.map((x) => ({ method: x.method, amount: x.tenderedAmount ?? x.amount }))),
-    expensesByCategory: byCategory(periodExpenses),
-    dailyTrend: dailyTrend(sales, periodExpenses, collections),
-    productMovement: productMovement(salesRows, p.startDate, p.endDate),
-    dailySales: sales,
-    dailyExpenses: periodExpenses,
-    linkedExpenses: periodExpenses.filter((e) => txt(e.relatedSalesRefNo)),
-    openReceivables: allSales.filter((s) => s.balancePhp > 0).map((s) => ({ saleDate: s.saleDate, salesRefNo: s.salesRefNo, customerName: s.customerName, totalSalePhp: s.totalSalePhp, totalPaidPhp: s.totalPaidPhp, tenderedAmountPhp: s.totalTenderedPhp, changeDuePhp: s.changeDuePhp, balancePhp: s.balancePhp, paymentStatus: s.paymentStatus, saleStatus: s.saleStatus })),
+    collectionDetails: collectionDetails(collections, p.startDate), collectionsByMethod: byMethod(collections), cashByMethod: byMethod(collections.map((x) => ({ method: x.method, amount: x.tenderedAmount ?? x.amount }))), expensesByCategory: byCategory(periodExpenses), dailyTrend: dailyTrend(sales, periodExpenses, collections), productMovement: productMovement(salesRows, p.startDate, p.endDate), dailySales: sales, dailyExpenses: periodExpenses, linkedExpenses: periodExpenses.filter((e) => txt(e.relatedSalesRefNo)), openReceivables: allSales.filter((s) => s.balancePhp > 0).map((s) => ({ saleDate: s.saleDate, salesRefNo: s.salesRefNo, customerName: s.customerName, totalSalePhp: s.totalSalePhp, totalPaidPhp: s.totalPaidPhp, tenderedAmountPhp: s.totalTenderedPhp, changeDuePhp: s.changeDuePhp, balancePhp: s.balancePhp, paymentStatus: s.paymentStatus, saleStatus: s.saleStatus })),
   };
   cache = { key: cacheKey, time: Date.now(), data: payload };
   return payload;
