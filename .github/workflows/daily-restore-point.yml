@@ -1,0 +1,80 @@
+name: Daily Restore Point
+
+on:
+  schedule:
+    # Runs daily at 12:10 AM Manila time.
+    - cron: "10 16 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  create-restore-point:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Create restore point document
+        shell: bash
+        run: |
+          set -euo pipefail
+          export TZ=Asia/Manila
+          DATE="$(date +'%Y-%m-%d')"
+          TIME="$(date +'%Y-%m-%d %H:%M:%S %Z')"
+          COMMIT_SHA="$(git rev-parse HEAD)"
+          SHORT_SHA="$(git rev-parse --short HEAD)"
+          FILE="docs/restore-points/${DATE}-daily-restore-point.md"
+
+          mkdir -p docs/restore-points
+
+          if [ -f "$FILE" ]; then
+            echo "Restore point already exists: $FILE"
+            exit 0
+          fi
+
+          cat > "$FILE" <<EOF
+          # Daily Restore Point - $DATE
+
+          Created At: $TIME
+          Repository Commit: $COMMIT_SHA
+          Short Commit: $SHORT_SHA
+          Branch: main
+
+          ## Purpose
+
+          Daily checkpoint for Realights production code history.
+
+          ## Safety Scope
+
+          This workflow only creates a documentation checkpoint in the repository. It does not edit Google Sheets production data, sales records, payment rows, customer balances, inventory, expenses, reports, or dashboard values.
+
+          ## Restore Use
+
+          If a future deployment or report logic change causes issues, use this checkpoint date and commit SHA to compare or roll back code changes.
+
+          ## Notes
+
+          This is a code restore point. Google Sheets data remains the production source and should be backed up separately through Drive/Sheets backup procedures.
+          EOF
+
+          sed -i 's/^          //' "$FILE"
+
+      - name: Commit restore point
+        shell: bash
+        run: |
+          set -euo pipefail
+          if git diff --quiet -- docs/restore-points; then
+            echo "No restore point changes to commit."
+            exit 0
+          fi
+          export TZ=Asia/Manila
+          DATE="$(date +'%Y-%m-%d')"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add docs/restore-points
+          git commit -m "Daily restore point ${DATE}"
+          git push
