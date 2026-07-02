@@ -42,6 +42,29 @@ function normalizeDate(value: unknown) {
   return `${parsed.getFullYear()}-${String(parsed.getMonth() + 1).padStart(2, "0")}-${String(parsed.getDate()).padStart(2, "0")}`;
 }
 
+function paymentGroupIdFromNotes(value: unknown) {
+  const marker = "Group payment ";
+  const note = text(value);
+  const index = note.indexOf(marker);
+  if (index < 0) return "";
+  const rest = note.slice(index + marker.length).trim();
+  return rest.split("|")[0].trim().split(" ")[0] || "";
+}
+
+function stripGroupPaymentNote(value: unknown) {
+  const marker = "Group payment ";
+  const note = text(value);
+  const index = note.indexOf(marker);
+  if (index < 0) return note;
+  return note.slice(0, index).replace(/\s*\|\s*$/, "").trim();
+}
+
+function noteWithGroupPayment(value: unknown, groupPaymentId: string) {
+  const cleanNote = stripGroupPaymentNote(value);
+  if (!groupPaymentId) return cleanNote;
+  return `${cleanNote || "Customer group payment allocation"} | Group payment ${groupPaymentId}`;
+}
+
 async function ensureSheetExists(sheets: any, title: string, headers: string[]) {
   const meta = await sheets.spreadsheets.get({ spreadsheetId: SHEET_ID });
   const found = (meta.data.sheets || []).find((s: any) => s.properties?.title === title);
@@ -144,6 +167,50 @@ export async function GET() {
   } catch (error: any) {
     console.error("CUSTOMER PAYMENTS GET ERROR:", error);
     return NextResponse.json({ error: error?.message || String(error) || "Failed to load customer payment history" }, { status: 500 });
+  }
+}
+
+export async function PATCH(req: Request) {
+  try {
+    const body = await req.json();
+    const paymentIds = Array.isArray(body?.paymentIds) ? body.paymentIds.map(text).filter(Boolean) : [];
+    const groupPaymentId = text(body?.groupPaymentId);
+    const transactionRef = text(body?.transactionRef);
+    const notes = text(body?.notes);
+    const actor = text(body?.actor || "Admin");
+
+    if (!paymentIds.length && !groupPaymentId) return NextResponse.json({ error: "Payment transaction identifier is required" }, { status: 400 });
+
+    const sheets = await getSheetsClient();
+    await ensureSheetExists(sheets, PAYMENTS_SHEET, PAYMENT_HEADERS);
+    await ensureSheetExists(sheets, AUDIT_LOG_SHEET, AUDIT_HEADERS);
+    const paymentRows = await readPaymentRows(sheets);
+    const targetIdSet = new Set(paymentIds);
+    const updates: Array<{ range: string; values: string[][] }> = [];
+    const before: any[] = [];
+    const after: any[] = [];
+
+    paymentRows.slice(1).forEach((row, index) => {
+      const paymentId = text(row[10]);
+      const rowGroupId = paymentGroupIdFromNotes(row[8]);
+      const isTarget = targetIdSet.has(paymentId) || Boolean(groupPaymentId && rowGroupId === groupPaymentId);
+      if (!isTarget || isVoidPayment(row)) return;
+      const rowNumber = index + 2;
+      const nextNotes = noteWithGroupPayment(notes, rowGroupId || groupPaymentId);
+      before.push({ rowNumber, paymentId, transactionRef: text(row[6]), notes: text(row[8]) });
+      after.push({ rowNumber, paymentId, transactionRef, notes: nextNotes });
+      updates.push({ range: `${PAYMENTS_SHEET}!G${rowNumber}:I${rowNumber}`, values: [[transactionRef, text(row[7]) || actor, nextNotes]] });
+    });
+
+    if (!updates.length) return NextResponse.json({ error: "No active payment rows found for this transaction" }, { status: 404 });
+
+    await sheets.spreadsheets.values.batchUpdate({ spreadsheetId: SHEET_ID, requestBody: { valueInputOption: "USER_ENTERED", data: updates } });
+    await appendAuditLog(sheets, { module: "Customer Payments", action: "EDIT_PAYMENT_TRANSACTION", recordId: groupPaymentId || paymentIds.join(","), recordRef: transactionRef || groupPaymentId || paymentIds.join(","), actor, summary: `Edited payment transaction reference/notes for ${updates.length} payment allocation row(s)`, before, after });
+
+    return NextResponse.json({ ok: true, updatedRows: updates.length, transactionRef, notes });
+  } catch (error: any) {
+    console.error("CUSTOMER PAYMENTS PATCH ERROR:", error);
+    return NextResponse.json({ error: error?.message || String(error) || "Failed to update payment transaction" }, { status: 500 });
   }
 }
 
