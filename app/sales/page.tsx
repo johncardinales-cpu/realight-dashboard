@@ -374,13 +374,23 @@ export default function SalesPage() {
   }
 
   function selectProduct(i: number, value: string) {
-    const q = value.toLowerCase();
+    const cleanValue = value.trim();
+    if (!cleanValue) {
+      setItems((prev) => prev.map((x, idx) => idx === i ? { ...emptyLine } : x));
+      return;
+    }
+    const q = cleanValue.toLowerCase();
     const match = pricing.find((p) => productLabel(p).toLowerCase() === q) || pricing.find((p) => productLabel(p).toLowerCase().includes(q));
-    setItems((prev) => prev.map((x, idx) => idx === i ? match ? { productSearch: productLabel(match), description: match.description, specification: match.specification, qty: x.qty || 1, unitPricePhp: match.sellingPricePhp || 0 } : { ...x, productSearch: value } : x));
+    setItems((prev) => prev.map((x, idx) => idx === i ? match ? { productSearch: productLabel(match), description: match.description, specification: match.specification, qty: x.qty || 1, unitPricePhp: match.sellingPricePhp || 0 } : { ...x, productSearch: value, description: "", specification: "", unitPricePhp: 0 } : x));
   }
 
   function updateItem(i: number, patch: Partial<SaleLine>) {
     setItems((prev) => prev.map((x, idx) => idx === i ? { ...x, ...patch } : x));
+  }
+
+  function clearOrRemoveItem(i: number) {
+    setItems((prev) => prev.length <= 1 ? [{ ...emptyLine }] : prev.filter((_, idx) => idx !== i));
+    setAlert("");
   }
 
   function validatePayment() {
@@ -492,7 +502,7 @@ export default function SalesPage() {
                 <input className={`${inputClass} ${isLow ? "border-rose-400 bg-rose-50" : ""}`} type="number" min="1" value={item.qty} onChange={(e) => updateItem(i, { qty: Number(e.target.value) })} />
                 <div className={`rounded-xl border px-3 py-2 text-xs font-bold ${isLow ? "border-rose-300 bg-rose-50 text-rose-700" : "border-emerald-200 bg-emerald-50 text-emerald-700"}`}>Avail: {available ?? "-"}</div>
                 <input className={inputClass} type="number" value={item.unitPricePhp} onChange={(e) => updateItem(i, { unitPricePhp: Number(e.target.value) })} />
-                <button type="button" className="rounded-xl border px-3 text-sm font-bold" onClick={() => setItems((p) => p.length === 1 ? p : p.filter((_, idx) => idx !== i))}>Remove</button>
+                <button type="button" className="rounded-xl border px-3 text-sm font-bold" onClick={() => clearOrRemoveItem(i)}>{items.length <= 1 ? "Clear" : "Remove"}</button>
               </div>
             );
           })}
