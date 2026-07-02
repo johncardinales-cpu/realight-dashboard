@@ -3,6 +3,8 @@ import { google } from "googleapis";
 
 const SHEET_ID = process.env.GOOGLE_SHEET_ID as string;
 const SHEET_NAME = "Supplier_Invoice_Costs";
+const DELIVERIES_SHEET = "App_Deliveries";
+const PRICING_SHEET = "Pricing_Base";
 
 const auth = new google.auth.GoogleAuth({
   credentials: {
@@ -26,6 +28,39 @@ const HEADERS = [
   "Total Invoice Cost",
   "Notes",
 ];
+
+function toNumber(value: unknown) {
+  return Number(String(value || "").replace(/[^0-9.-]/g, "")) || 0;
+}
+
+function roundMoney(value: number) {
+  return Math.round((Number(value) || 0) * 100) / 100;
+}
+
+function text(value: unknown) {
+  return String(value || "").trim();
+}
+
+function itemKey(description: unknown, specification: unknown) {
+  return `${text(description).toLowerCase()}|||${text(specification).toLowerCase()}`;
+}
+
+function normalizeDate(value: unknown) {
+  const raw = text(value);
+  if (!raw) return "";
+  if (/^\d{4}-\d{2}-\d{2}/.test(raw)) return raw.slice(0, 10);
+  if (/^\d{1,2}\/\d{1,2}\/\d{2,4}$/.test(raw)) {
+    const [month, day, yearRaw] = raw.split("/").map(Number);
+    const year = yearRaw < 100 ? 2000 + yearRaw : yearRaw;
+    return `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+  }
+  if (/^\d+(\.\d+)?$/.test(raw)) {
+    const serial = Number(raw);
+    if (serial > 20000 && serial < 90000) return new Date(Math.floor(serial - 25569) * 86400 * 1000).toISOString().slice(0, 10);
+  }
+  const parsed = new Date(raw);
+  return Number.isNaN(parsed.getTime()) ? raw.slice(0, 10) : parsed.toISOString().slice(0, 10);
+}
 
 async function ensureSheetExists(sheets: any) {
   const meta = await sheets.spreadsheets.get({ spreadsheetId: SHEET_ID });
@@ -59,6 +94,80 @@ async function ensureSheetExists(sheets: any) {
   });
 }
 
+function mapSupplierRows(rows: any[][]) {
+  const data = rows.slice(1).filter((row) =>
+    row.some((cell) => String(cell || "").trim() !== "")
+  );
+
+  return data.map((row, index) => {
+    const obj: Record<string, string> = {};
+    HEADERS.forEach((col, i) => {
+      obj[col] = String(row[i] || "").trim();
+    });
+    obj["_rowNumber"] = String(index + 2);
+    return obj;
+  });
+}
+
+function buildPricingMap(rows: any[][]) {
+  const map = new Map<string, number>();
+  rows.slice(1).forEach((row) => {
+    const key = itemKey(row[1], row[2]);
+    const costPhp = toNumber(row[7]);
+    if (key !== "|||" && costPhp > 0) map.set(key, costPhp);
+  });
+  return map;
+}
+
+function fallbackSupplierCostRows(deliveryRows: any[][], pricingRows: any[][]) {
+  const pricing = buildPricingMap(pricingRows);
+  const grouped = new Map<string, any>();
+
+  deliveryRows.slice(1).forEach((row) => {
+    const uploadDate = normalizeDate(row[1]);
+    const supplier = text(row[2]);
+    const batchReference = text(row[3]);
+    const description = text(row[4]);
+    const specification = text(row[5]);
+    const qty = toNumber(row[6]);
+    if (!supplier || !description || !specification || qty <= 0) return;
+
+    const unitCostPhp = pricing.get(itemKey(description, specification));
+    if (!unitCostPhp) return;
+
+    const groupKey = `${uploadDate}|${supplier}|${batchReference || "NO-REF"}`;
+    const current = grouped.get(groupKey) || {
+      uploadDate,
+      supplier,
+      batchReference,
+      productSubtotal: 0,
+      itemCount: 0,
+      notes: "Estimated from App_Deliveries quantity x Pricing_Base cost price because Supplier_Invoice_Costs has no invoice rows yet.",
+    };
+    current.productSubtotal = roundMoney(current.productSubtotal + qty * unitCostPhp);
+    current.itemCount += 1;
+    grouped.set(groupKey, current);
+  });
+
+  return Array.from(grouped.values())
+    .sort((a, b) => `${b.uploadDate}-${b.supplier}`.localeCompare(`${a.uploadDate}-${a.supplier}`))
+    .map((item, index) => ({
+      "Upload Date": item.uploadDate,
+      "Supplier": item.supplier,
+      "Batch / Reference": item.batchReference,
+      "Invoice No.": "Estimated",
+      "Invoice Valid": "Estimated",
+      "Product Subtotal": String(roundMoney(item.productSubtotal)),
+      "Freight Cost": "0",
+      "Delivery Cost": "0",
+      "Customs Cost": "0",
+      "Other Cost": "0",
+      "Total Invoice Cost": String(roundMoney(item.productSubtotal)),
+      "Notes": `${item.notes} Items grouped: ${item.itemCount}.`,
+      "_rowNumber": `EST-${index + 1}`,
+    }));
+}
+
 export async function GET() {
   try {
     const client = await auth.getClient();
@@ -71,20 +180,15 @@ export async function GET() {
     });
 
     const rows = response.data.values || [];
-    const data = rows.slice(1).filter((row) =>
-      row.some((cell) => String(cell || "").trim() !== "")
-    );
+    const directItems = mapSupplierRows(rows);
+    if (directItems.length) return NextResponse.json(directItems);
 
-    const items = data.map((row, index) => {
-      const obj: Record<string, string> = {};
-      HEADERS.forEach((col, i) => {
-        obj[col] = String(row[i] || "").trim();
-      });
-      obj["_rowNumber"] = String(index + 2);
-      return obj;
-    });
+    const [deliveryResponse, pricingResponse] = await Promise.all([
+      sheets.spreadsheets.values.get({ spreadsheetId: SHEET_ID, range: `${DELIVERIES_SHEET}!A:L` }).catch(() => ({ data: { values: [] } })),
+      sheets.spreadsheets.values.get({ spreadsheetId: SHEET_ID, range: `${PRICING_SHEET}!A:N` }).catch(() => ({ data: { values: [] } })),
+    ]);
 
-    return NextResponse.json(items);
+    return NextResponse.json(fallbackSupplierCostRows(deliveryResponse.data.values || [], pricingResponse.data.values || []));
   } catch (error: any) {
     console.error("SUPPLIER COSTS GET ERROR:", error);
     return NextResponse.json(
