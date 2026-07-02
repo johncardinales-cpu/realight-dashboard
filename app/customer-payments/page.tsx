@@ -158,6 +158,7 @@ export default function CustomerPaymentsPage() {
   useEffect(() => { setCashierName(window.localStorage.getItem(storageKey) || "Admin"); loadData().catch((error: any) => { setIsError(true); setMessage(error?.message || "Failed to load customer payment data."); }); }, []);
 
   function chooseCustomer(value: string) {
+    if (message || isError) { setMessage(""); setIsError(false); }
     setCustomerSearch(value);
     const clean = value.trim();
     if (!clean) { setCustomerName(""); setCustomerId(""); return; }
@@ -177,7 +178,7 @@ export default function CustomerPaymentsPage() {
       const response = await fetch("/api/customer-payments", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ customerName, customerId, paymentDate, paymentMethod, transactionRef, cashierName, notes, paymentAmount, allocationMode: "fifo" }) });
       const data = await response.json();
       if (!response.ok) throw new Error(data?.error || "Failed to save group payment.");
-      setMessage(`Saved. Applied ${money(data.appliedAmountPhp || 0)}${data.creditAmountPhp ? ` and saved ${money(data.creditAmountPhp)} as customer credit` : ""}.`);
+      setMessage(`Saved payment for ${customerName}. Applied ${money(data.appliedAmountPhp || 0)}${data.creditAmountPhp ? ` and saved ${money(data.creditAmountPhp)} as customer credit` : ""}.`);
       setPaymentAmount(0); setTransactionRef(""); setNotes("");
       await loadData();
     } catch (error: any) {
@@ -192,7 +193,7 @@ export default function CustomerPaymentsPage() {
     <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
       <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
         <div><h1 className="text-3xl font-semibold text-slate-900">Customer Group Payments</h1><p className="mt-1 max-w-4xl text-sm leading-6 text-slate-600">Enter one customer payment. The system auto-allocates it to the oldest unpaid records first. Excess becomes customer credit.</p></div>
-        <button type="button" onClick={() => loadData().catch(console.error)} disabled={loading} className="rounded-xl border border-slate-300 px-4 py-2 text-sm font-bold text-slate-700 disabled:opacity-60">{loading ? "Refreshing..." : "Refresh"}</button>
+        <button type="button" onClick={() => { setMessage(""); setIsError(false); loadData().catch(console.error); }} disabled={loading} className="rounded-xl border border-slate-300 px-4 py-2 text-sm font-bold text-slate-700 disabled:opacity-60">{loading ? "Refreshing..." : "Refresh"}</button>
       </div>
       {message ? <p className={`mt-4 rounded-2xl border px-4 py-3 text-sm font-semibold ${isError ? "border-rose-200 bg-rose-50 text-rose-700" : "border-emerald-200 bg-emerald-50 text-emerald-700"}`}>{message}</p> : null}
     </div>
@@ -203,7 +204,7 @@ export default function CustomerPaymentsPage() {
       <datalist id="customer-group-payment-options">{customerOptions.map((item) => <option key={item} value={item} />)}</datalist>
       <div className="grid gap-4 md:grid-cols-3">
         <Field label="Customer Search"><input list="customer-group-payment-options" className={inputClass} value={customerSearch} onChange={(e) => chooseCustomer(e.target.value)} placeholder="Search customer" /></Field>
-        <Field label="Customer Name"><input className={inputClass} value={customerName} onChange={(e) => { setCustomerName(e.target.value); setCustomerId(""); }} required /></Field>
+        <Field label="Customer Name"><input className={inputClass} value={customerName} onChange={(e) => { setMessage(""); setIsError(false); setCustomerName(e.target.value); setCustomerId(""); }} required /></Field>
         <Field label="Payment Date"><input className={inputClass} type="date" value={paymentDate} onChange={(e) => setPaymentDate(e.target.value)} required /></Field>
         <Field label="Payment Amount"><input className={inputClass} type="number" min="0" step="0.01" value={paymentAmount} onChange={(e) => setPaymentAmount(Number(e.target.value))} required /></Field>
         <Field label="Payment Method"><select className={inputClass} value={paymentMethod} onChange={(e) => setPaymentMethod(e.target.value)}>{methods.map((method) => <option key={method} value={method}>{method}</option>)}</select></Field>
@@ -213,7 +214,7 @@ export default function CustomerPaymentsPage() {
         <Field label="New Credit If Overpaid"><input className={readonlyClass} value={money(allocation.credit)} readOnly /></Field>
         <Field label="Notes"><input className={inputClass} value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Optional allocation note" /></Field>
       </div>
-      <div className="mt-5 flex gap-3"><button type="submit" disabled={saving || !customerName || paymentAmount <= 0} className="rounded-xl bg-emerald-600 px-5 py-3 text-sm font-bold text-white disabled:opacity-60">{saving ? "Saving..." : "Save Group Payment"}</button><button type="button" onClick={() => { setPaymentAmount(0); setTransactionRef(""); setNotes(""); }} className="rounded-xl border border-slate-300 px-5 py-3 text-sm font-bold text-slate-700">Clear</button></div>
+      <div className="mt-5 flex gap-3"><button type="submit" disabled={saving || !customerName || paymentAmount <= 0} className="rounded-xl bg-emerald-600 px-5 py-3 text-sm font-bold text-white disabled:opacity-60">{saving ? "Saving..." : "Save Group Payment"}</button><button type="button" onClick={() => { setMessage(""); setIsError(false); setPaymentAmount(0); setTransactionRef(""); setNotes(""); }} className="rounded-xl border border-slate-300 px-5 py-3 text-sm font-bold text-slate-700">Clear</button></div>
     </form>
 
     <div className="grid gap-4 md:grid-cols-5">
