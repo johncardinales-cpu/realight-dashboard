@@ -64,13 +64,13 @@ function cleanEditableNotes(value: unknown) {
 }
 
 function transactionKey(row: PaymentHistory) {
+  const groupId = paymentGroupId(row);
+  if (groupId) return groupId;
   const date = normalizeDate(row.paymentDate);
   const customer = norm(row.customerName);
   const method = norm(row.paymentMethod);
   const ref = norm(row.transactionRef);
   if (ref) return `${date}|${customer}|${method}|${ref}`;
-  const groupId = paymentGroupId(row);
-  if (groupId) return groupId;
   return row.paymentId || `${date}|${customer}|${row.salesRefNo}|${row.amountPaidPhp}`;
 }
 
