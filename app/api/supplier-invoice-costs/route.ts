@@ -1,4 +1,8 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
+import { randomUUID } from "node:crypto";
+import { readSession } from "@/lib/session";
+import { AUDIT_HEADERS, moneyNumber, priceCells, pricingReason } from "@/lib/audited-pricing";
+import { isBillableSupplierDelivery } from "@/lib/supplier-costs";
 import { google } from "googleapis";
 
 const SHEET_ID = process.env.GOOGLE_SHEET_ID as string;
@@ -130,7 +134,7 @@ function fallbackSupplierCostRows(deliveryRows: any[][], pricingRows: any[][]) {
     const description = text(row[4]);
     const specification = text(row[5]);
     const qty = toNumber(row[6]);
-    if (!supplier || !description || !specification || qty <= 0) return;
+    if (!isBillableSupplierDelivery(row)) return;
 
     const unitCostPhp = pricing.get(itemKey(description, specification));
     if (!unitCostPhp) return;
@@ -172,8 +176,7 @@ export async function GET() {
   try {
     const client = await auth.getClient();
     const sheets = google.sheets({ version: "v4", auth: client as any });
-    await ensureSheetExists(sheets);
-
+    // GET is read-only. Only an authorized POST may initialize storage.
     const response = await sheets.spreadsheets.values.get({
       spreadsheetId: SHEET_ID,
       range: `${SHEET_NAME}!A:L`,
@@ -184,7 +187,7 @@ export async function GET() {
     if (directItems.length) return NextResponse.json(directItems);
 
     const [deliveryResponse, pricingResponse] = await Promise.all([
-      sheets.spreadsheets.values.get({ spreadsheetId: SHEET_ID, range: `${DELIVERIES_SHEET}!A:L` }).catch(() => ({ data: { values: [] } })),
+      sheets.spreadsheets.values.get({ spreadsheetId: SHEET_ID, range: `${DELIVERIES_SHEET}!A:M` }).catch(() => ({ data: { values: [] } })),
       sheets.spreadsheets.values.get({ spreadsheetId: SHEET_ID, range: `${PRICING_SHEET}!A:N` }).catch(() => ({ data: { values: [] } })),
     ]);
 
@@ -198,65 +201,82 @@ export async function GET() {
   }
 }
 
-export async function POST(req: Request) {
+export async function POST(req: NextRequest) {
   try {
-    const body = await req.json();
-
-    const uploadDate = String(body?.uploadDate || "").trim();
-    const supplier = String(body?.supplier || "").trim();
-    const batchReference = String(body?.batchReference || "").trim();
-    const invoiceNo = String(body?.invoiceNo || "").trim();
-    const invoiceValid = String(body?.invoiceValid || "").trim();
-    const productSubtotal = Number(body?.productSubtotal || 0);
-    const freightCost = Number(body?.freightCost || 0);
-    const deliveryCost = Number(body?.deliveryCost || 0);
-    const customsCost = Number(body?.customsCost || 0);
-    const otherCost = Number(body?.otherCost || 0);
-    const notes = String(body?.notes || "").trim();
-
+    const actor = await readSession(req.cookies.get("realights_session")?.value);
+    if (!actor) return NextResponse.json({ error: "Administrator session required." }, { status: 403 });
+    const body = await req.json().catch(() => ({}));
+    const note = pricingReason(body?.notes);
+    const uploadDate = text(body?.uploadDate);
+    const supplier = text(body?.supplier);
+    const batchReference = text(body?.batchReference);
+    const invoiceNo = text(body?.invoiceNo);
+    const invoiceValid = text(body?.invoiceValid);
     if (!uploadDate || !supplier || !batchReference) {
-      return NextResponse.json(
-        { error: "Upload Date, Supplier, and Batch / Reference are required" },
-        { status: 400 }
-      );
+      return NextResponse.json({
+        error: "Upload Date, Supplier and Batch / Reference are required.",
+      }, { status: 400 });
+    }
+    const values = [
+      moneyNumber(body?.productSubtotal ?? 0, "Product subtotal"),
+      moneyNumber(body?.freightCost ?? 0, "Freight cost"),
+      moneyNumber(body?.deliveryCost ?? 0, "Delivery cost"),
+      moneyNumber(body?.customsCost ?? 0, "Customs cost"),
+      moneyNumber(body?.otherCost ?? 0, "Other cost"),
+    ];
+    const total = Math.round(values.reduce((sum, amount) => sum + amount, 0) * 100) / 100;
+    const timestamp = new Date().toISOString();
+    const recordId = `COST_${randomUUID()}`;
+    const annotatedNotes = `${note} [${recordId}]`;
+    const sheets = google.sheets({ version: "v4", auth: await auth.getClient() as any });
+    await ensureSheetExists(sheets);
+    const [meta, headers] = await Promise.all([
+      sheets.spreadsheets.get({
+        spreadsheetId: SHEET_ID, fields: "sheets(properties(title,sheetId))",
+      }),
+      sheets.spreadsheets.values.batchGet({
+        spreadsheetId: SHEET_ID,
+        ranges: [`${SHEET_NAME}!A1:L1`, "Audit_Log!A1:J1"],
+      }),
+    ]);
+    const ids = new Map<string,number>();
+    for (const entry of meta.data.sheets || []) {
+      if (entry.properties?.title && typeof entry.properties.sheetId === "number") {
+        ids.set(entry.properties.title, entry.properties.sheetId);
+      }
+    }
+    if (ids.get(SHEET_NAME) === undefined || ids.get("Audit_Log") === undefined) {
+      throw new Error("Supplier costs or Audit_Log worksheet is missing.");
+    }
+    const sourceHeaders = headers.data.valueRanges?.[0]?.values?.[0] || [];
+    const auditHeaders = headers.data.valueRanges?.[1]?.values?.[0] || [];
+    if (HEADERS.some((name, i) => text(sourceHeaders[i]) !== name) ||
+        AUDIT_HEADERS.some((name,i) => text(auditHeaders[i]) !== name)) {
+      throw new Error("Supplier invoice or audit columns differ from the verified schema.");
     }
 
-    const totalInvoiceCost =
-      productSubtotal + freightCost + deliveryCost + customsCost + otherCost;
-
-    const client = await auth.getClient();
-    const sheets = google.sheets({ version: "v4", auth: client as any });
-    await ensureSheetExists(sheets);
-
-    await sheets.spreadsheets.values.append({
-      spreadsheetId: SHEET_ID,
-      range: `${SHEET_NAME}!A:L`,
-      valueInputOption: "USER_ENTERED",
-      insertDataOption: "INSERT_ROWS",
-      requestBody: {
-        values: [[
-          uploadDate,
-          supplier,
-          batchReference,
-          invoiceNo,
-          invoiceValid,
-          productSubtotal,
-          freightCost,
-          deliveryCost,
-          customsCost,
-          otherCost,
-          totalInvoiceCost,
-          notes,
-        ]],
-      },
-    });
-
-    return NextResponse.json({ ok: true, totalInvoiceCost });
-  } catch (error: any) {
-    console.error("SUPPLIER COSTS POST ERROR:", error);
-    return NextResponse.json(
-      { error: error?.message || String(error) || "Failed to save supplier invoice cost" },
-      { status: 500 }
-    );
+    const before = {};
+    const after = {
+      uploadDate, supplier, batchReference, invoiceNo, invoiceValid,
+      productSubtotal: values[0], freightCost: values[1], deliveryCost: values[2],
+      customsCost: values[3], otherCost: values[4], total,
+    };
+    await sheets.spreadsheets.batchUpdate({ spreadsheetId: SHEET_ID, requestBody: {
+      requests: [
+        { appendCells: { sheetId: ids.get(SHEET_NAME)!, rows: [priceCells([
+          uploadDate, supplier, batchReference, invoiceNo, invoiceValid,
+          ...values, total, annotatedNotes,
+        ])], fields: "userEnteredValue" } },
+        { appendCells: { sheetId: ids.get("Audit_Log")!, rows: [priceCells([
+          `AUDIT_${randomUUID()}`, timestamp, "Supplier Costs", "CREATE_INVOICE_COST",
+          recordId, batchReference, actor.email, note,
+          JSON.stringify(before), JSON.stringify(after),
+        ])], fields: "userEnteredValue" } },
+      ],
+    } });
+    return NextResponse.json({ ok: true, totalInvoiceCost: total, recordId });
+  } catch (error) {
+    console.error("SUPPLIER COST POST AUDIT ERROR:", error);
+    return NextResponse.json({ error: error instanceof Error ? error.message : "Unable to record supplier costs." }, { status: 400 });
   }
 }

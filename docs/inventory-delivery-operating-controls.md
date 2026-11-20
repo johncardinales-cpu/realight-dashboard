@@ -66,6 +66,16 @@ Older actions may be logged under different action names; they are historical ev
 7. To reverse a mistaken recorded adjustment, enter a **new offsetting adjustment** with a reason; never erase its historical ledger row.
 8. For unintended bulk updates or monetary discrepancies, stop further writes and consult the backup plus the original audit events before applying a correction.
 
+## 8. Pricing and supplier invoice control
+- Use **Pricing** for all price edits; the legacy **Pricing Base** editor redirects to it. The old pricing cleanup GET/POST is permanently disabled.
+- Each manual price edit, bulk FX change, and bulk margin update requires a note and a signed admin session.
+- Pricing changes, their old/new cost or selling values, and an Audit_Log entry are committed together in one Sheets batch.
+- Manual price edits validate the stored Item ID at the selected worksheet row. Bulk actions touch only the intended numeric fields and notes, preserving other product pricing fields.
+- USD costs require an explicitly entered or product-recorded FX rate. A hard-coded currency conversion is not a valid invoice source.
+- **Supplier Invoice Costs** creates a supplier cost row and a matching Audit_Log entry in one batch; an action note is mandatory.
+- Estimated supplier invoice costs exclude canceled shipments and synthetic warehouse damage entries. These estimates are not a substitute for an actual supplier invoice.
+- Historical pricing and invoice writes may predate the new audit format. The software does not rewrite them or invent a missing actor/note.
+
 ## Known limitations and deferred safeguards
 - Google Sheets does not implement compare-and-swap on the inventory/delivery ledgers. Two administrators changing the same SKU or row concurrently may race. **Avoid concurrent edits** until server-side serializable transactions or a reliable locking mechanism is introduced.
 - Whole-system audit coverage **beyond** these inventory/delivery/pricing workflows is not certified; maintain separate checks for Sales, Payments, Expenses, Users, and Settings.

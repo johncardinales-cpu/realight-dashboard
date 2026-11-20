@@ -1,93 +1,86 @@
-import { NextResponse } from "next/server";
-import { google } from "googleapis";
+import { NextRequest, NextResponse } from "next/server";
+import { getSheetsClient, SHEET_ID } from "@/lib/sheets";
+import { readSession } from "@/lib/session";
+import {
+  getPricingSheetIds, moneyNumber, pricingCellUpdate, pricingAuditEvent, pricingReason,
+} from "@/lib/audited-pricing";
 
-const SHEET_ID = process.env.GOOGLE_SHEET_ID as string;
-const SHEET_NAME = "Pricing_Base";
-
-const auth = new google.auth.GoogleAuth({
-  credentials: {
-    client_email: process.env.GOOGLE_CLIENT_EMAIL as string,
-    private_key: process.env.GOOGLE_PRIVATE_KEY?.replace(/\n/g, "\n"),
-  },
-  scopes: ["https://www.googleapis.com/auth/spreadsheets"],
-});
-
-function toNumber(value: unknown) {
-  return Number(String(value || "").replace(/[^0-9.-]/g, "")) || 0;
-}
-
-function text(value: unknown) {
-  return String(value || "").trim();
-}
-
-function isValidPricingRow(row: string[]) {
-  const itemId = text(row[0]);
-  const description = text(row[1]);
-  const specification = text(row[2]);
-  if (!itemId || itemId.toLowerCase() === "item id") return false;
-  if (!description || !specification) return false;
-  if (description === "Description" || specification === "Specification") return false;
-  return true;
-}
+const text = (value: unknown) => String(value ?? "").trim();
 
 function roundTo(value: number, increment: number) {
-  if (!increment || increment <= 0) return Math.round(value * 100) / 100;
-  return Math.ceil(value / increment) * increment;
+  return increment > 0 ? Math.ceil(value / increment) * increment : Math.round(value * 100) / 100;
 }
 
-export async function POST(req: Request) {
+export async function POST(req: NextRequest) {
   try {
-    const body = await req.json();
-    const marginPercent = toNumber(body?.marginPercent);
-    const dealerMarginPercent = toNumber(body?.dealerMarginPercent || marginPercent);
-    const minimumMarginPercent = toNumber(body?.minimumMarginPercent || Math.max(marginPercent - 5, 0));
-    const roundingIncrement = toNumber(body?.roundingIncrement || 1);
+    const actor = await readSession(req.cookies.get("realights_session")?.value);
+    if (!actor) return NextResponse.json({ error: "Administrator session required." }, { status: 403 });
+    const body = await req.json().catch(() => ({}));
+    const note = pricingReason(body?.actionNote);
+    const retail = Number(body?.marginPercent);
+    const dealer = Number(body?.dealerMarginPercent);
+    const minimum = Number(body?.minimumMarginPercent);
+    const rounding = Number(body?.roundingIncrement);
     const category = text(body?.category);
-
-    if (marginPercent <= 0 || marginPercent >= 95) {
-      return NextResponse.json({ error: "Margin percent must be greater than 0 and less than 95." }, { status: 400 });
+    if (![retail, dealer, minimum].every(value => Number.isFinite(value) && value > 0 && value < 95) ||
+        !Number.isFinite(rounding) || rounding < 0 || rounding > 100000) {
+      return NextResponse.json({ error: "Margins must be greater than 0 and below 95%; enter a valid rounding increment." }, { status: 400 });
     }
-
-    const client = await auth.getClient();
-    const sheets = google.sheets({ version: "v4", auth: client as any });
-    const response = await sheets.spreadsheets.values.get({ spreadsheetId: SHEET_ID, range: `${SHEET_NAME}!A:N` });
+    const sheets = await getSheetsClient();
+    const [ids, response] = await Promise.all([
+      getPricingSheetIds(sheets, SHEET_ID),
+      sheets.spreadsheets.values.get({ spreadsheetId: SHEET_ID, range: "Pricing_Base!A:N" }),
+    ]);
     const rows = (response.data.values || []) as string[][];
-
-    const updates: any[] = [];
-    rows.slice(1).forEach((row, index) => {
-      if (!isValidPricingRow(row)) return;
-      const rowNumber = index + 2;
-      const rowCategory = text(row[3]);
-      if (category && rowCategory !== category) return;
-
-      const costPriceUsd = toNumber(row[5]);
-      const fxRate = toNumber(row[6]) || 56;
-      const costPricePhp = toNumber(row[7]) || costPriceUsd * fxRate;
-      if (costPricePhp <= 0) return;
-
-      const sellingPricePhp = roundTo(costPricePhp / (1 - marginPercent / 100), roundingIncrement);
-      const dealerPricePhp = roundTo(costPricePhp / (1 - dealerMarginPercent / 100), roundingIncrement);
-      const minimumPricePhp = roundTo(costPricePhp / (1 - minimumMarginPercent / 100), roundingIncrement);
-      const grossMargin = (sellingPricePhp - costPricePhp) / sellingPricePhp;
-      const notes = `${text(row[13])}${text(row[13]) ? " | " : ""}Bulk margin pricing applied: ${marginPercent}% retail margin.`;
-
-      updates.push({
-        range: `${SHEET_NAME}!A${rowNumber}:N${rowNumber}`,
-        values: [[
-          text(row[0]), text(row[1]), text(row[2]), rowCategory, text(row[4]) || "pc",
-          costPriceUsd, fxRate, costPricePhp, sellingPricePhp, dealerPricePhp,
-          minimumPricePhp, grossMargin, text(row[12]) || "Active", notes,
-        ]],
-      });
-    });
-
-    if (updates.length) {
-      await sheets.spreadsheets.values.batchUpdate({ spreadsheetId: SHEET_ID, requestBody: { valueInputOption: "USER_ENTERED", data: updates } });
+    const timestamp = new Date().toISOString();
+    const requests: any[] = [];
+    let updated = 0, skipped = 0;
+    for (let index = 1; index < rows.length; index++) {
+      const row = rows[index] || [];
+      if (!text(row[0]) || !text(row[1]) || !text(row[2]) ||
+          (category && text(row[3]) !== category)) continue;
+      const costUsd = moneyNumber(row[5] || 0, "Stored USD cost");
+      const fxRate = Number(row[6]) || 0;
+      const storedPhp = moneyNumber(row[7] || 0, "Stored PHP cost");
+      const costPhp = storedPhp > 0 ? storedPhp : (fxRate > 0 ? costUsd * fxRate : 0);
+      if (!Number.isFinite(costPhp) || costPhp <= 0) { skipped++; continue; }
+      const prices = [
+        roundTo(costPhp / (1 - retail / 100), rounding),
+        roundTo(costPhp / (1 - dealer / 100), rounding),
+        roundTo(costPhp / (1 - minimum / 100), rounding),
+      ];
+      if (prices.some(value => !Number.isFinite(value) || value < costPhp || value > 1_000_000_000)) {
+        throw new Error("Calculated price is outside the permitted range. No prices were changed.");
+      }
+      const margin = (prices[0] - costPhp) / prices[0];
+      const previous = [Number(row[8]) || 0, Number(row[9]) || 0, Number(row[10]) || 0];
+      if (prices.every((value, i) => Math.abs(value - previous[i]) < 0.005)) continue;
+      const notes = [text(row[13]), `${timestamp} [${actor.email}] Bulk margin: ${retail}% retail. ${note}`]
+        .filter(Boolean).join(" | ");
+      if (notes.length > 40000) throw new Error("Pricing notes are too long; no prices were changed.");
+      for (const [column,value] of [
+        [8, prices[0]], [9, prices[1]], [10, prices[2]], [11, margin], [13, notes],
+      ] as Array<[number,string|number]>) {
+        requests.push(pricingCellUpdate(ids.pricingId, index + 1, column, value));
+      }
+      requests.push(pricingAuditEvent(ids.auditId, "BULK_MARGIN", text(row[0]),
+        text(row[1]) + " / " + text(row[2]), actor.email, note,
+        { selling: previous[0], dealer: previous[1], minimum: previous[2], margin: Number(row[11]) || 0 },
+        { selling: prices[0], dealer: prices[1], minimum: prices[2], margin }, timestamp));
+      updated++;
     }
-
-    return NextResponse.json({ ok: true, updated: updates.length, marginPercent, dealerMarginPercent, minimumMarginPercent, roundingIncrement, category: category || "All" });
-  } catch (error: any) {
-    console.error("BULK MARGIN PRICING ERROR:", error);
-    return NextResponse.json({ error: error?.message || String(error) || "Failed to apply bulk margin pricing" }, { status: 500 });
+    if (requests.length) await sheets.spreadsheets.batchUpdate({
+      spreadsheetId: SHEET_ID, requestBody: { requests },
+    });
+    return NextResponse.json({
+      ok: true, updated, skipped,
+      marginPercent: retail, dealerMarginPercent: dealer, minimumMarginPercent: minimum,
+      roundingIncrement: rounding, category: category || "All",
+    });
+  } catch (error) {
+    console.error("BULK MARGIN AUDIT ERROR:", error);
+    return NextResponse.json({
+      error: error instanceof Error ? error.message : "Unable to apply bulk margins safely.",
+    }, { status: 400 });
   }
 }
