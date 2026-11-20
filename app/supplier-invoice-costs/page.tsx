@@ -132,14 +132,19 @@ export default function SupplierInvoiceCostsPage() {
           <input className="rounded-xl border border-slate-300 px-3 py-2" placeholder="Delivery Cost" type="number" step="0.01" value={form.deliveryCost} onChange={(e) => setForm({ ...form, deliveryCost: e.target.value })} />
           <input className="rounded-xl border border-slate-300 px-3 py-2" placeholder="Customs Cost" type="number" step="0.01" value={form.customsCost} onChange={(e) => setForm({ ...form, customsCost: e.target.value })} />
           <input className="rounded-xl border border-slate-300 px-3 py-2" placeholder="Other Cost" type="number" step="0.01" value={form.otherCost} onChange={(e) => setForm({ ...form, otherCost: e.target.value })} />
-          <input className="rounded-xl border border-slate-300 px-3 py-2 md:col-span-2" placeholder="Notes" value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} />
+          <label className="flex flex-col gap-1 text-xs font-semibold text-slate-600 md:col-span-2">Action note (required)
+            <textarea required minLength={8} maxLength={500} rows={2}
+              className="rounded-xl border border-slate-300 px-3 py-2 text-sm"
+              placeholder="Explain why these supplier invoice costs are being recorded"
+              value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} />
+          </label>
         </div>
 
         <div className="mt-4 flex flex-wrap items-center gap-4">
           <div className="text-sm text-slate-700">
             Total Invoice Cost: <span className="font-semibold">{totalInvoiceCost.toFixed(2)}</span>
           </div>
-          <button type="submit" disabled={saving} className="rounded-xl bg-emerald-600 px-4 py-2 text-sm font-medium text-white disabled:opacity-60">
+          <button type="submit" disabled={saving || form.notes.trim().length < 8 || form.notes.trim().length > 500} className="rounded-xl bg-emerald-600 px-4 py-2 text-sm font-medium text-white disabled:opacity-60">
             {saving ? "Saving..." : "Save Invoice Cost"}
           </button>
           {message ? <p className="text-sm text-slate-700">{message}</p> : null}

@@ -1,5 +1,7 @@
 import { NextResponse } from "next/server";
 import { google } from "googleapis";
+import { summarizeOnHand, readStockAdjustmentRows } from "@/lib/stock-adjustments";
+import { deliveryStockImpact } from "@/lib/delivery-stock";
 
 const auth = new google.auth.GoogleAuth({
   credentials: {
@@ -63,14 +65,12 @@ function buildDashboardPayload(deliveryRows: string[][], salesRows: string[][], 
 
   deliveryRows.slice(1).forEach((row) => {
     if (!row.some((cell) => text(cell))) return;
-    const qty = toNumber(row[6]);
+    const movement = deliveryStockImpact(row);
+    incomingUnits += movement.incoming;
     const status = text(row[9]).toLowerCase();
-    if (status === "incoming") incomingUnits += qty;
-    else if (status === "received") warehouseReceived += qty;
-    else if (status === "available") {
-      actualOnHand += qty;
-      sellableUnits += qty;
-    }
+    if (status === "received") warehouseReceived += movement.available;
+    actualOnHand += movement.available;
+    sellableUnits += movement.available;
   });
 
   let totalSales = 0;
@@ -110,7 +110,7 @@ async function readDashboardData() {
   const response = await sheets.spreadsheets.values.batchGet({
     spreadsheetId: SHEET_ID,
     ranges: [
-      `${DELIVERIES_SHEET}!A:L`,
+      `${DELIVERIES_SHEET}!A:M`,
       `${SALES_SHEET}!A:AJ`,
       `${EXPENSES_SHEET}!A:Z`,
       `${SUPPLIER_COSTS_SHEET}!A:L`,
@@ -121,6 +121,10 @@ async function readDashboardData() {
   const expenseRows = (response.data.valueRanges?.[2]?.values || []) as string[][];
   const supplierRows = (response.data.valueRanges?.[3]?.values || []) as string[][];
   const data = buildDashboardPayload(deliveryRows, salesRows, expenseRows, supplierRows);
+  const adjustmentRows = await readStockAdjustmentRows(sheets, SHEET_ID);
+  const correctOnHand = summarizeOnHand(deliveryRows, salesRows, adjustmentRows);
+  data.actualOnHand = correctOnHand;
+  data.sellableUnits = correctOnHand;
   readCache = { expiresAt: now + READ_CACHE_MS, data };
   return data;
 }

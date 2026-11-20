@@ -20,7 +20,7 @@ type PriceRow = {
   notes: string;
 };
 
-const CURRENT_FX_RATE = 61.5;
+const CURRENT_FX_RATE = 0; // Rates must be intentionally confirmed by an administrator.
 
 const emptyForm = {
   rowNumber: 0,
@@ -34,7 +34,7 @@ const emptyForm = {
   sellingPricePhp: 0,
   dealerPricePhp: 0,
   minimumPricePhp: 0,
-  status: "Active",
+  status: "Pending Pricing",
   notes: "",
 };
 
@@ -67,6 +67,7 @@ export default function PricingPage() {
   const [message, setMessage] = useState("Loading pricing...");
   const [saving, setSaving] = useState(false);
   const [bulkSaving, setBulkSaving] = useState(false);
+  const [actionNote, setActionNote] = useState("");
   const [fxRate, setFxRate] = useState(CURRENT_FX_RATE);
   const [bulkMargin, setBulkMargin] = useState({ marginPercent: 30, dealerMarginPercent: 20, minimumMarginPercent: 10, roundingIncrement: 10, category: "" });
 
@@ -122,6 +123,7 @@ export default function PricingPage() {
 
   function resetForm() {
     setForm(emptyForm);
+    setActionNote("");
     setMessage("");
   }
 
@@ -137,7 +139,7 @@ export default function PricingPage() {
       const res = await fetch("/api/pricing-base", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(form),
+        body: JSON.stringify({ ...form, actionNote: actionNote.trim() }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data?.error || "Failed to save pricing");
@@ -158,11 +160,12 @@ export default function PricingPage() {
       const res = await fetch("/api/pricing-base/bulk-fx", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ fxRate, category: bulkMargin.category }),
+        body: JSON.stringify({ fxRate, category: bulkMargin.category, actionNote: actionNote.trim() }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data?.error || "Failed to update FX rate");
-      setMessage(`FX rate ${fxRate} applied to ${data.updated} pricing rows. Future imports should capture the live market FX at upload time.`);
+      setMessage(`FX rate ${fxRate} applied to ${data.updated} pricing rows, each with an audit entry.`);
+      setActionNote("");
       await loadRows();
     } catch (error: any) {
       setMessage(error?.message || "Failed to update FX rate.");
@@ -178,11 +181,12 @@ export default function PricingPage() {
       const res = await fetch("/api/pricing-base/bulk-margin", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(bulkMargin),
+        body: JSON.stringify({ ...bulkMargin, actionNote: actionNote.trim() }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data?.error || "Failed to apply bulk pricing");
-      setMessage(`Bulk margin pricing applied to ${data.updated} rows. Retail margin: ${bulkMargin.marginPercent}%.`);
+      setMessage(`Bulk margin pricing applied to ${data.updated} rows; ${data.skipped || 0} unpriced rows skipped. Every change has an audit entry.`);
+      setActionNote("");
       await loadRows();
     } catch (error: any) {
       setMessage(error?.message || "Failed to apply bulk pricing.");
@@ -197,6 +201,14 @@ export default function PricingPage() {
         <p className="text-xs font-bold uppercase tracking-[0.35em] text-emerald-600">Product Pricing</p>
         <h1 className="mt-2 text-3xl font-bold tracking-tight text-slate-950">Pricing Management</h1>
         <p className="mt-2 max-w-4xl text-sm leading-6 text-slate-600">Add or update product cost and selling prices. Use bulk pricing before sales testing so every product has a valid selling price.</p>
+        <label className="mt-4 block space-y-1">
+          <span className="text-xs font-bold uppercase tracking-wide text-slate-600">Action note (required for every pricing change)</span>
+          <textarea required minLength={8} maxLength={500} rows={2} value={actionNote}
+            onChange={event => setActionNote(event.target.value)}
+            placeholder="Explain the supplier cost, FX rate or selling price change"
+            className="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm" />
+        </label>
+        <p className="mt-2 text-xs text-slate-500">The note, administrator, before/after amounts and timestamp are saved in the Audit Log. This note clears after a successful action.</p>
         {message ? <p className="mt-4 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-semibold text-slate-700">{message}</p> : null}
       </div>
 
@@ -207,9 +219,9 @@ export default function PricingPage() {
           <p className="mt-2 text-sm leading-6 text-slate-600">Use the live market rate during supplier upload. This tool updates current pricing rows before sales testing.</p>
           <div className="mt-5 grid gap-4 md:grid-cols-[1fr_auto] md:items-end">
             <label className="block space-y-1"><span className="text-xs font-bold uppercase tracking-wide text-slate-600">FX Rate</span><input className="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm" type="number" step="0.01" value={fxRate} onChange={(e) => setFxRate(Number(e.target.value))} /></label>
-            <button type="button" disabled={bulkSaving} onClick={applyFxRate} className="rounded-xl bg-emerald-600 px-5 py-3 text-sm font-bold text-white disabled:opacity-60">Apply FX Rate</button>
+            <button type="button" disabled={bulkSaving || fxRate <= 0 || actionNote.trim().length < 8 || actionNote.trim().length > 500} onClick={applyFxRate} className="rounded-xl bg-emerald-600 px-5 py-3 text-sm font-bold text-white disabled:opacity-60">Apply FX Rate</button>
           </div>
-          <p className="mt-3 text-xs font-semibold text-slate-500">Current testing rate: 61.50 PHP per 1 USD. Historical supplier uploads should keep the FX captured at upload time.</p>
+          <p className="mt-3 text-xs font-semibold text-slate-500">Enter the confirmed PHP-per-USD exchange rate. No automatic or hard-coded live rate is assumed. Historical uploads retain their recorded rate.</p>
         </div>
 
         <div className="rounded-3xl border border-blue-100 bg-white p-6 shadow-sm">
@@ -224,7 +236,7 @@ export default function PricingPage() {
           </div>
           <div className="mt-3 grid gap-3 md:grid-cols-[1fr_auto] md:items-end">
             <label className="block space-y-1"><span className="text-xs font-bold uppercase tracking-wide text-slate-600">Apply To Category</span><select className="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm" value={bulkMargin.category} onChange={(e) => setBulkMargin((p) => ({ ...p, category: e.target.value }))}><option value="">All Products</option>{categories.map((cat) => <option key={cat} value={cat}>{cat}</option>)}</select></label>
-            <button type="button" disabled={bulkSaving} onClick={applyBulkMargin} className="rounded-xl bg-blue-600 px-5 py-3 text-sm font-bold text-white disabled:opacity-60">Apply Bulk Pricing</button>
+            <button type="button" disabled={bulkSaving || actionNote.trim().length < 8 || actionNote.trim().length > 500} onClick={applyBulkMargin} className="rounded-xl bg-blue-600 px-5 py-3 text-sm font-bold text-white disabled:opacity-60">Apply Bulk Pricing</button>
           </div>
           <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-50 p-4 text-sm"><p className="font-semibold text-slate-500">Preview</p><p className="mt-1 font-bold text-slate-950">Sample Cost {money(bulkPreviewCost)} → Retail Sell {money(bulkPreviewSell)}</p></div>
         </div>
@@ -235,7 +247,7 @@ export default function PricingPage() {
           <h2 className="text-xl font-bold text-slate-950">{form.rowNumber ? "Update Price" : "Add Price"}</h2>
           <p className="mt-2 text-sm leading-6 text-slate-600">Use this when one product needs special pricing.</p>
           <div className="mt-5 space-y-4">
-            <label className="block space-y-1"><span className="text-xs font-bold uppercase tracking-wide text-slate-600">Item ID</span><input className="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm" value={form.itemId} onChange={(e) => updateField("itemId", e.target.value)} placeholder="Auto or product code" /></label>
+            <label className="block space-y-1"><span className="text-xs font-bold uppercase tracking-wide text-slate-600">Item ID</span><input disabled={form.rowNumber > 0} className="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm disabled:bg-slate-100" value={form.itemId} onChange={(e) => updateField("itemId", e.target.value)} placeholder="Auto or product code" /></label>
             <label className="block space-y-1"><span className="text-xs font-bold uppercase tracking-wide text-slate-600">Description</span><input className="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm" value={form.description} onChange={(e) => updateField("description", e.target.value)} required /></label>
             <label className="block space-y-1"><span className="text-xs font-bold uppercase tracking-wide text-slate-600">Specification</span><input className="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm" value={form.specification} onChange={(e) => updateField("specification", e.target.value)} required /></label>
             <div className="grid grid-cols-2 gap-3"><label className="block space-y-1"><span className="text-xs font-bold uppercase tracking-wide text-slate-600">Category</span><input className="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm" value={form.category} onChange={(e) => updateField("category", e.target.value)} /></label><label className="block space-y-1"><span className="text-xs font-bold uppercase tracking-wide text-slate-600">Unit</span><input className="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm" value={form.unit} onChange={(e) => updateField("unit", e.target.value)} /></label></div>
@@ -244,9 +256,9 @@ export default function PricingPage() {
             <label className="block space-y-1"><span className="text-xs font-bold uppercase tracking-wide text-slate-600">Selling Price PHP</span><input className="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm" type="number" step="0.01" value={form.sellingPricePhp} onChange={(e) => updateField("sellingPricePhp", Number(e.target.value))} /></label>
             <div className="grid grid-cols-2 gap-3"><label className="block space-y-1"><span className="text-xs font-bold uppercase tracking-wide text-slate-600">Dealer Price</span><input className="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm" type="number" step="0.01" value={form.dealerPricePhp} onChange={(e) => updateField("dealerPricePhp", Number(e.target.value))} /></label><label className="block space-y-1"><span className="text-xs font-bold uppercase tracking-wide text-slate-600">Minimum Price</span><input className="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm" type="number" step="0.01" value={form.minimumPricePhp} onChange={(e) => updateField("minimumPricePhp", Number(e.target.value))} /></label></div>
             <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 text-sm"><p className="font-semibold text-slate-500">Gross Margin Preview</p><p className="mt-1 text-2xl font-bold text-slate-950">{percent(grossMargin)}</p></div>
-            <label className="block space-y-1"><span className="text-xs font-bold uppercase tracking-wide text-slate-600">Status</span><select className="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm" value={form.status} onChange={(e) => updateField("status", e.target.value)}><option>Active</option><option>Inactive</option></select></label>
-            <label className="block space-y-1"><span className="text-xs font-bold uppercase tracking-wide text-slate-600">Notes / Reason</span><textarea className="min-h-24 w-full rounded-xl border border-slate-300 px-3 py-2 text-sm" value={form.notes} onChange={(e) => updateField("notes", e.target.value)} /></label>
-            <div className="flex gap-3"><button type="submit" disabled={saving} className="rounded-xl bg-emerald-600 px-5 py-3 text-sm font-bold text-white disabled:opacity-60">{saving ? "Saving..." : form.rowNumber ? "Update Price" : "Add Price"}</button><button type="button" onClick={resetForm} className="rounded-xl border border-slate-300 px-5 py-3 text-sm font-bold text-slate-700">Clear</button></div>
+            <label className="block space-y-1"><span className="text-xs font-bold uppercase tracking-wide text-slate-600">Status</span><select className="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm" value={form.status} onChange={(e) => updateField("status", e.target.value)}><option>Active</option><option>Inactive</option><option>Pending Pricing</option></select></label>
+            <label className="block space-y-1"><span className="text-xs font-bold uppercase tracking-wide text-slate-600">Product Notes (optional)</span><textarea className="min-h-24 w-full rounded-xl border border-slate-300 px-3 py-2 text-sm" value={form.notes} onChange={(e) => updateField("notes", e.target.value)} /></label>
+            <div className="flex gap-3"><button type="submit" disabled={saving || actionNote.trim().length < 8 || actionNote.trim().length > 500} className="rounded-xl bg-emerald-600 px-5 py-3 text-sm font-bold text-white disabled:opacity-60">{saving ? "Saving..." : form.rowNumber ? "Update Price" : "Add Price"}</button><button type="button" onClick={resetForm} className="rounded-xl border border-slate-300 px-5 py-3 text-sm font-bold text-slate-700">Clear</button></div>
           </div>
         </form>
 

@@ -1,8 +1,7 @@
 import { NextResponse } from "next/server";
+import { readSession } from "@/lib/session";
 
 const COOKIE_NAME = "realights_session";
-const EMAIL_COOKIE_NAME = "realights_session_email";
-const SESSION_VALUE = "active";
 
 type AdminProfile = {
   name: string;
@@ -69,12 +68,12 @@ function profileForEmail(email: string): AdminProfile {
 
 export async function GET(req: Request) {
   const cookieHeader = req.headers.get("cookie") || "";
-  const session = readCookie(cookieHeader, COOKIE_NAME);
+  const session = await readSession(readCookie(cookieHeader, COOKIE_NAME));
 
-  if (session !== SESSION_VALUE) {
+  if (!session) {
     return NextResponse.json({ error: "Not signed in" }, { status: 401 });
   }
 
-  const email = readCookie(cookieHeader, EMAIL_COOKIE_NAME);
+  const email = session.email;
   return NextResponse.json({ profile: profileForEmail(email) });
 }

@@ -1,5 +1,7 @@
 import AccountingAuditPanel from "@/components/ai/AccountingAuditPanel";
 import AgentTestPanel from "@/components/ai/AgentTestPanel";
+import InventoryWatchPanel from "@/components/ai/InventoryWatchPanel";
+import DeliveryWatchPanel from "@/components/ai/DeliveryWatchPanel";
 
 const safeguards = [
   { label: "System Mode", value: "SAFE", helper: "Agents can observe, report, and recommend only." },
@@ -25,7 +27,7 @@ export default function AIAgentsPage() {
           <div>
             <h1 className="text-3xl font-bold tracking-tight text-slate-950">AI Agents</h1>
             <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-600">
-              Manage and test Realights AI agents in safe mode. Agents are active for monitoring, audit, QA, and recommendations. Production write actions remain disabled.
+              Manage and test Realights AI agents in safe mode. Agent definitions provide read-only audits, QA, and recommendations; live checks run when requested. Production write actions remain disabled for these agents.
             </p>
           </div>
           <div className="rounded-2xl border border-emerald-100 bg-emerald-50 px-5 py-3 text-sm font-bold text-emerald-700">
@@ -45,6 +47,8 @@ export default function AIAgentsPage() {
       </div>
 
       <AccountingAuditPanel />
+      <InventoryWatchPanel />
+      <DeliveryWatchPanel />
 
       <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
         <h2 className="text-xl font-bold text-slate-950">Recommended Admin Actions</h2>

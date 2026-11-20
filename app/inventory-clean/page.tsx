@@ -1,10 +1,12 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type FormEvent } from "react";
+import QuantityDeltaInput, { proposedAdjustment, type AdjustmentMode } from "@/components/inventory/QuantityDeltaInput";
+import InventoryVisibilityDialog from "@/components/inventory/InventoryVisibilityDialog";
 
-type InventoryRow = Record<string, string | number>;
-type InventoryStatus = "In Stock" | "Low Stock" | "Incoming" | "Out of Stock";
+type InventoryRow = Record<string, string | number | boolean>;
+type InventoryStatus = "In Stock" | "Low Stock" | "Incoming" | "Out of Stock" | "Archived";
 
 const LOW_STOCK_THRESHOLD = 10;
 
@@ -17,6 +19,7 @@ function rowKey(row: InventoryRow) {
 }
 
 function getStatus(row: InventoryRow): InventoryStatus {
+  if (row["Is Archived"] === true) return "Archived";
   const actualOnHand = qty(row, "Actual On Hand");
   const sellable = qty(row, "Sellable Qty");
   const incoming = qty(row, "Incoming Qty");
@@ -35,6 +38,7 @@ function StatusBadge({ status }: { status: InventoryStatus }) {
     "Low Stock": "bg-amber-50 text-amber-700",
     Incoming: "bg-blue-50 text-blue-700",
     "Out of Stock": "bg-rose-50 text-rose-700",
+    Archived: "bg-slate-100 text-slate-600",
   }[status];
 
   return <span className={`rounded-full px-3 py-1 text-xs font-bold ${className}`}>{status}</span>;
@@ -54,12 +58,66 @@ export default function InventoryCleanPage() {
   const [rows, setRows] = useState<InventoryRow[]>([]);
   const [message, setMessage] = useState("Loading inventory...");
   const [search, setSearch] = useState("");
+
   const [statusFilter, setStatusFilter] = useState("All");
+  const [adjusting, setAdjusting] = useState<InventoryRow | null>(null);
+  const [targetQty, setTargetQty] = useState("");
+  const [adjustmentMode, setAdjustmentMode] = useState<AdjustmentMode>("delta");
+  const [visibilityTarget, setVisibilityTarget] = useState<InventoryRow | null>(null);
+  const [reason, setReason] = useState("");
+  const [adminCode, setAdminCode] = useState("");
+  const [adjustmentError, setAdjustmentError] = useState("");
+  const [adjustmentMessage, setAdjustmentMessage] = useState("");
+  const [savingAdjustment, setSavingAdjustment] = useState(false);
+
+  function startAdjustment(item: InventoryRow) {
+    setAdjusting(item);
+    setTargetQty("");
+    setAdjustmentMode("delta");
+    setReason("");
+    setAdminCode("");
+    setAdjustmentError("");
+    setAdjustmentMessage("");
+  }
+
+  async function submitAdjustment(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!adjusting || savingAdjustment) return;
+    const preview = proposedAdjustment(qty(adjusting, "Actual On Hand"), adjustmentMode, targetQty);
+    if (!preview) { setAdjustmentError("Enter a valid signed change, such as -4 or +5."); return; }
+    setSavingAdjustment(true);
+    setAdjustmentError("");
+    setAdjustmentMessage("");
+    try {
+      const response = await fetch("/api/inventory/adjustments", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          description: String(adjusting["Description"] || ""),
+          specification: String(adjusting["Specification"] || ""),
+          expectedQty: qty(adjusting, "Actual On Hand"),
+          mode: adjustmentMode,
+          ...(adjustmentMode === "delta" ? { deltaQty: preview.delta } : { targetQty: preview.target }),
+          reason, adminCode,
+        }),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data?.error || "Unable to adjust inventory.");
+      setAdjustmentMessage("Stock corrected from " + data.beforeQty + " to " + data.afterQty + " units.");
+      setAdjusting(null);
+      setAdminCode("");
+      await loadRows();
+    } catch (error: any) {
+      setAdjustmentError(error?.message || "Unable to adjust inventory.");
+    } finally {
+      setSavingAdjustment(false);
+    }
+  }
 
   async function loadRows() {
     setMessage("Loading inventory...");
     try {
-      const res = await fetch("/api/inventory", { cache: "no-store" });
+      const res = await fetch("/api/inventory?includeArchived=1", { cache: "no-store" });
       const data = await res.json();
       if (!res.ok) throw new Error(data?.error || "Failed to load inventory");
       setRows(Array.isArray(data) ? data : []);
@@ -73,20 +131,21 @@ export default function InventoryCleanPage() {
     loadRows().catch(console.error);
   }, []);
 
+  const activeRows = useMemo(() => rows.filter(row => row["Is Archived"] !== true || qty(row, "Actual On Hand") > 0 || qty(row, "Incoming Qty") > 0), [rows]);
   const summary = useMemo(() => ({
-    skus: rows.length,
-    onHand: rows.reduce((sum, row) => sum + qty(row, "Actual On Hand"), 0),
-    sellable: rows.reduce((sum, row) => sum + qty(row, "Sellable Qty"), 0),
-    damaged: rows.reduce((sum, row) => sum + qty(row, "Damaged Qty"), 0),
-    incoming: rows.reduce((sum, row) => sum + qty(row, "Incoming Qty"), 0),
-    lowStock: rows.filter((row) => ["Low Stock", "Out of Stock"].includes(getStatus(row))).length,
-  }), [rows]);
+    skus: activeRows.length,
+    onHand: activeRows.reduce((sum, row) => sum + qty(row, "Actual On Hand"), 0),
+    sellable: activeRows.reduce((sum, row) => sum + qty(row, "Sellable Qty"), 0),
+    damaged: activeRows.reduce((sum, row) => sum + qty(row, "Damaged Qty"), 0),
+    incoming: activeRows.reduce((sum, row) => sum + qty(row, "Incoming Qty"), 0),
+    lowStock: activeRows.filter((row) => ["Low Stock", "Out of Stock"].includes(getStatus(row))).length,
+  }), [activeRows]);
 
   const filteredRows = useMemo(() => {
     const query = search.trim().toLowerCase();
     return [...rows]
       .sort((a, b) => {
-        const rank: Record<InventoryStatus, number> = { "Out of Stock": 0, "Low Stock": 1, Incoming: 2, "In Stock": 3 };
+        const rank: Record<InventoryStatus, number> = { "Out of Stock": 0, "Low Stock": 1, Incoming: 2, "In Stock": 3, Archived: 4 };
         const statusDiff = rank[getStatus(a)] - rank[getStatus(b)];
         if (statusDiff !== 0) return statusDiff;
         return `${String(a["Description"] || "")} ${String(a["Specification"] || "")}`.localeCompare(`${String(b["Description"] || "")} ${String(b["Specification"] || "")}`);
@@ -94,11 +153,13 @@ export default function InventoryCleanPage() {
       .filter((row) => {
         const status = getStatus(row);
         const text = `${String(row["Description"] || "")} ${String(row["Specification"] || "")}`.toLowerCase();
-        return (statusFilter === "All" || status === statusFilter) && (!query || text.includes(query));
+        return (statusFilter === "Archived" ? row["Is Archived"] === true :
+          (row["Is Archived"] !== true || qty(row, "Actual On Hand") > 0 || qty(row, "Incoming Qty") > 0) &&
+          (statusFilter === "All" || status === statusFilter)) && (!query || text.includes(query));
       });
   }, [rows, search, statusFilter]);
 
-  const attentionRows = useMemo(() => rows.filter((row) => ["Low Stock", "Out of Stock", "Incoming"].includes(getStatus(row))).slice(0, 6), [rows]);
+  const attentionRows = useMemo(() => activeRows.filter((row) => ["Low Stock", "Out of Stock", "Incoming"].includes(getStatus(row))).slice(0, 6), [activeRows]);
 
   return (
     <section className="w-full space-y-6">
@@ -108,9 +169,10 @@ export default function InventoryCleanPage() {
             <p className="text-xs font-bold uppercase tracking-[0.35em] text-emerald-600">Clean Stock Dashboard</p>
             <h1 className="mt-2 text-4xl font-bold tracking-tight text-slate-950">Inventory</h1>
             <p className="mt-2 max-w-4xl text-sm leading-6 text-slate-600">
-              Read-only stock view. Available means received and ready to sell. Incoming and receiving dates are managed from Incoming Deliveries only.
+              Stock overview with admin-controlled quantity corrections. Original deliveries and confirmed sales stay unchanged; every correction is recorded in Stock Adjustments and Audit Log.
             </p>
             {message ? <p className="mt-3 text-sm font-semibold text-slate-600">{message}</p> : null}
+            {adjustmentMessage ? <p role="status" className="mt-3 text-sm font-semibold text-emerald-700">{adjustmentMessage}</p> : null}
           </div>
           <div className="flex flex-wrap gap-3">
             <button type="button" onClick={loadRows} className="rounded-xl border border-slate-300 px-4 py-2 text-sm font-bold text-slate-700">Refresh</button>
@@ -139,6 +201,7 @@ export default function InventoryCleanPage() {
                 <option>Low Stock</option>
                 <option>Incoming</option>
                 <option>Out of Stock</option>
+                <option>Archived</option>
               </select>
             </div>
           </div>
@@ -154,6 +217,7 @@ export default function InventoryCleanPage() {
                   <th className="px-5 py-4 font-semibold">Sellable</th>
                   <th className="px-5 py-4 font-semibold">Damaged</th>
                   <th className="px-5 py-4 font-semibold">Incoming</th>
+                  <th className="px-5 py-4 font-semibold">Adjustment</th>
                 </tr>
               </thead>
               <tbody>
@@ -166,9 +230,13 @@ export default function InventoryCleanPage() {
                     <td className="px-5 py-4 font-bold text-slate-950">{qty(row, "Sellable Qty")}</td>
                     <td className="px-5 py-4 font-bold text-rose-600">{qty(row, "Damaged Qty")}</td>
                     <td className="px-5 py-4 font-bold text-blue-600">{qty(row, "Incoming Qty")}</td>
+                    <td className="px-5 py-4"><div className="flex flex-wrap gap-2">
+                      {row["Is Archived"] !== true ? <button type="button" onClick={() => startAdjustment(row)} className="rounded-xl border border-emerald-300 px-3 py-2 text-xs font-bold text-emerald-700 hover:bg-emerald-50">Adjust Qty</button> : null}
+                      <button type="button" onClick={() => setVisibilityTarget(row)} className="rounded-xl border border-slate-300 px-3 py-2 text-xs font-bold text-slate-700 hover:bg-slate-50">{row["Is Archived"] === true ? "Restore" : "Archive"}</button>
+                    </div></td>
                   </tr>
                 ))}
-                {!filteredRows.length ? <tr><td colSpan={7} className="px-5 py-12 text-center text-slate-500">No inventory rows found.</td></tr> : null}
+                {!filteredRows.length ? <tr><td colSpan={8} className="px-5 py-12 text-center text-slate-500">No inventory rows found.</td></tr> : null}
               </tbody>
             </table>
           </div>
@@ -198,6 +266,31 @@ export default function InventoryCleanPage() {
           </div>
         </aside>
       </div>
+
+      {visibilityTarget ? <InventoryVisibilityDialog item={visibilityTarget} onClose={() => setVisibilityTarget(null)} onSuccess={msg => { setVisibilityTarget(null); setAdjustmentMessage(msg); void loadRows(); }} /> : null}
+      {adjusting ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-slate-950/60 p-4">
+          <form onSubmit={submitAdjustment} className="w-full max-w-lg space-y-4 rounded-3xl bg-white p-6 shadow-2xl" aria-label="Adjust inventory quantity">
+            <div>
+              <h2 className="text-xl font-bold text-slate-950">Adjust Inventory Quantity</h2>
+              <p className="mt-1 text-sm text-slate-600">{String(adjusting["Description"] || "")} / {String(adjusting["Specification"] || "")}</p>
+              <p className="mt-2 text-sm font-semibold text-slate-700">Current on hand: {qty(adjusting, "Actual On Hand").toLocaleString()} units</p>
+            </div>
+            <QuantityDeltaInput current={qty(adjusting, "Actual On Hand")} mode={adjustmentMode} setMode={setAdjustmentMode} value={targetQty} setValue={setTargetQty} />
+            <label className="block text-sm font-semibold text-slate-700">Reason for adjustment
+              <textarea required minLength={8} maxLength={250} rows={3} value={reason} onChange={e => setReason(e.target.value)} placeholder="e.g. Physical warehouse count correction" className="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2" />
+            </label>
+            <label className="block text-sm font-semibold text-slate-700">Admin access code
+              <input type="password" required autoComplete="off" value={adminCode} onChange={e => setAdminCode(e.target.value)} className="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2" />
+            </label>
+            {adjustmentError ? <p role="alert" className="text-sm font-semibold text-rose-700">{adjustmentError}</p> : null}
+            <div className="flex justify-end gap-3">
+              <button type="button" disabled={savingAdjustment} onClick={() => { setAdjusting(null); setAdminCode(""); }} className="rounded-xl border border-slate-300 px-4 py-2 text-sm font-semibold">Cancel</button>
+              <button type="submit" disabled={savingAdjustment || !proposedAdjustment(qty(adjusting, "Actual On Hand"), adjustmentMode, targetQty)} className="rounded-xl bg-emerald-600 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50">{savingAdjustment ? "Saving..." : "Confirm Adjustment"}</button>
+            </div>
+          </form>
+        </div>
+      ) : null}
     </section>
   );
 }

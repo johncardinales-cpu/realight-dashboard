@@ -1,9 +1,11 @@
 import { NextResponse } from "next/server";
 import { getSheetsClient, SHEET_ID } from "@/lib/sheets";
+import { adjustmentDeltas, readStockAdjustmentRows } from "@/lib/stock-adjustments";
+import { deliveryStockImpact } from "@/lib/delivery-stock";
 
 const SALES = "Sales!A:AJ";
 const PAYMENTS = "Payments!A:O";
-const INVENTORY = "App_Deliveries!A:L";
+const INVENTORY = "App_Deliveries!A:M";
 const EXPENSES = "Expenses!A:Z";
 const CREDITS = "Customer_Credits!A:L";
 
@@ -46,8 +48,11 @@ function statusFrom(total: number, paid: number) {
 async function readRanges() {
   const sheets = await getSheetsClient();
   const ranges = [SALES, PAYMENTS, INVENTORY, EXPENSES, CREDITS];
-  const res = await sheets.spreadsheets.values.batchGet({ spreadsheetId: SHEET_ID, ranges });
-  return ranges.map((_, index) => (res.data.valueRanges?.[index]?.values || []) as string[][]);
+  const [res, adjustments] = await Promise.all([
+    sheets.spreadsheets.values.batchGet({ spreadsheetId: SHEET_ID, ranges }),
+    readStockAdjustmentRows(sheets, SHEET_ID),
+  ]);
+  return [...ranges.map((_, index) => (res.data.valueRanges?.[index]?.values || []) as string[][]), adjustments];
 }
 
 function keysForPayment(row: string[]) {
@@ -167,20 +172,24 @@ function parseExpenses(rows: string[][]) {
   }).filter((row) => row.date || row.amount > 0);
 }
 
-function inventoryAudit(salesRows: string[][], inventoryRows: string[][]) {
+function inventoryAudit(salesRows: string[][], inventoryRows: string[][], adjustmentRows: string[][]) {
   const stock = new Map<string, any>();
   inventoryRows.slice(1).forEach((row) => {
     const description = txt(row[4]);
     const specification = txt(row[5]);
-    const qty = num(row[6]);
-    const status = norm(row[9]);
+    const movement = deliveryStockImpact(row);
     if (!description && !specification) return;
     const key = `${description}|||${specification}`;
     const current = stock.get(key) || { description, specification, availableQty: 0, damagedQty: 0 };
-    if (status === "available") current.availableQty += qty;
-    if (["damaged", "damage", "defective"].includes(status)) current.damagedQty += qty;
+    current.availableQty += movement.available;
+    current.damagedQty += movement.damaged;
     stock.set(key, current);
   });
+
+  for (const [key, delta] of adjustmentDeltas(adjustmentRows)) {
+    const item = stock.get(key);
+    if (item) item.availableQty += delta;
+  }
 
   const sold = new Map<string, number>();
   salesRows.slice(1).forEach((row) => {
@@ -195,18 +204,18 @@ function inventoryAudit(salesRows: string[][], inventoryRows: string[][]) {
 
   return Array.from(stock.entries()).map(([key, item]) => {
     const soldQty = sold.get(key) || 0;
-    const remainingQty = round(Math.max(item.availableQty - item.damagedQty - soldQty, 0));
-    return { ...item, soldQty, remainingQty, status: soldQty > item.availableQty - item.damagedQty ? "Critical" : "Balanced" };
+    const remainingQty = round(Math.max(item.availableQty - soldQty, 0));
+    return { ...item, soldQty, remainingQty, status: soldQty > item.availableQty ? "Critical" : "Balanced" };
   }).sort((a, b) => b.soldQty - a.soldQty);
 }
 
 export async function GET() {
   try {
-    const [salesRows, paymentRows, inventoryRows, expenseRows, creditRows] = await readRanges();
+    const [salesRows, paymentRows, inventoryRows, expenseRows, creditRows, adjustmentRows] = await readRanges();
     const sales = parseSales(salesRows, paymentRows);
     const credits = parseCredits(creditRows);
     const expenses = parseExpenses(expenseRows);
-    const inventory = inventoryAudit(salesRows, inventoryRows);
+    const inventory = inventoryAudit(salesRows, inventoryRows, adjustmentRows);
 
     const issues: Array<{ severity: "critical" | "warning" | "info"; area: string; record: string; message: string; expected?: string; actual?: string }> = [];
 
@@ -224,7 +233,7 @@ export async function GET() {
     });
 
     inventory.filter((item) => item.status === "Critical").forEach((item) => {
-      issues.push({ severity: "critical", area: "Inventory", record: `${item.description} / ${item.specification}`, message: "Confirmed sold quantity is higher than available inventory.", expected: `${item.availableQty - item.damagedQty} available`, actual: `${item.soldQty} sold` });
+      issues.push({ severity: "critical", area: "Inventory", record: `${item.description} / ${item.specification}`, message: "Confirmed sold quantity is higher than available inventory.", expected: `${item.availableQty} available`, actual: `${item.soldQty} sold` });
     });
 
     expenses.filter((expense) => expense.balanceAmount > 0 && !["installment", "pending"].includes(norm(expense.status))).forEach((expense) => {
