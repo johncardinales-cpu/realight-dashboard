@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { google } from "googleapis";
+import { readStockAdjustmentRows } from "@/lib/stock-adjustments";
 
 const SHEET_ID = process.env.GOOGLE_SHEET_ID as string;
 const DELIVERIES_SHEET = "App_Deliveries";
@@ -53,9 +54,10 @@ function movementQtyForDelivery(status: string, qty: number) {
 export async function GET() {
   try {
     const sheets = google.sheets({ version: "v4", auth });
-    const [deliveryRows, salesRows] = await Promise.all([
+    const [deliveryRows, salesRows, adjustmentRows] = await Promise.all([
       readRange(sheets, `${DELIVERIES_SHEET}!A:L`),
       readRange(sheets, `${SALES_SHEET}!A:AH`),
+      readStockAdjustmentRows(sheets, SHEET_ID),
     ]);
 
     const events: any[] = [];
@@ -149,6 +151,20 @@ export async function GET() {
         invoiceValid: "",
         notes: `Inventory deducted from confirmed sale for ${customerName}.`,
         createdAt: text(row[24]),
+      });
+    });
+
+    adjustmentRows.slice(1).forEach((row) => {
+      if (!text(row[0])) return;
+      const delta = toNumber(row[5]);
+      events.push({
+        id: text(row[0]), date: normalizeDate(row[1]), type: "Stock Adjustment",
+        source: "Stock_Adjustments", reference: text(row[9]) || text(row[0]),
+        supplier: "", description: text(row[2]), specification: text(row[3]),
+        qtyIn: Math.max(delta, 0), qtyOut: Math.max(-delta, 0),
+        status: "Adjusted", movementQty: delta, runningQty: 0,
+        unitCostUsd: 0, invoiceValid: "", notes: `${text(row[7])} (by ${text(row[8])})`,
+        createdAt: text(row[1]),
       });
     });
 

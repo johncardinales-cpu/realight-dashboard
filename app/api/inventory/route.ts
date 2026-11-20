@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { google } from "googleapis";
+import { adjustmentDeltas, readStockAdjustmentRows } from "@/lib/stock-adjustments";
 
 const SHEET_ID = process.env.GOOGLE_SHEET_ID as string;
 const INVENTORY_SHEET = "App_Deliveries";
@@ -128,9 +129,10 @@ export async function GET() {
   try {
     const sheets = getSheetsClient();
 
-    const [deliveryResponse, salesResponse] = await Promise.all([
+    const [deliveryResponse, salesResponse, adjustmentRows] = await Promise.all([
       sheets.spreadsheets.values.get({ spreadsheetId: SHEET_ID, range: `${INVENTORY_SHEET}!A:L` }),
       sheets.spreadsheets.values.get({ spreadsheetId: SHEET_ID, range: `${SALES_SHEET}!A:Y` }),
+      readStockAdjustmentRows(sheets, SHEET_ID),
     ]);
 
     const deliveryRows = (deliveryResponse.data.values || []) as SheetRow[];
@@ -139,6 +141,12 @@ export async function GET() {
 
     applyDeliveryRows(grouped, deliveryRows);
     applyConfirmedSalesRows(grouped, salesRows);
+    for (const [key, delta] of adjustmentDeltas(adjustmentRows)) {
+      const item = grouped.get(key);
+      if (!item) continue;
+      item["Actual On Hand"] += delta;
+      item["Sellable Qty"] += delta;
+    }
 
     const normalized = Array.from(grouped.values()).map((item) => ({
       ...item,

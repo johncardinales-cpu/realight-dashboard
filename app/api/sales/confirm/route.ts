@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { getSheetsClient, SHEET_ID } from "@/lib/sheets";
+import { adjustmentDeltas, readStockAdjustmentRows } from "@/lib/stock-adjustments";
 
 const SALES_SHEET = "Sales";
 const INVENTORY_SHEET = "App_Deliveries";
@@ -136,6 +137,9 @@ async function getAvailableStockMap(sheets: any) {
     else if (["damaged", "defective", "damage"].includes(status)) map.set(key, current - qty);
   });
 
+  for (const [key, delta] of adjustmentDeltas(await readStockAdjustmentRows(sheets, SHEET_ID))) {
+    map.set(key, (map.get(key) || 0) + delta);
+  }
   return map;
 }
 

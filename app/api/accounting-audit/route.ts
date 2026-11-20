@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { getSheetsClient, SHEET_ID } from "@/lib/sheets";
+import { adjustmentDeltas, readStockAdjustmentRows } from "@/lib/stock-adjustments";
 
 const SALES = "Sales!A:AJ";
 const PAYMENTS = "Payments!A:O";
@@ -46,8 +47,11 @@ function statusFrom(total: number, paid: number) {
 async function readRanges() {
   const sheets = await getSheetsClient();
   const ranges = [SALES, PAYMENTS, INVENTORY, EXPENSES, CREDITS];
-  const res = await sheets.spreadsheets.values.batchGet({ spreadsheetId: SHEET_ID, ranges });
-  return ranges.map((_, index) => (res.data.valueRanges?.[index]?.values || []) as string[][]);
+  const [res, adjustments] = await Promise.all([
+    sheets.spreadsheets.values.batchGet({ spreadsheetId: SHEET_ID, ranges }),
+    readStockAdjustmentRows(sheets, SHEET_ID),
+  ]);
+  return [...ranges.map((_, index) => (res.data.valueRanges?.[index]?.values || []) as string[][]), adjustments];
 }
 
 function keysForPayment(row: string[]) {
@@ -167,7 +171,7 @@ function parseExpenses(rows: string[][]) {
   }).filter((row) => row.date || row.amount > 0);
 }
 
-function inventoryAudit(salesRows: string[][], inventoryRows: string[][]) {
+function inventoryAudit(salesRows: string[][], inventoryRows: string[][], adjustmentRows: string[][]) {
   const stock = new Map<string, any>();
   inventoryRows.slice(1).forEach((row) => {
     const description = txt(row[4]);
@@ -181,6 +185,11 @@ function inventoryAudit(salesRows: string[][], inventoryRows: string[][]) {
     if (["damaged", "damage", "defective"].includes(status)) current.damagedQty += qty;
     stock.set(key, current);
   });
+
+  for (const [key, delta] of adjustmentDeltas(adjustmentRows)) {
+    const item = stock.get(key);
+    if (item) item.availableQty += delta;
+  }
 
   const sold = new Map<string, number>();
   salesRows.slice(1).forEach((row) => {
@@ -202,11 +211,11 @@ function inventoryAudit(salesRows: string[][], inventoryRows: string[][]) {
 
 export async function GET() {
   try {
-    const [salesRows, paymentRows, inventoryRows, expenseRows, creditRows] = await readRanges();
+    const [salesRows, paymentRows, inventoryRows, expenseRows, creditRows, adjustmentRows] = await readRanges();
     const sales = parseSales(salesRows, paymentRows);
     const credits = parseCredits(creditRows);
     const expenses = parseExpenses(expenseRows);
-    const inventory = inventoryAudit(salesRows, inventoryRows);
+    const inventory = inventoryAudit(salesRows, inventoryRows, adjustmentRows);
 
     const issues: Array<{ severity: "critical" | "warning" | "info"; area: string; record: string; message: string; expected?: string; actual?: string }> = [];
 

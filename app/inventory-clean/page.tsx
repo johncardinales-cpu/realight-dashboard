@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type FormEvent } from "react";
 
 type InventoryRow = Record<string, string | number>;
 type InventoryStatus = "In Stock" | "Low Stock" | "Incoming" | "Out of Stock";
@@ -54,7 +54,55 @@ export default function InventoryCleanPage() {
   const [rows, setRows] = useState<InventoryRow[]>([]);
   const [message, setMessage] = useState("Loading inventory...");
   const [search, setSearch] = useState("");
+
   const [statusFilter, setStatusFilter] = useState("All");
+  const [adjusting, setAdjusting] = useState<InventoryRow | null>(null);
+  const [targetQty, setTargetQty] = useState("");
+  const [reason, setReason] = useState("");
+  const [adminCode, setAdminCode] = useState("");
+  const [adjustmentError, setAdjustmentError] = useState("");
+  const [adjustmentMessage, setAdjustmentMessage] = useState("");
+  const [savingAdjustment, setSavingAdjustment] = useState(false);
+
+  function startAdjustment(item: InventoryRow) {
+    setAdjusting(item);
+    setTargetQty(String(qty(item, "Actual On Hand")));
+    setReason("");
+    setAdminCode("");
+    setAdjustmentError("");
+    setAdjustmentMessage("");
+  }
+
+  async function submitAdjustment(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!adjusting || savingAdjustment) return;
+    setSavingAdjustment(true);
+    setAdjustmentError("");
+    setAdjustmentMessage("");
+    try {
+      const response = await fetch("/api/inventory/adjustments", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          description: String(adjusting["Description"] || ""),
+          specification: String(adjusting["Specification"] || ""),
+          expectedQty: qty(adjusting, "Actual On Hand"),
+          targetQty: Number(targetQty),
+          reason, adminCode,
+        }),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data?.error || "Unable to adjust inventory.");
+      setAdjustmentMessage("Stock corrected from " + data.beforeQty + " to " + data.afterQty + " units.");
+      setAdjusting(null);
+      setAdminCode("");
+      await loadRows();
+    } catch (error: any) {
+      setAdjustmentError(error?.message || "Unable to adjust inventory.");
+    } finally {
+      setSavingAdjustment(false);
+    }
+  }
 
   async function loadRows() {
     setMessage("Loading inventory...");
@@ -108,9 +156,10 @@ export default function InventoryCleanPage() {
             <p className="text-xs font-bold uppercase tracking-[0.35em] text-emerald-600">Clean Stock Dashboard</p>
             <h1 className="mt-2 text-4xl font-bold tracking-tight text-slate-950">Inventory</h1>
             <p className="mt-2 max-w-4xl text-sm leading-6 text-slate-600">
-              Read-only stock view. Available means received and ready to sell. Incoming and receiving dates are managed from Incoming Deliveries only.
+              Stock overview with admin-controlled quantity corrections. Original deliveries and confirmed sales stay unchanged; every correction is recorded in Stock Adjustments and Audit Log.
             </p>
             {message ? <p className="mt-3 text-sm font-semibold text-slate-600">{message}</p> : null}
+            {adjustmentMessage ? <p role="status" className="mt-3 text-sm font-semibold text-emerald-700">{adjustmentMessage}</p> : null}
           </div>
           <div className="flex flex-wrap gap-3">
             <button type="button" onClick={loadRows} className="rounded-xl border border-slate-300 px-4 py-2 text-sm font-bold text-slate-700">Refresh</button>
@@ -154,6 +203,7 @@ export default function InventoryCleanPage() {
                   <th className="px-5 py-4 font-semibold">Sellable</th>
                   <th className="px-5 py-4 font-semibold">Damaged</th>
                   <th className="px-5 py-4 font-semibold">Incoming</th>
+                  <th className="px-5 py-4 font-semibold">Adjustment</th>
                 </tr>
               </thead>
               <tbody>
@@ -166,9 +216,10 @@ export default function InventoryCleanPage() {
                     <td className="px-5 py-4 font-bold text-slate-950">{qty(row, "Sellable Qty")}</td>
                     <td className="px-5 py-4 font-bold text-rose-600">{qty(row, "Damaged Qty")}</td>
                     <td className="px-5 py-4 font-bold text-blue-600">{qty(row, "Incoming Qty")}</td>
+                    <td className="px-5 py-4"><button type="button" onClick={() => startAdjustment(row)} className="rounded-xl border border-emerald-300 px-3 py-2 text-xs font-bold text-emerald-700 hover:bg-emerald-50">Adjust Qty</button></td>
                   </tr>
                 ))}
-                {!filteredRows.length ? <tr><td colSpan={7} className="px-5 py-12 text-center text-slate-500">No inventory rows found.</td></tr> : null}
+                {!filteredRows.length ? <tr><td colSpan={8} className="px-5 py-12 text-center text-slate-500">No inventory rows found.</td></tr> : null}
               </tbody>
             </table>
           </div>
@@ -198,6 +249,33 @@ export default function InventoryCleanPage() {
           </div>
         </aside>
       </div>
+
+      {adjusting ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-slate-950/60 p-4">
+          <form onSubmit={submitAdjustment} className="w-full max-w-lg space-y-4 rounded-3xl bg-white p-6 shadow-2xl" aria-label="Adjust inventory quantity">
+            <div>
+              <h2 className="text-xl font-bold text-slate-950">Adjust Inventory Quantity</h2>
+              <p className="mt-1 text-sm text-slate-600">{String(adjusting["Description"] || "")} / {String(adjusting["Specification"] || "")}</p>
+              <p className="mt-2 text-sm font-semibold text-slate-700">Current on hand: {qty(adjusting, "Actual On Hand").toLocaleString()} units</p>
+            </div>
+            <label className="block text-sm font-semibold text-slate-700">Correct physical quantity
+              <input type="number" required min={0} max={1000000} step={1} value={targetQty} onChange={e => setTargetQty(e.target.value)} className="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2" />
+            </label>
+            <p className="text-sm text-slate-600">Adjustment: {Number.isSafeInteger(Number(targetQty)) && targetQty.trim() ? (Number(targetQty) - qty(adjusting, "Actual On Hand")).toLocaleString() : "-"} units. This does not edit sales or delivery records.</p>
+            <label className="block text-sm font-semibold text-slate-700">Reason for adjustment
+              <textarea required minLength={8} maxLength={250} rows={3} value={reason} onChange={e => setReason(e.target.value)} placeholder="e.g. Physical warehouse count correction" className="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2" />
+            </label>
+            <label className="block text-sm font-semibold text-slate-700">Admin access code
+              <input type="password" required autoComplete="off" value={adminCode} onChange={e => setAdminCode(e.target.value)} className="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2" />
+            </label>
+            {adjustmentError ? <p role="alert" className="text-sm font-semibold text-rose-700">{adjustmentError}</p> : null}
+            <div className="flex justify-end gap-3">
+              <button type="button" disabled={savingAdjustment} onClick={() => { setAdjusting(null); setAdminCode(""); }} className="rounded-xl border border-slate-300 px-4 py-2 text-sm font-semibold">Cancel</button>
+              <button type="submit" disabled={savingAdjustment || !targetQty.trim() || Number(targetQty) === qty(adjusting, "Actual On Hand")} className="rounded-xl bg-emerald-600 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50">{savingAdjustment ? "Saving..." : "Confirm Adjustment"}</button>
+            </div>
+          </form>
+        </div>
+      ) : null}
     </section>
   );
 }

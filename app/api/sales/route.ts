@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { google } from "googleapis";
+import { adjustmentDeltas, readStockAdjustmentRows } from "@/lib/stock-adjustments";
 
 const SHEET_ID = process.env.GOOGLE_SHEET_ID as string;
 const SALES_SHEET = "Sales";
@@ -143,6 +144,9 @@ async function getAvailableStockMap(sheets: any) {
     if (status === "available") map.set(key, current + qty);
     else if (["damaged", "defective", "damage"].includes(status)) map.set(key, current - qty);
   });
+  for (const [key, delta] of adjustmentDeltas(await readStockAdjustmentRows(sheets, SHEET_ID))) {
+    map.set(key, (map.get(key) || 0) + delta);
+  }
   return map;
 }
 

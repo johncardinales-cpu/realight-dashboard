@@ -23,7 +23,7 @@ type HistoryEvent = {
   createdAt: string;
 };
 
-type HistoryFilter = "all" | "supplier" | "customer" | "incoming" | "available" | "confirmed";
+type HistoryFilter = "all" | "supplier" | "customer" | "incoming" | "available" | "confirmed" | "adjustment";
 
 const FILTERS: { key: HistoryFilter; label: string }[] = [
   { key: "all", label: "All" },
@@ -32,6 +32,7 @@ const FILTERS: { key: HistoryFilter; label: string }[] = [
   { key: "incoming", label: "Incoming / Pending" },
   { key: "available", label: "Available" },
   { key: "confirmed", label: "Confirmed Sales" },
+  { key: "adjustment", label: "Stock Adjustments" },
 ];
 
 function money(value: number) {
@@ -54,6 +55,7 @@ function matchesFilter(row: HistoryEvent, filter: HistoryFilter) {
   if (filter === "customer") return hasCustomer || type.includes("sale") || type.includes("customer") || source.includes("sale") || Number(row.qtyOut) > 0;
   if (filter === "incoming") return status.includes("incoming") || status.includes("pending");
   if (filter === "available") return status.includes("available");
+  if (filter === "adjustment") return type === "stock adjustment";
   if (filter === "confirmed") return status.includes("confirmed") || type.includes("confirmed sale") || type.includes("sale");
   return true;
 }
@@ -95,7 +97,7 @@ export default function InventoryHistoryPage() {
     return FILTERS.reduce<Record<HistoryFilter, number>>((acc, filter) => {
       acc[filter.key] = rows.filter((row) => matchesFilter(row, filter.key)).length;
       return acc;
-    }, { all: 0, supplier: 0, customer: 0, incoming: 0, available: 0, confirmed: 0 });
+    }, { all: 0, supplier: 0, customer: 0, incoming: 0, available: 0, confirmed: 0, adjustment: 0 });
   }, [rows]);
 
   const summary = useMemo(() => {
