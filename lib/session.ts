@@ -31,10 +31,12 @@ function encode(bytes: Uint8Array): string {
   return btoa(result).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 }
 
-function decode(value: string): Uint8Array {
+function decode(value: string): Uint8Array<ArrayBuffer> {
   if (!/^[A-Za-z0-9_-]+$/.test(value)) throw new Error("Invalid session");
   const data = atob(value.replace(/-/g, "+").replace(/_/g, "/"));
-  return Uint8Array.from(data, c => c.charCodeAt(0));
+  const bytes = new Uint8Array(new ArrayBuffer(data.length));
+  for (let i = 0; i < data.length; i++) bytes[i] = data.charCodeAt(i);
+  return bytes;
 }
 
 export async function createSession(email: string): Promise<string> {
