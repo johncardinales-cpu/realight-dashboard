@@ -143,6 +143,7 @@ function Field({ label, value, onChange, type = "text", placeholder, required = 
       <span className="text-sm font-semibold text-slate-700">{label}{required ? <span className="text-rose-500"> *</span> : null}</span>
       <input
         type={type}
+        step={type === "number" ? "any" : undefined}
         value={value}
         required={required}
         placeholder={placeholder}
