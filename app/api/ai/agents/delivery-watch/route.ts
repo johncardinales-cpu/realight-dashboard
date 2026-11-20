@@ -41,7 +41,7 @@ export async function GET() {
       const actor = String(row[8] || "").trim();
       const action = String(row[4] || "").trim();
       if (!id || seen.has(id) || !/^[0-9a-f]{64}$/.test(deliveryKey) ||
-          !["STATUS_CHANGE", "REMOVE_CANCELLED", "RESTORE_CANCELLED"].includes(action)) {
+          !["STATUS_CHANGE", "REMOVE_CANCELLED", "RESTORE_CANCELLED", "CREATE_DELIVERY", "IMPORT_DELIVERY"].includes(action)) {
         findings.push({ severity: "critical", code: "INVALID_EVENT", eventId: id, message: "Invalid or duplicate delivery action record." });
       }
       seen.add(id);

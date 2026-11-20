@@ -12,7 +12,7 @@ export const DELIVERY_HEADERS = [
   "Status", "Expected Arrival", "Received Date", "Notes",
 ] as const;
 
-export type DeliveryAction = "STATUS_CHANGE" | "REMOVE_CANCELLED" | "RESTORE_CANCELLED";
+export type DeliveryAction = "STATUS_CHANGE" | "REMOVE_CANCELLED" | "RESTORE_CANCELLED" | "CREATE_DELIVERY" | "IMPORT_DELIVERY";
 export type DeliveryStatus = "Incoming" | "Available" | "Damaged" | "Cancelled";
 export type SheetRow = Array<unknown>;
 
@@ -66,7 +66,7 @@ export function removedDeliveryKeys(rows: SheetRow[]): Set<string> {
     const note = String(row[7] || "").trim();
     const actor = String(row[8] || "").trim();
     if (!id || seen.has(id) || !/^[0-9a-f]{64}$/.test(key) ||
-        !["STATUS_CHANGE","REMOVE_CANCELLED","RESTORE_CANCELLED"].includes(action) ||
+        !["STATUS_CHANGE","REMOVE_CANCELLED","RESTORE_CANCELLED","CREATE_DELIVERY","IMPORT_DELIVERY"].includes(action) ||
         !actor || note.length < 8) {
       throw new Error("Invalid delivery action history; review the ledger before making further changes.");
     }

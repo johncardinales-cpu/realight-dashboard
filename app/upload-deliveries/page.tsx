@@ -129,8 +129,9 @@ export default function UploadDeliveriesPage() {
   const [rows, setRows] = useState<ParsedRow[]>([]);
   const [message, setMessage] = useState("");
   const [loading, setLoading] = useState(false);
+  const [importNote, setImportNote] = useState("");
 
-  const canSubmit = useMemo(() => rows.length > 0, [rows]);
+  const canSubmit = useMemo(() => rows.length > 0 && rows.length <= 200 && importNote.trim().length >= 8 && importNote.trim().length <= 500, [rows, importNote]);
 
   async function onFileChange(event: React.ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0];
@@ -159,7 +160,7 @@ export default function UploadDeliveriesPage() {
         headers: {
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({ rows }),
+        body: JSON.stringify({ rows, note: importNote.trim() }),
       });
 
       const data = await res.json();
@@ -168,7 +169,8 @@ export default function UploadDeliveriesPage() {
         throw new Error(data?.error || "Failed to import deliveries");
       }
 
-      setMessage(`Imported ${data.imported} row(s) successfully.`);
+      setMessage(`Imported ${data.imported} row(s) successfully.` + (data.pricingWarning ? ` IMPORTANT: ${data.pricingWarning}` : ""));
+      setImportNote("");
       setRows([]);
       setFileName("");
     } catch (error: any) {
@@ -210,6 +212,10 @@ export default function UploadDeliveriesPage() {
           {fileName ? <span className="text-sm text-slate-600">Loaded: {fileName}</span> : null}
         </div>
 
+        <label className="block text-sm font-semibold text-slate-700">Import action note (required for all rows)
+          <textarea required minLength={8} maxLength={500} rows={3} value={importNote} onChange={event => setImportNote(event.target.value)} placeholder="Explain why this delivery batch is being imported" className="mt-2 w-full rounded-xl border border-slate-300 px-3 py-2" />
+        </label>
+        <p className="text-xs text-slate-500">Each imported delivery will retain this note and its own audit record. Maximum 200 rows per import.</p>
         <div className="flex items-center gap-3">
           <button
             type="button"

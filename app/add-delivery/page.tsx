@@ -337,8 +337,8 @@ export default function AddDeliveryPage() {
               </label>
               <Field label="Invoice Valid" type="date" value={form.invoiceValid} onChange={(value) => updateField("invoiceValid", value)} />
               <label className="block md:col-span-2">
-                <span className="text-sm font-semibold text-slate-700">Notes</span>
-                <textarea value={form.notes} onChange={(event) => updateField("notes", event.target.value)} rows={4} placeholder="Optional remarks" className="mt-2 w-full resize-none rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-medium text-slate-700 outline-none transition placeholder:text-slate-400 focus:border-emerald-300 focus:ring-4 focus:ring-emerald-50" />
+                <span className="text-sm font-semibold text-slate-700">Action Note <span className="text-rose-500">*</span></span>
+                <textarea required minLength={8} maxLength={500} value={form.notes} onChange={(event) => updateField("notes", event.target.value)} rows={4} placeholder="Explain why this delivery is being added" className="mt-2 w-full resize-none rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-medium text-slate-700 outline-none transition placeholder:text-slate-400 focus:border-emerald-300 focus:ring-4 focus:ring-emerald-50" />
               </label>
             </div>
           </SectionCard>

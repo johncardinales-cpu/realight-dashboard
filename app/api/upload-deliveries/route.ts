@@ -1,13 +1,7 @@
-import { NextResponse } from "next/server";
-import { google } from "googleapis";
-
-const auth = new google.auth.GoogleAuth({
-  credentials: {
-    client_email: process.env.GOOGLE_CLIENT_EMAIL,
-    private_key: process.env.GOOGLE_PRIVATE_KEY?.replace(/\\n/g, "\n"),
-  },
-  scopes: ["https://www.googleapis.com/auth/spreadsheets"],
-});
+import { NextRequest, NextResponse } from "next/server";
+import { readSession } from "@/lib/session";
+import { saveNewDeliveries } from "@/lib/delivery-create-service";
+import { getSheetsClient } from "@/lib/sheets";
 
 const SHEET_ID = process.env.GOOGLE_SHEET_ID as string;
 const DELIVERIES_SHEET = "App_Deliveries";
@@ -126,34 +120,36 @@ async function upsertPricingFromDeliveries(sheets: any, rows: DeliveryRow[]) {
   return { created: appendValues.length, updated: updateRequests.length };
 }
 
-export async function POST(req: Request) {
+export async function POST(req: NextRequest) {
   try {
-    const body = await req.json();
+    const admin = await readSession(req.cookies.get("realights_session")?.value);
+    if (!admin) return NextResponse.json({ error: "Authenticated administrator required." }, { status: 403 });
+    const body = await req.json().catch(() => ({}));
     const rows = Array.isArray(body?.rows) ? body.rows as DeliveryRow[] : [];
-    if (!rows.length) return NextResponse.json({ error: "No rows provided" }, { status: 400 });
-
-    const client = await auth.getClient();
-    const sheets = google.sheets({ version: "v4", auth: client as any });
-
-    const values = rows.map((row) => {
-      const uploadDate = required(row.uploadDate);
-      const arrivalDate = required(row.arrivalDate);
-      const supplier = required(row.supplier);
-      const batchReference = required(row.batchReference);
-      const description = required(row.description);
-      const specification = required(row.specification);
-      const qtyAdded = required(row.qtyAdded);
-      const status = normalizeImportedStatus(row.status);
-      if (!uploadDate || !supplier || !description || !specification || !qtyAdded || !status) throw new Error("One or more rows are missing required fields");
-      return [uploadDate, arrivalDate, supplier, batchReference, description, specification, qtyAdded, row.unitPriceUsd ?? "", row.invoiceValid ?? "", status, row.notes ?? "", new Date().toISOString()];
-    });
-
-    await sheets.spreadsheets.values.append({ spreadsheetId: SHEET_ID, range: `${DELIVERIES_SHEET}!A:L`, valueInputOption: "USER_ENTERED", insertDataOption: "INSERT_ROWS", requestBody: { values } });
-    const pricing = await upsertPricingFromDeliveries(sheets, rows);
-
-    return NextResponse.json({ ok: true, imported: values.length, pricing, deliveryStatus: "Imported rows default to Incoming unless explicitly marked Received, Damaged, or Cancelled." });
-  } catch (error: any) {
+    const actionNote = String(body?.note ?? "").trim();
+    if (!rows.length || rows.length > 200) {
+      return NextResponse.json({ error: "Import between 1 and 200 rows per operation." }, { status: 400 });
+    }
+    if (actionNote.length < 8 || actionNote.length > 500) {
+      return NextResponse.json({ error: "An import action note of 8 to 500 characters is required." }, { status: 400 });
+    }
+    // Every appended row follows the verified 13-column live App_Deliveries mapping.
+    // Delivery, action notes, and audit entries commit together to avoid partial logging.
+    const saved = await saveNewDeliveries(rows, actionNote, admin.email, true);
+    try {
+      const sheets = await getSheetsClient();
+      const pricing = await upsertPricingFromDeliveries(sheets, rows);
+      return NextResponse.json({ ok: true, imported: saved.count, pricing });
+    } catch (pricingError) {
+      console.error("PRICING UPDATE AFTER DELIVERY IMPORT:", pricingError);
+      // Imported rows are already committed. Never invite a blind retry that would duplicate them.
+      return NextResponse.json({
+        ok: true, imported: saved.count, pricingWarning:
+          "Deliveries were saved, but the Pricing_Base sync needs an administrator review. Do not import the file again.",
+      });
+    }
+  } catch (error: unknown) {
     console.error("UPLOAD DELIVERIES API ERROR:", error);
-    return NextResponse.json({ error: error?.message || String(error) || "Failed to upload deliveries" }, { status: 500 });
+    return NextResponse.json({ error: error instanceof Error ? error.message : "Unable to upload deliveries." }, { status: 400 });
   }
 }
