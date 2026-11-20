@@ -1,10 +1,11 @@
 import { NextResponse } from "next/server";
 import { getSheetsClient, SHEET_ID } from "@/lib/sheets";
 import { adjustmentDeltas, readStockAdjustmentRows } from "@/lib/stock-adjustments";
+import { deliveryStockImpact } from "@/lib/delivery-stock";
 
 const SALES = "Sales!A:AJ";
 const PAYMENTS = "Payments!A:O";
-const INVENTORY = "App_Deliveries!A:L";
+const INVENTORY = "App_Deliveries!A:M";
 const EXPENSES = "Expenses!A:Z";
 const CREDITS = "Customer_Credits!A:L";
 
@@ -176,13 +177,12 @@ function inventoryAudit(salesRows: string[][], inventoryRows: string[][], adjust
   inventoryRows.slice(1).forEach((row) => {
     const description = txt(row[4]);
     const specification = txt(row[5]);
-    const qty = num(row[6]);
-    const status = norm(row[9]);
+    const movement = deliveryStockImpact(row);
     if (!description && !specification) return;
     const key = `${description}|||${specification}`;
     const current = stock.get(key) || { description, specification, availableQty: 0, damagedQty: 0 };
-    if (status === "available") current.availableQty += qty;
-    if (["damaged", "damage", "defective"].includes(status)) current.damagedQty += qty;
+    current.availableQty += movement.available;
+    current.damagedQty += movement.damaged;
     stock.set(key, current);
   });
 
@@ -204,8 +204,8 @@ function inventoryAudit(salesRows: string[][], inventoryRows: string[][], adjust
 
   return Array.from(stock.entries()).map(([key, item]) => {
     const soldQty = sold.get(key) || 0;
-    const remainingQty = round(Math.max(item.availableQty - item.damagedQty - soldQty, 0));
-    return { ...item, soldQty, remainingQty, status: soldQty > item.availableQty - item.damagedQty ? "Critical" : "Balanced" };
+    const remainingQty = round(Math.max(item.availableQty - soldQty, 0));
+    return { ...item, soldQty, remainingQty, status: soldQty > item.availableQty ? "Critical" : "Balanced" };
   }).sort((a, b) => b.soldQty - a.soldQty);
 }
 
@@ -233,7 +233,7 @@ export async function GET() {
     });
 
     inventory.filter((item) => item.status === "Critical").forEach((item) => {
-      issues.push({ severity: "critical", area: "Inventory", record: `${item.description} / ${item.specification}`, message: "Confirmed sold quantity is higher than available inventory.", expected: `${item.availableQty - item.damagedQty} available`, actual: `${item.soldQty} sold` });
+      issues.push({ severity: "critical", area: "Inventory", record: `${item.description} / ${item.specification}`, message: "Confirmed sold quantity is higher than available inventory.", expected: `${item.availableQty} available`, actual: `${item.soldQty} sold` });
     });
 
     expenses.filter((expense) => expense.balanceAmount > 0 && !["installment", "pending"].includes(norm(expense.status))).forEach((expense) => {

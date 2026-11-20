@@ -12,6 +12,7 @@ type DeliveryForm = {
   specification: string;
   qtyAdded: string;
   unitPriceUsd: string;
+  fxRate: string;
   invoiceValid: string;
   status: string;
   notes: string;
@@ -27,6 +28,7 @@ type ItemOption = {
   description: string;
   specification: string;
   unitPriceUsd?: number;
+  fxRate?: number;
   source?: "Pricing" | "Inventory" | "Common";
 };
 
@@ -34,6 +36,7 @@ type PricingRow = {
   description?: string;
   specification?: string;
   costPriceUsd?: number;
+  fxRate?: number;
 };
 
 type InventoryRow = {
@@ -52,6 +55,7 @@ const initialState: DeliveryForm = {
   specification: "",
   qtyAdded: "",
   unitPriceUsd: "",
+  fxRate: "",
   invoiceValid: "",
   status: "Incoming",
   notes: "",
@@ -89,7 +93,7 @@ function itemValue(item: ItemOption) {
   return `${item.description}|||${item.specification}`;
 }
 
-function cleanItem(description: unknown, specification: unknown, source: ItemOption["source"], unitPriceUsd?: unknown): ItemOption | null {
+function cleanItem(description: unknown, specification: unknown, source: ItemOption["source"], unitPriceUsd?: unknown, fxRate?: unknown): ItemOption | null {
   const cleanDescription = String(description || "").trim();
   const cleanSpecification = String(specification || "").trim();
   if (!cleanDescription || !cleanSpecification) return null;
@@ -98,6 +102,7 @@ function cleanItem(description: unknown, specification: unknown, source: ItemOpt
     specification: cleanSpecification,
     source,
     unitPriceUsd: Number(unitPriceUsd) || undefined,
+    fxRate: Number(fxRate) || undefined,
   };
 }
 
@@ -112,8 +117,8 @@ function combineItemOptions(...groups: ItemOption[][]) {
         map.set(key, item);
         continue;
       }
-      if (!existing.unitPriceUsd && item.unitPriceUsd) {
-        map.set(key, { ...existing, unitPriceUsd: item.unitPriceUsd });
+      if ((!existing.unitPriceUsd && item.unitPriceUsd) || (!existing.fxRate && item.fxRate)) {
+        map.set(key, { ...existing, unitPriceUsd: existing.unitPriceUsd || item.unitPriceUsd, fxRate: existing.fxRate || item.fxRate });
       }
     }
   }
@@ -189,7 +194,7 @@ export default function AddDeliveryPage() {
           setPricingItems(
             Array.isArray(data)
               ? data
-                  .map((row: PricingRow) => cleanItem(row.description, row.specification, "Pricing", row.costPriceUsd))
+                  .map((row: PricingRow) => cleanItem(row.description, row.specification, "Pricing", row.costPriceUsd, row.fxRate))
                   .filter(Boolean) as ItemOption[]
               : []
           );
@@ -233,6 +238,7 @@ export default function AddDeliveryPage() {
       description: item.description,
       specification: item.specification,
       unitPriceUsd: item.unitPriceUsd && !prev.unitPriceUsd ? String(item.unitPriceUsd) : prev.unitPriceUsd,
+      fxRate: item.fxRate ? String(item.fxRate) : prev.fxRate,
     }));
   }
 
@@ -321,6 +327,7 @@ export default function AddDeliveryPage() {
               <Field label="Specification" value={form.specification} onChange={(value) => updateField("specification", value)} placeholder="2400 mm, H35/30,L40..." required />
               <Field label="Quantity" type="number" value={form.qtyAdded} onChange={(value) => updateField("qtyAdded", value)} required />
               <Field label="Unit Price (USD)" type="number" value={form.unitPriceUsd} onChange={(value) => updateField("unitPriceUsd", value)} />
+              <Field label="FX Rate (PHP per USD)" type="number" value={form.fxRate} onChange={(value) => updateField("fxRate", value)} placeholder="Required when USD cost is entered" required={Number(form.unitPriceUsd) > 0} />
             </div>
           </SectionCard>
 

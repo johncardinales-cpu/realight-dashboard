@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { google } from "googleapis";
 import { adjustmentDeltas, readStockAdjustmentRows } from "@/lib/stock-adjustments";
+import { deliveryStockImpact } from "@/lib/delivery-stock";
 
 const SHEET_ID = process.env.GOOGLE_SHEET_ID as string;
 const SALES_SHEET = "Sales";
@@ -130,19 +131,15 @@ async function getPricingMap(sheets: any) {
 }
 
 async function getAvailableStockMap(sheets: any) {
-  const response = await sheets.spreadsheets.values.get({ spreadsheetId: SHEET_ID, range: `${INVENTORY_SHEET}!A:L` });
+  const response = await sheets.spreadsheets.values.get({ spreadsheetId: SHEET_ID, range: `${INVENTORY_SHEET}!A:M` });
   const rows = (response.data.values || []) as string[][];
   const map = new Map<string, number>();
   rows.slice(1).forEach((row: string[]) => {
     const description = String(row[4] || "").trim();
     const specification = String(row[5] || "").trim();
-    const qty = toNumber(row[6]);
-    const status = String(row[9] || "").trim().toLowerCase();
     if (!description && !specification) return;
     const key = itemKey(description, specification);
-    const current = map.get(key) || 0;
-    if (status === "available") map.set(key, current + qty);
-    else if (["damaged", "defective", "damage"].includes(status)) map.set(key, current - qty);
+    map.set(key, (map.get(key) || 0) + deliveryStockImpact(row).available);
   });
   for (const [key, delta] of adjustmentDeltas(await readStockAdjustmentRows(sheets, SHEET_ID))) {
     map.set(key, (map.get(key) || 0) + delta);

@@ -2,6 +2,8 @@ import { randomUUID, timingSafeEqual } from "node:crypto";
 import { NextRequest, NextResponse } from "next/server";
 import { getSheetsClient, SHEET_ID } from "@/lib/sheets";
 import { readSession } from "@/lib/session";
+import { readStockAdjustmentRows, currentStockForItem } from "@/lib/stock-adjustments";
+import { statusChangeStockDelta, wouldOversellStock } from "@/lib/delivery-stock";
 import {
   DELIVERY_ACTION_HEADERS, DELIVERY_ACTIONS_SHEET, DELIVERY_HEADERS,
   deliveryKey, isDeliveryRow, normalizeDeliveryStatus, removedDeliveryKeys,
@@ -115,9 +117,11 @@ export async function POST(req: NextRequest) {
     }
 
     const sheets = await getSheetsClient();
-    const [deliveryResp, actionRows] = await Promise.all([
+    const [deliveryResp, actionRows, salesResp, adjustmentRows] = await Promise.all([
       sheets.spreadsheets.values.get({ spreadsheetId: SHEET_ID, range: `${SOURCE}!A:M` }),
       readDeliveryActions(sheets, SHEET_ID),
+      sheets.spreadsheets.values.get({ spreadsheetId: SHEET_ID, range: "Sales!A:Y" }),
+      readStockAdjustmentRows(sheets, SHEET_ID),
     ]);
     const rows = (deliveryResp.data.values || []) as string[][];
     verifyDeliveryHeaders(rows[0] || []);
@@ -137,6 +141,13 @@ export async function POST(req: NextRequest) {
       const key = deliveryKey(row);
       if (key !== selection.deliveryKey || (allKeys.get(key) || 0) > 1) {
         return NextResponse.json({ error: "Delivery identity has changed or is ambiguous; refresh and review before acting." }, { status: 409 });
+      }
+      if (action === "STATUS_CHANGE" &&
+          txt(row[2]).toLowerCase() === "damage" &&
+          txt(row[3]).toLowerCase() === "dashboard adjustment") {
+        return NextResponse.json({
+          error: "Stock damage adjustments cannot be reclassified as supplier deliveries. Use an authorized stock correction.",
+        }, { status: 409 });
       }
       const beforeStatus = normalizeDeliveryStatus(row[9]);
       const isRemoved = removed.has(key);
@@ -162,6 +173,29 @@ export async function POST(req: NextRequest) {
       const fillDate = action === "STATUS_CHANGE" &&
         (afterStatus === "Available" || afterStatus === "Damaged") && !txt(row[11]);
       changes.push({ selection, row, action, beforeStatus, afterStatus, notes: allNotes, fillDate });
+    }
+    // A status edit can remove physical availability. Block reductions that would
+    // leave confirmed sales unsupported; include all rows of a bulk action.
+    if (action === "STATUS_CHANGE") {
+      const impacts = new Map<string, { description: string; specification: string; delta: number }>();
+      for (const change of changes) {
+        const description = txt(change.row[4]), specification = txt(change.row[5]);
+        const key = description + "|||" + specification;
+        const delta = statusChangeStockDelta(change.row, change.afterStatus);
+        const previous = impacts.get(key);
+        impacts.set(key, { description, specification, delta: delta + (previous?.delta || 0) });
+      }
+      for (const { description, specification, delta } of impacts.values()) {
+        if (delta >= 0) continue;
+        const current = currentStockForItem(rows,
+          (salesResp.data.values || []) as string[][],
+          adjustmentRows, description, specification);
+        if (!current.found || wouldOversellStock(current.rawQty, delta)) {
+          return NextResponse.json({
+            error: "Status change would leave insufficient stock for confirmed sales. Use a physical stock correction or review the affected sales before proceeding.",
+          }, { status: 409 });
+        }
+      }
     }
     const { deliveryId, actionId, auditId } = await sheetIds(sheets);
     const requests: any[] = [];

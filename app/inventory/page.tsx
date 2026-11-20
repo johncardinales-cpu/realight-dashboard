@@ -115,6 +115,10 @@ export default function InventoryPage() {
   const [damageTarget, setDamageTarget] = useState<InventoryRow | null>(null);
   const [damageQty, setDamageQty] = useState("1");
   const [damageReason, setDamageReason] = useState(damageReasons[0]);
+  const [damageNote, setDamageNote] = useState("");
+  const [dateTarget, setDateTarget] = useState<InventoryRow | null>(null);
+  const [dateNote, setDateNote] = useState("");
+  const [dateError, setDateError] = useState("");
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("All");
   const [adjustTarget, setAdjustTarget] = useState<InventoryRow | null>(null);
@@ -185,6 +189,7 @@ export default function InventoryPage() {
     setDamageTarget(row);
     setDamageQty("1");
     setDamageReason(damageReasons[0]);
+    setDamageNote("");
   }
 
   async function saveDates(row: InventoryRow) {
@@ -193,16 +198,19 @@ export default function InventoryPage() {
     const latestReceived = String(row["Latest Received"] || "");
     const latestIncoming = String(row["Latest Incoming"] || "");
     const saveKey = rowKey(row);
+    setDateError("");
     setSavingKey(saveKey);
     setMessage("");
     try {
-      const res = await fetch("/api/inventory/update-dates", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ description, specification, latestReceived, latestIncoming }) });
+      const res = await fetch("/api/inventory/update-dates", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ description, specification, latestReceived, latestIncoming, note: dateNote.trim() }) });
       const data: unknown = await res.json();
       if (!res.ok) throw new Error(typeof data === "object" && data !== null && "error" in data ? String((data as ApiError).error) : "Failed to update dates");
-      setMessage(`Updated dates for ${description}.`);
+      setMessage(`Saved date changes for ${description}. Note recorded in the audit log.`);
+      setDateTarget(null);
+      setDateNote("");
       await loadRows();
     } catch (error: unknown) {
-      setMessage(getErrorMessage(error, "Failed to update dates."));
+      setDateError(getErrorMessage(error, "Failed to update dates."));
     } finally {
       setSavingKey("");
     }
@@ -217,7 +225,7 @@ export default function InventoryPage() {
     setDamagingKey(key);
     setMessage("");
     try {
-      const res = await fetch("/api/inventory/mark-damaged", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ description, specification, quantity, reason: damageReason }) });
+      const res = await fetch("/api/inventory/mark-damaged", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ description, specification, quantity, expectedQty: qty(damageTarget, "Sellable Qty"), reason: `${damageReason}: ${damageNote.trim()}` }) });
       const data: unknown = await res.json();
       if (!res.ok) throw new Error(typeof data === "object" && data !== null && "error" in data ? String((data as ApiError).error) : "Failed to mark item damaged");
       setMessage(`Removed ${quantity} damaged ${description} from sellable inventory.`);
@@ -231,7 +239,7 @@ export default function InventoryPage() {
   }
 
   async function handleAction(row: InventoryRow, action: string) {
-    if (action === "save") await saveDates(row);
+    if (action === "save") { setDateTarget(row); setDateNote(""); setDateError(""); }
     if (action === "damage") openDamageModal(row);
     if (action === "adjust") openAdjustModal(row);
     if (action === "visibility") setVisibilityTarget(row);
@@ -304,7 +312,24 @@ export default function InventoryPage() {
           </form>
         </div>
       ) : null}
-      {damageTarget ? <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/40 p-4"><div className="w-full max-w-md rounded-[1.75rem] bg-white p-6 shadow-2xl"><h2 className="text-2xl font-bold text-slate-950">Mark damaged / defective</h2><p className="mt-2 text-sm text-slate-500">This removes the quantity from sellable inventory.</p><div className="mt-5 rounded-2xl bg-slate-50 p-4"><p className="font-semibold text-slate-900">{String(damageTarget["Description"] || "")}</p><p className="text-sm text-slate-500">{String(damageTarget["Specification"] || "")}</p><p className="mt-2 text-sm font-semibold text-slate-700">Available sellable: {String(damageTarget["Sellable Qty"] || 0)}</p></div><div className="mt-5 space-y-4"><label className="block"><span className="text-sm font-semibold text-slate-700">Damaged quantity</span><input type="number" min="1" max={Number(damageTarget["Sellable Qty"] || 0)} value={damageQty} onChange={(event) => setDamageQty(event.target.value)} className="mt-2 w-full rounded-2xl border border-slate-200 px-4 py-3 text-sm outline-none focus:border-rose-300" /></label><div><p className="text-sm font-semibold text-slate-700">Reason</p><div className="mt-2 grid gap-2">{damageReasons.map((reason) => <label key={reason} className={cn("flex items-center gap-3 rounded-2xl border px-4 py-3 text-sm font-semibold", damageReason === reason ? "border-rose-200 bg-rose-50 text-rose-700" : "border-slate-200 text-slate-600")}><input type="radio" name="damage-reason" value={reason} checked={damageReason === reason} onChange={(event) => setDamageReason(event.target.value)} className="h-4 w-4 accent-rose-600" />{reason}</label>)}</div></div></div><div className="mt-6 flex justify-end gap-3"><button type="button" onClick={() => setDamageTarget(null)} className="rounded-2xl border border-slate-200 px-4 py-3 text-sm font-bold text-slate-700">Cancel</button><button type="button" onClick={() => void markDamaged()} disabled={Boolean(damagingKey)} className="rounded-2xl bg-rose-600 px-4 py-3 text-sm font-bold text-white disabled:opacity-50">{damagingKey ? "Saving..." : "Confirm"}</button></div></div></div> : null}
+      {dateTarget ? (
+        <div role="dialog" aria-modal="true" aria-label="Confirm inventory date changes" className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 p-4">
+          <div className="w-full max-w-md space-y-4 rounded-3xl bg-white p-6 shadow-2xl">
+            <h2 className="text-xl font-bold text-slate-950">Save Inventory Dates</h2>
+            <p className="text-sm text-slate-600">{String(dateTarget["Description"] || "")} / {String(dateTarget["Specification"] || "")}</p>
+            <p className="text-sm text-slate-600">Expected arrival: {String(dateTarget["Latest Incoming"] || "—")} · Received date: {String(dateTarget["Latest Received"] || "—")}</p>
+            <label className="block text-sm font-semibold text-slate-700">Action note
+              <textarea required minLength={8} maxLength={500} rows={3} value={dateNote} onChange={event => setDateNote(event.target.value)} placeholder="Explain this date correction" className="mt-2 w-full rounded-xl border border-slate-300 px-3 py-2" />
+            </label>
+            {dateError ? <p role="alert" className="text-sm font-bold text-rose-700">{dateError}</p> : null}
+            <div className="flex justify-end gap-3">
+              <button type="button" disabled={Boolean(savingKey)} onClick={() => setDateTarget(null)} className="rounded-xl border border-slate-300 px-4 py-2 text-sm font-bold">Cancel</button>
+              <button type="button" disabled={Boolean(savingKey) || dateNote.trim().length < 8 || dateNote.trim().length > 500} onClick={() => void saveDates(dateTarget)} className="rounded-xl bg-emerald-700 px-4 py-2 text-sm font-bold text-white disabled:opacity-50">{savingKey ? "Saving..." : "Confirm and Log Note"}</button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+      {damageTarget ? <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/40 p-4"><div className="w-full max-w-md rounded-[1.75rem] bg-white p-6 shadow-2xl"><h2 className="text-2xl font-bold text-slate-950">Mark damaged / defective</h2><p className="mt-2 text-sm text-slate-500">This removes the quantity from sellable inventory.</p><div className="mt-5 rounded-2xl bg-slate-50 p-4"><p className="font-semibold text-slate-900">{String(damageTarget["Description"] || "")}</p><p className="text-sm text-slate-500">{String(damageTarget["Specification"] || "")}</p><p className="mt-2 text-sm font-semibold text-slate-700">Available sellable: {String(damageTarget["Sellable Qty"] || 0)}</p></div><div className="mt-5 space-y-4"><label className="block"><span className="text-sm font-semibold text-slate-700">Damaged quantity</span><input type="number" min="1" max={Number(damageTarget["Sellable Qty"] || 0)} value={damageQty} onChange={(event) => setDamageQty(event.target.value)} className="mt-2 w-full rounded-2xl border border-slate-200 px-4 py-3 text-sm outline-none focus:border-rose-300" /></label><div><p className="text-sm font-semibold text-slate-700">Reason</p><div className="mt-2 grid gap-2">{damageReasons.map((reason) => <label key={reason} className={cn("flex items-center gap-3 rounded-2xl border px-4 py-3 text-sm font-semibold", damageReason === reason ? "border-rose-200 bg-rose-50 text-rose-700" : "border-slate-200 text-slate-600")}><input type="radio" name="damage-reason" value={reason} checked={damageReason === reason} onChange={(event) => setDamageReason(event.target.value)} className="h-4 w-4 accent-rose-600" />{reason}</label>)}</div></div><label className="mt-4 block text-sm font-semibold text-slate-700">Action note<textarea rows={3} minLength={8} maxLength={500} required value={damageNote} onChange={event => setDamageNote(event.target.value)} placeholder="Describe the damage or inspection findings" className="mt-2 w-full rounded-xl border border-slate-300 px-3 py-2" /></label><div className="mt-6 flex justify-end gap-3"><button type="button" onClick={() => setDamageTarget(null)} className="rounded-2xl border border-slate-200 px-4 py-3 text-sm font-bold text-slate-700">Cancel</button><button type="button" onClick={() => void markDamaged()} disabled={Boolean(damagingKey) || damageNote.trim().length < 8 || damageNote.trim().length > 500} className="rounded-2xl bg-rose-600 px-4 py-3 text-sm font-bold text-white disabled:opacity-50">{damagingKey ? "Saving..." : "Confirm"}</button></div></div></div> : null}
     </section>
   );
 }

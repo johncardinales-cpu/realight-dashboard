@@ -17,7 +17,7 @@ type HistoryEvent = {
   status: string;
   movementQty: number;
   runningQty: number;
-  unitCostUsd: number;
+  unitCostPhp: number;
   invoiceValid: string;
   notes: string;
   createdAt: string;
@@ -36,7 +36,7 @@ const FILTERS: { key: HistoryFilter; label: string }[] = [
 ];
 
 function money(value: number) {
-  return `$${(Number(value) || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  return `₱${(Number(value) || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
 
 function normalize(value: unknown) {
@@ -172,7 +172,7 @@ export default function InventoryHistoryPage() {
                   <td className="whitespace-nowrap px-4 py-3 text-rose-700">{row.qtyOut || "-"}</td>
                   <td className="whitespace-nowrap px-4 py-3 font-bold text-slate-900">{row.runningQty}</td>
                   <td className="whitespace-nowrap px-4 py-3 text-slate-700">{row.status}</td>
-                  <td className="whitespace-nowrap px-4 py-3 text-slate-700">{row.unitCostUsd ? money(row.unitCostUsd) : "-"}</td>
+                  <td className="whitespace-nowrap px-4 py-3 text-slate-700">{row.unitCostPhp ? money(row.unitCostPhp) : "-"}</td>
                   <td className="min-w-[260px] px-4 py-3 text-slate-600">{row.notes}</td>
                 </tr>
               ))}

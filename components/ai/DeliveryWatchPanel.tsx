@@ -3,7 +3,7 @@
 import { useState } from "react";
 
 type Finding = { severity: string; code: string; eventId?: string; message: string };
-type Result = { status: string; checkedAt: string; checkedEvents: number; findings: Finding[]; message: string };
+type Result = { status: string; checkedAt: string; checkedEvents: number; findings: Finding[]; message: string; totals?: { incomingUnits: number; availableFromDeliveries: number; supplierDamagedUnits: number; recordedDamageAdjustments: number; cancelledUnits: number; confirmedSoldUnits: number; calculatedOnHandUnits: number } };
 
 export default function DeliveryWatchPanel() {
   const [result, setResult] = useState<Result | null>(null);
@@ -40,6 +40,17 @@ export default function DeliveryWatchPanel() {
       {result ? <div className="mt-3 space-y-3">
         <p className="text-sm font-semibold">Status: {result.status} · {result.checkedEvents} action(s) reviewed · {result.findings.length} finding(s)</p>
         <p className="text-xs text-slate-500">{result.message} Checked {new Date(result.checkedAt).toLocaleString()}.</p>
+        {result.totals ? <div className="grid grid-cols-2 gap-2 text-xs md:grid-cols-4">
+          {([
+            ["Incoming units", result.totals.incomingUnits],
+            ["Available delivery units (net)", result.totals.availableFromDeliveries],
+            ["Canceled units (excluded)", result.totals.cancelledUnits],
+            ["Damaged units", result.totals.supplierDamagedUnits],
+            ["Confirmed sold units", result.totals.confirmedSoldUnits],
+            ["Damaged-stock deductions", result.totals.recordedDamageAdjustments],
+            ["Calculated on-hand units", result.totals.calculatedOnHandUnits],
+          ] as [string, number][]).map(([label, count]) => <div key={label} className="rounded-xl border border-slate-200 p-3"><p className="font-medium text-slate-500">{label}</p><p className="mt-1 text-base font-bold tabular-nums text-slate-950">{count.toLocaleString()}</p></div>)}
+        </div> : null}
         {result.findings.map((finding, index) => (
           <div key={index} className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm">
             <strong>{finding.severity.toUpperCase()} — {finding.code}</strong>

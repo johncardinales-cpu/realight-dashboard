@@ -12,6 +12,7 @@ type ParsedRow = {
   specification: string;
   qtyAdded: string;
   unitPriceUsd: string;
+  fxRate: string;
   invoiceValid: string;
   status: string;
   notes: string;
@@ -26,13 +27,14 @@ const expectedHeaders = [
   "Specification",
   "Qty Added",
   "Unit Price (USD)",
+  "FX Rate",
   "Invoice Valid",
   "Status",
   "Notes",
 ];
 
-const sampleCsv = `Upload Date,Arrival Date,Supplier,Batch / Reference,Description,Specification,Qty Added,Unit Price (USD),Invoice Valid,Status,Notes
-2026-04-24,2026-04-25,BLUESUN,DEL-20260424-01,10KWh LV Lithium Battery,BSM48200W,20,1000,2026/04/30,Incoming,Sample import`;
+const sampleCsv = `Upload Date,Arrival Date,Supplier,Batch / Reference,Description,Specification,Qty Added,Unit Price (USD),FX Rate,Invoice Valid,Status,Notes
+2026-04-24,2026-04-25,BLUESUN,DEL-20260424-01,10KWh LV Lithium Battery,BSM48200W,20,1000,61,2026/04/30,Incoming,Sample import`;
 
 function normalizeHeader(value: string) {
   return value.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
@@ -57,6 +59,7 @@ function mapObjectRow(row: Record<string, unknown>): ParsedRow {
     specification: get("Specification"),
     qtyAdded: get("Qty Added"),
     unitPriceUsd: get("Unit Price (USD)"),
+    fxRate: get("FX Rate"),
     invoiceValid: get("Invoice Valid"),
     status: get("Status") || "Incoming",
     notes: get("Notes"),
@@ -73,6 +76,7 @@ function isMeaningfulRow(row: ParsedRow) {
       row.specification ||
       row.qtyAdded ||
       row.unitPriceUsd ||
+      row.fxRate ||
       row.invoiceValid ||
       row.notes
   );
@@ -185,7 +189,7 @@ export default function UploadDeliveriesPage() {
       <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
         <h1 className="text-3xl font-semibold text-slate-900">Upload Deliveries</h1>
         <p className="mt-1 text-sm text-slate-600">
-          Upload a CSV or Excel template and import many delivery rows into App_Deliveries.
+          Upload a CSV or Excel template and import many delivery rows. When USD cost is supplied, include the correct PHP/USD FX Rate or use the rate saved in Pricing Base for that product.
         </p>
       </div>
 
@@ -254,6 +258,7 @@ export default function UploadDeliveriesPage() {
                   <td className="px-4 py-3 text-slate-700">{row.specification}</td>
                   <td className="px-4 py-3 text-slate-700">{row.qtyAdded}</td>
                   <td className="px-4 py-3 text-slate-700">{row.unitPriceUsd}</td>
+                  <td className="px-4 py-3 text-slate-700">{row.fxRate || "Auto (if priced)"}</td>
                   <td className="px-4 py-3 text-slate-700">{row.invoiceValid}</td>
                   <td className="px-4 py-3 text-slate-700">{row.status}</td>
                   <td className="px-4 py-3 text-slate-700">{row.notes}</td>
@@ -261,7 +266,7 @@ export default function UploadDeliveriesPage() {
               ))}
               {!rows.length && (
                 <tr>
-                  <td colSpan={11} className="px-4 py-8 text-center text-slate-500">
+                  <td colSpan={12} className="px-4 py-8 text-center text-slate-500">
                     No rows loaded yet.
                   </td>
                 </tr>

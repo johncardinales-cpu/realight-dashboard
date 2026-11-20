@@ -6,7 +6,6 @@ import { getSheetsClient } from "@/lib/sheets";
 const SHEET_ID = process.env.GOOGLE_SHEET_ID as string;
 const DELIVERIES_SHEET = "App_Deliveries";
 const PRICING_SHEET = "Pricing_Base";
-const DEFAULT_FX_RATE = 56;
 
 type DeliveryRow = {
   uploadDate: string;
@@ -17,6 +16,7 @@ type DeliveryRow = {
   specification: string;
   qtyAdded: string | number;
   unitPriceUsd?: string | number;
+  fxRate?: string | number;
   invoiceValid?: string;
   status: string;
   notes?: string;
@@ -68,7 +68,7 @@ async function ensurePricingSheet(sheets: any) {
   });
 }
 
-async function upsertPricingFromDeliveries(sheets: any, rows: DeliveryRow[]) {
+async function upsertPricingFromDeliveries(sheets: any, rows: DeliveryRow[], actor: string, actionNote: string) {
   await ensurePricingSheet(sheets);
   const response = await sheets.spreadsheets.values.get({ spreadsheetId: SHEET_ID, range: `${PRICING_SHEET}!A:N` }).catch(() => ({ data: { values: [] } }));
   const pricingRows = (response.data.values || []) as string[][];
@@ -91,32 +91,56 @@ async function upsertPricingFromDeliveries(sheets: any, rows: DeliveryRow[]) {
 
   const appendValues: any[][] = [];
   const updateRequests: any[] = [];
+  const auditValues: any[][] = [];
+  const timestamp = new Date().toISOString();
 
   unique.forEach((row, key) => {
     const description = required(row.description);
     const specification = required(row.specification);
     const supplier = required(row.supplier);
     const costUsd = toNumber(row.unitPriceUsd);
-    const costPhp = costUsd * DEFAULT_FX_RATE;
+    const fxRate = toNumber(row.fxRate);
+    const costPhp = Math.round(costUsd * fxRate * 100) / 100;
     const notes = `Imported from supplier delivery${supplier ? ` - ${supplier}` : ""}${row.batchReference ? ` / ${row.batchReference}` : ""}. Selling price pending.`;
     const found = existing.get(key);
+    const oldData = found ? { costUsd: toNumber(found.row[5]), fxRate: toNumber(found.row[6]), costPhp: toNumber(found.row[7]) } : {};
 
     if (found) {
       const old = found.row;
       const sellingPricePhp = toNumber(old[8]);
       const dealerPricePhp = toNumber(old[9]);
       const minimumPricePhp = toNumber(old[10]);
-      const grossMargin = sellingPricePhp ? ((sellingPricePhp - costPhp) / sellingPricePhp) : 0;
-      updateRequests.push({ range: `${PRICING_SHEET}!A${found.rowNumber}:N${found.rowNumber}`, values: [[old[0] || itemId(description, specification), description, specification, old[3] || inferCategory(description), old[4] || "pc", costUsd || toNumber(old[5]), toNumber(old[6]) || DEFAULT_FX_RATE, costUsd ? costPhp : toNumber(old[7]), sellingPricePhp, dealerPricePhp, minimumPricePhp, grossMargin, old[12] || "Active", `${old[13] || ""}${old[13] ? " | " : ""}${notes}`]] });
+      const originalCostPhp = toNumber(old[7]);
+      const finalCostPhp = costUsd > 0 ? costPhp : originalCostPhp;
+      const finalFx = fxRate > 0 ? fxRate : toNumber(old[6]);
+      const grossMargin = sellingPricePhp ? ((sellingPricePhp - finalCostPhp) / sellingPricePhp) : 0;
+      auditValues.push([
+        `AUDIT_${crypto.randomUUID()}`, timestamp, "Pricing", "PRICING_FROM_DELIVERY",
+        found.row[0] || itemId(description, specification), row.batchReference || description, actor,
+        `Supplier cost updated: ${actionNote}`, JSON.stringify(oldData),
+        JSON.stringify({ costUsd: costUsd || toNumber(old[5]), fxRate: finalFx, costPhp: finalCostPhp }),
+      ]);
+      updateRequests.push({ range: `${PRICING_SHEET}!A${found.rowNumber}:N${found.rowNumber}`, values: [[old[0] || itemId(description, specification), description, specification, old[3] || inferCategory(description), old[4] || "pc", costUsd || toNumber(old[5]), finalFx, finalCostPhp, sellingPricePhp, dealerPricePhp, minimumPricePhp, grossMargin, old[12] || "Active", `${old[13] || ""}${old[13] ? " | " : ""}${notes}`]] });
       return;
     }
 
-    appendValues.push([itemId(description, specification), description, specification, inferCategory(description), "pc", costUsd, DEFAULT_FX_RATE, costPhp, "", "", "", "", "Active", notes]);
+    appendValues.push([itemId(description, specification), description, specification, inferCategory(description), "pc", costUsd, fxRate, costPhp, "", "", "", "", "Pending Pricing", notes]);
+    auditValues.push([
+      `AUDIT_${crypto.randomUUID()}`, timestamp, "Pricing", "PRICING_FROM_DELIVERY",
+      itemId(description, specification), row.batchReference || description, actor,
+      `Supplier cost created: ${actionNote}`, JSON.stringify(oldData),
+      JSON.stringify({ costUsd, fxRate, costPhp }),
+    ]);
   });
 
   if (updateRequests.length) await sheets.spreadsheets.values.batchUpdate({ spreadsheetId: SHEET_ID, requestBody: { valueInputOption: "USER_ENTERED", data: updateRequests } });
   if (appendValues.length) await sheets.spreadsheets.values.append({ spreadsheetId: SHEET_ID, range: `${PRICING_SHEET}!A:N`, valueInputOption: "USER_ENTERED", insertDataOption: "INSERT_ROWS", requestBody: { values: appendValues } });
 
+  if (auditValues.length) await sheets.spreadsheets.values.append({
+    spreadsheetId: SHEET_ID, range: "Audit_Log!A:J",
+    valueInputOption: "RAW", insertDataOption: "INSERT_ROWS",
+    requestBody: { values: auditValues },
+  });
   return { created: appendValues.length, updated: updateRequests.length };
 }
 
@@ -138,7 +162,7 @@ export async function POST(req: NextRequest) {
     const saved = await saveNewDeliveries(rows, actionNote, admin.email, true);
     try {
       const sheets = await getSheetsClient();
-      const pricing = await upsertPricingFromDeliveries(sheets, rows);
+      const pricing = await upsertPricingFromDeliveries(sheets, rows.map((row,index) => ({ ...row, fxRate: saved.effectiveRates[index] })), admin.email, actionNote);
       return NextResponse.json({ ok: true, imported: saved.count, pricing });
     } catch (pricingError) {
       console.error("PRICING UPDATE AFTER DELIVERY IMPORT:", pricingError);

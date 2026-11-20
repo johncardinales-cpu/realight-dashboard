@@ -1,3 +1,4 @@
+import { deliveryStockImpact } from "./delivery-stock.ts";
 export const STOCK_ADJUSTMENTS_SHEET = "Stock_Adjustments";
 export const STOCK_ADJUSTMENT_HEADERS = [
   "Adjustment ID", "Created At", "Description", "Specification", "Before Qty",
@@ -54,10 +55,7 @@ export function currentStockForItem(
   for (const row of deliveries.slice(1)) {
     if (stockKey(row[4], row[5]) !== wanted) continue;
     found = true;
-    const qty = Number(row[6]) || 0;
-    const status = String(row[9] || "").trim().toLowerCase();
-    if (status === "available") rawQty += qty;
-    else if (["damaged", "damage", "defective"].includes(status)) rawQty -= qty;
+    rawQty += deliveryStockImpact(row).available;
   }
   for (const row of sales.slice(1)) {
     if (stockKey(row[3], row[4]) !== wanted) continue;
@@ -78,10 +76,7 @@ export function summarizeOnHand(
   for (const row of deliveries.slice(1)) {
     const key = stockKey(row[4], row[5]);
     if (key === "|||") continue;
-    const qty = Number(row[6]) || 0;
-    const status = String(row[9] || "").trim().toLowerCase();
-    if (status === "available") add(key, qty);
-    else if (["damaged", "damage", "defective"].includes(status)) add(key, -qty);
+    add(key, deliveryStockImpact(row).available);
   }
   for (const row of sales.slice(1)) {
     const key = stockKey(row[3], row[4]);

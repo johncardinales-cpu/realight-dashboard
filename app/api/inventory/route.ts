@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { google } from "googleapis";
 import { adjustmentDeltas, readStockAdjustmentRows } from "@/lib/stock-adjustments";
+import { deliveryStockImpact } from "@/lib/delivery-stock";
 import { inventoryKey, archivedInventoryKeys, readInventoryVisibilityRows } from "@/lib/inventory-visibility";
 
 const SHEET_ID = process.env.GOOGLE_SHEET_ID as string;
@@ -70,37 +71,29 @@ function applyDeliveryRows(grouped: Map<string, InventoryItem>, rows: SheetRow[]
   const data = rows.slice(1).filter((row: SheetRow) => row.some((cell: SheetCell) => String(cell || "").trim() !== ""));
 
   for (const row of data) {
-    const uploadDate = String(row[0] || "").trim();
-    const arrivalDate = String(row[1] || "").trim();
+    const uploadDate = String(row[1] || "").trim();
+    const expectedDate = String(row[10] || "").trim();
+    const receivedDate = String(row[11] || "").trim();
     const description = String(row[4] || "").trim();
     const specification = String(row[5] || "").trim();
-    const quantity = toNumber(row[6]);
-    const status = String(row[9] || "").trim().toLowerCase();
-
     if (!description && !specification) continue;
 
     const item = getOrCreateItem(grouped, description, specification);
     if (!item) continue;
+    const movement = deliveryStockImpact(row);
+    item["Incoming Qty"] += movement.incoming;
+    item["Damaged Qty"] += movement.damaged;
+    item["Actual On Hand"] += movement.available;
+    item["Sellable Qty"] += movement.available;
 
-    if (status === "incoming") {
-      item["Incoming Qty"] += quantity;
-      if (arrivalDate) item["Latest Incoming"] = arrivalDate;
-    } else if (status === "received") {
-      item["Received Qty"] += quantity;
-      if (arrivalDate) item["Latest Received"] = arrivalDate;
-    } else if (status === "available") {
-      item["Actual On Hand"] += quantity;
-      item["Sellable Qty"] += quantity;
-      if (arrivalDate) item["Latest Received"] = arrivalDate;
-    } else if (status === "damaged" || status === "defective" || status === "damage") {
-      item["Damaged Qty"] += quantity;
-      item["Actual On Hand"] -= quantity;
-      item["Sellable Qty"] -= quantity;
-    } else if (status === "in transit") {
-      if (arrivalDate) item["Latest Incoming"] = arrivalDate;
+    const status = String(row[9] || "").trim().toLowerCase();
+    if (["available", "received"].includes(status)) {
+      item["Received Qty"] += Number(row[6]) || 0;
+      if (receivedDate || uploadDate) item["Latest Received"] = receivedDate || uploadDate;
     }
-
-    if (!item["Latest Incoming"] && uploadDate) item["Latest Incoming"] = uploadDate;
+    if (movement.incoming > 0 && (expectedDate || uploadDate)) {
+      item["Latest Incoming"] = expectedDate || uploadDate;
+    }
   }
 }
 
@@ -131,7 +124,7 @@ export async function GET(request: NextRequest) {
     const sheets = getSheetsClient();
 
     const [deliveryResponse, salesResponse, adjustmentRows, visibilityRows] = await Promise.all([
-      sheets.spreadsheets.values.get({ spreadsheetId: SHEET_ID, range: `${INVENTORY_SHEET}!A:L` }),
+      sheets.spreadsheets.values.get({ spreadsheetId: SHEET_ID, range: `${INVENTORY_SHEET}!A:M` }),
       sheets.spreadsheets.values.get({ spreadsheetId: SHEET_ID, range: `${SALES_SHEET}!A:Y` }),
       readStockAdjustmentRows(sheets, SHEET_ID),
       readInventoryVisibilityRows(sheets, SHEET_ID),

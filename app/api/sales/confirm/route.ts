@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { getSheetsClient, SHEET_ID } from "@/lib/sheets";
 import { adjustmentDeltas, readStockAdjustmentRows } from "@/lib/stock-adjustments";
+import { deliveryStockImpact } from "@/lib/delivery-stock";
 
 const SALES_SHEET = "Sales";
 const INVENTORY_SHEET = "App_Deliveries";
@@ -121,20 +122,16 @@ async function readSalesRows(sheets: any) {
 }
 
 async function getAvailableStockMap(sheets: any) {
-  const response = await sheets.spreadsheets.values.get({ spreadsheetId: SHEET_ID, range: `${INVENTORY_SHEET}!A:L` });
+  const response = await sheets.spreadsheets.values.get({ spreadsheetId: SHEET_ID, range: `${INVENTORY_SHEET}!A:M` });
   const rows = (response.data.values || []) as string[][];
   const map = new Map<string, number>();
 
   rows.slice(1).forEach((row) => {
     const description = safeText(row[4]);
     const specification = safeText(row[5]);
-    const qty = toNumber(row[6]);
-    const status = safeText(row[9]).toLowerCase();
     if (!description && !specification) return;
     const key = itemKey(description, specification);
-    const current = map.get(key) || 0;
-    if (status === "available") map.set(key, current + qty);
-    else if (["damaged", "defective", "damage"].includes(status)) map.set(key, current - qty);
+    map.set(key, (map.get(key) || 0) + deliveryStockImpact(row).available);
   });
 
   for (const [key, delta] of adjustmentDeltas(await readStockAdjustmentRows(sheets, SHEET_ID))) {

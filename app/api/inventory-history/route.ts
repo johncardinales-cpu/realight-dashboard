@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 import { google } from "googleapis";
 import { readStockAdjustmentRows } from "@/lib/stock-adjustments";
+import { deliveryKey, readDeliveryActions, isDeliveryRow } from "@/lib/delivery-actions";
+import { deliveryStockImpact } from "@/lib/delivery-stock";
 
 const SHEET_ID = process.env.GOOGLE_SHEET_ID as string;
 const DELIVERIES_SHEET = "App_Deliveries";
@@ -44,54 +46,54 @@ async function readRange(sheets: any, range: string) {
   return (response.data.values || []) as string[][];
 }
 
-function movementQtyForDelivery(status: string, qty: number) {
-  const normalized = status.toLowerCase();
-  if (normalized === "available" || normalized === "received") return qty;
-  if (normalized === "damaged" || normalized === "defective" || normalized === "damage") return -qty;
-  return 0;
-}
-
 export async function GET() {
   try {
     const sheets = google.sheets({ version: "v4", auth });
-    const [deliveryRows, salesRows, adjustmentRows] = await Promise.all([
-      readRange(sheets, `${DELIVERIES_SHEET}!A:L`),
+    const [deliveryRows, salesRows, adjustmentRows, actionRows] = await Promise.all([
+      readRange(sheets, `${DELIVERIES_SHEET}!A:M`),
       readRange(sheets, `${SALES_SHEET}!A:AH`),
       readStockAdjustmentRows(sheets, SHEET_ID),
+      readDeliveryActions(sheets, SHEET_ID),
     ]);
 
     const events: any[] = [];
+    const deliveriesByKey = new Map<string, string[]>();
 
     deliveryRows.slice(1).forEach((row, index) => {
-      const uploadDate = normalizeDate(row[0]);
-      const arrivalDate = normalizeDate(row[1]);
+      if (!isDeliveryRow(row)) return;
+      const key = deliveryKey(row);
+      deliveriesByKey.set(key, row);
+      const uploadDate = normalizeDate(row[1]);
+      const arrivalDate = normalizeDate(row[10]);
+      const receivedDate = normalizeDate(row[11]);
       const supplier = text(row[2]);
       const batchReference = text(row[3]);
       const description = text(row[4]);
       const specification = text(row[5]);
       const qty = toNumber(row[6]);
-      const unitPriceUsd = toNumber(row[7]);
-      const invoiceValid = text(row[8]);
+      const unitCostPhp = toNumber(row[8]);
+      const invoiceValid = "";
       const status = text(row[9]) || "Incoming";
-      const notes = text(row[10]);
-      const createdAt = text(row[11]);
+      const notes = text(row[12]);
+      const createdAt = uploadDate;
       if (!description && !specification) return;
 
+      const impact = deliveryStockImpact(row);
       events.push({
         id: `DEL-${index + 2}`,
-        date: uploadDate || arrivalDate || createdAt,
+        date: receivedDate || uploadDate || arrivalDate || createdAt,
         type: "Supplier Import",
         source: "App_Deliveries",
         reference: batchReference,
         supplier,
         description,
         specification,
-        qtyIn: status.toLowerCase() === "incoming" ? 0 : Math.max(movementQtyForDelivery(status, qty), 0),
-        qtyOut: status.toLowerCase().includes("damage") ? qty : 0,
+        qtyIn: Math.max(impact.available, 0),
+        qtyOut: Math.max(-impact.available, 0),
         status,
-        movementQty: movementQtyForDelivery(status, qty),
+        movementQty: impact.available,
         runningQty: 0,
-        unitCostUsd: unitPriceUsd,
+        unitCostPhp,
         invoiceValid,
         notes: notes || `Uploaded supplier delivery. Arrival date: ${arrivalDate || "not set"}.`,
         createdAt,
@@ -112,7 +114,7 @@ export async function GET() {
           status: "Pending Arrival",
           movementQty: 0,
           runningQty: 0,
-          unitCostUsd: unitPriceUsd,
+          unitCostPhp,
           invoiceValid,
           notes: "Pending stock. Not sellable until marked Available/Received.",
           createdAt,
@@ -147,7 +149,7 @@ export async function GET() {
         status: saleStatus,
         movementQty: -qty,
         runningQty: 0,
-        unitCostUsd: 0,
+        unitCostPhp: 0,
         invoiceValid: "",
         notes: `Inventory deducted from confirmed sale for ${customerName}.`,
         createdAt: text(row[24]),
@@ -163,8 +165,21 @@ export async function GET() {
         supplier: "", description: text(row[2]), specification: text(row[3]),
         qtyIn: Math.max(delta, 0), qtyOut: Math.max(-delta, 0),
         status: "Adjusted", movementQty: delta, runningQty: 0,
-        unitCostUsd: 0, invoiceValid: "", notes: `${text(row[7])} (by ${text(row[8])})`,
+        unitCostPhp: 0, invoiceValid: "", notes: `${text(row[7])} (by ${text(row[8])})`,
         createdAt: text(row[1]),
+      });
+    });
+
+    actionRows.slice(1).forEach((row) => {
+      const delivery = deliveriesByKey.get(text(row[2]));
+      if (!delivery) return;
+      events.push({
+        id: text(row[0]), date: normalizeDate(row[1]), type: "Delivery Action",
+        source: "Delivery_Actions", reference: text(delivery[3]) || text(delivery[0]),
+        supplier: text(delivery[2]), description: text(delivery[4]), specification: text(delivery[5]),
+        qtyIn: 0, qtyOut: 0, status: text(row[6]), movementQty: 0, runningQty: 0,
+        unitCostPhp: 0, invoiceValid: "",
+        notes: `${text(row[4])} — ${text(row[7])} (by ${text(row[8])})`, createdAt: text(row[1]),
       });
     });
 
