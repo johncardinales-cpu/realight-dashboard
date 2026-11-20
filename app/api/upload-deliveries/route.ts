@@ -61,11 +61,16 @@ function inferCategory(description: string) {
 }
 
 async function ensurePricingSheet(sheets: any) {
-  const headers = ["Item ID", "Description", "Specification", "Category", "Unit", "Cost Price USD", "FX Rate", "Cost Price PHP", "Selling Price PHP", "Dealer Price PHP", "Minimum Price PHP", "Gross Margin", "Status", "Notes"];
-  await sheets.spreadsheets.values.update({ spreadsheetId: SHEET_ID, range: `${PRICING_SHEET}!A1:N1`, valueInputOption: "USER_ENTERED", requestBody: { values: [headers] } }).catch(async () => {
-    await sheets.spreadsheets.batchUpdate({ spreadsheetId: SHEET_ID, requestBody: { requests: [{ addSheet: { properties: { title: PRICING_SHEET } } }] } });
-    await sheets.spreadsheets.values.update({ spreadsheetId: SHEET_ID, range: `${PRICING_SHEET}!A1:N1`, valueInputOption: "USER_ENTERED", requestBody: { values: [headers] } });
+  const requiredHeaders = ["Item ID", "Description", "Specification", "Category", "Unit",
+    "Cost Price USD", "FX Rate", "Cost Price PHP", "Selling Price PHP", "Dealer Price PHP",
+    "Minimum Price PHP", "Gross Margin", "Status", "Notes"];
+  const response = await sheets.spreadsheets.values.get({
+    spreadsheetId: SHEET_ID, range: `${PRICING_SHEET}!A1:N1`,
   });
+  const current = response.data.values?.[0] || [];
+  if (requiredHeaders.some((header, index) => required(current[index]) !== header)) {
+    throw new Error("Pricing sheet headers differ from the expected layout. No pricing data was overwritten.");
+  }
 }
 
 async function upsertPricingFromDeliveries(sheets: any, rows: DeliveryRow[], actor: string, actionNote: string) {
