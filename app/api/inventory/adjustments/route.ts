@@ -4,7 +4,7 @@ import { getSheetsClient, SHEET_ID } from "@/lib/sheets";
 import { readSession } from "@/lib/session";
 import {
   STOCK_ADJUSTMENTS_SHEET, STOCK_ADJUSTMENT_HEADERS,
-  readStockAdjustmentRows, currentStockForItem,
+  readStockAdjustmentRows, currentStockForItem, calculateAdjustedQty,
 } from "@/lib/stock-adjustments";
 
 const AUDIT_SHEET = "Audit_Log";
@@ -107,14 +107,14 @@ export async function POST(request: NextRequest) {
     const description = text(body?.description);
     const specification = text(body?.specification);
     const reason = text(body?.reason);
-    const targetQty = body?.targetQty;
+    const mode = body?.mode === "delta" ? "delta" : "set";
+    const value = mode === "delta" ? body?.deltaQty : body?.targetQty;
     const expectedQty = body?.expectedQty;
     if (!description || !specification || description.length > 200 || specification.length > 200) {
       return NextResponse.json({ error: "Select an existing inventory item." }, { status: 400 });
     }
-    if (!Number.isSafeInteger(targetQty) || targetQty < 0 || targetQty > 1000000 ||
-        !Number.isSafeInteger(expectedQty) || expectedQty < 0) {
-      return NextResponse.json({ error: "Quantity must be a whole number between 0 and 1,000,000." }, { status: 400 });
+    if (!Number.isSafeInteger(value) || !Number.isSafeInteger(expectedQty) || expectedQty < 0) {
+      return NextResponse.json({ error: "Enter a whole-number quantity and refresh inventory if needed." }, { status: 400 });
     }
     if (reason.length < 8 || reason.length > 250) {
       return NextResponse.json({ error: "Enter an adjustment reason (8 to 250 characters)." }, { status: 400 });
@@ -140,8 +140,15 @@ export async function POST(request: NextRequest) {
         currentQty: stock.displayQty,
       }, { status: 409 });
     }
-    const delta = targetQty - stock.rawQty;
-    if (!delta) return NextResponse.json({ error: "The corrected quantity equals the current quantity." }, { status: 400 });
+    let targetQty: number;
+    let delta: number;
+    try {
+      const calculated = calculateAdjustedQty(stock.rawQty, mode, value);
+      targetQty = calculated.targetQty;
+      delta = calculated.deltaQty;
+    } catch (error) {
+      return NextResponse.json({ error: error instanceof Error ? error.message : "Invalid adjustment." }, { status: 400 });
+    }
 
     const { adjustmentsId, auditId } = await ensureLedgerSheets(sheets);
     const timestamp = new Date().toISOString();

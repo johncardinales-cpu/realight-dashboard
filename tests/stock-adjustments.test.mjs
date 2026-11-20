@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { adjustmentDeltas, currentStockForItem, summarizeOnHand } from "../lib/stock-adjustments.ts";
+import { adjustmentDeltas, currentStockForItem, summarizeOnHand, calculateAdjustedQty } from "../lib/stock-adjustments.ts";
 
 const header = ["Adjustment ID", "Created At", "Description", "Specification", "Before Qty", "Delta Qty", "After Qty", "Reason", "Actor", "Reference"];
 const delivery = ["", "", "", "", "Panel", "550W", "50", "", "", "Available", "", ""];
@@ -37,4 +37,20 @@ test("new unrecognized product cannot be adjusted", () => {
   const value = currentStockForItem([[], delivery], [[], sale], [], "Inverter", "5kW");
   assert.equal(value.found, false);
   assert.equal(value.displayQty, 0);
+});
+
+test("signed -4 removes four units and +5 adds five", () => {
+  assert.deepEqual(calculateAdjustedQty(20, "delta", -4), { targetQty: 16, deltaQty: -4 });
+  assert.deepEqual(calculateAdjustedQty(20, "delta", 5), { targetQty: 25, deltaQty: 5 });
+});
+
+test("absolute mode preserves the physical-count workflow", () => {
+  assert.deepEqual(calculateAdjustedQty(20, "set", 17), { targetQty: 17, deltaQty: -3 });
+});
+
+test("quantity correction cannot make stock negative or zero-out by accident", () => {
+  assert.throws(() => calculateAdjustedQty(3, "delta", -4), /invalid stock/);
+  assert.throws(() => calculateAdjustedQty(5, "delta", 0), /nonzero/);
+  assert.throws(() => calculateAdjustedQty(5, "set", 5), /does not change/);
+  assert.throws(() => calculateAdjustedQty(2, "delta", 1.5), /whole-number/);
 });

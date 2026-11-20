@@ -1,6 +1,7 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { google } from "googleapis";
 import { adjustmentDeltas, readStockAdjustmentRows } from "@/lib/stock-adjustments";
+import { inventoryKey, archivedInventoryKeys, readInventoryVisibilityRows } from "@/lib/inventory-visibility";
 
 const SHEET_ID = process.env.GOOGLE_SHEET_ID as string;
 const INVENTORY_SHEET = "App_Deliveries";
@@ -125,14 +126,15 @@ function applyConfirmedSalesRows(grouped: Map<string, InventoryItem>, rows: Shee
   }
 }
 
-export async function GET() {
+export async function GET(request: NextRequest) {
   try {
     const sheets = getSheetsClient();
 
-    const [deliveryResponse, salesResponse, adjustmentRows] = await Promise.all([
+    const [deliveryResponse, salesResponse, adjustmentRows, visibilityRows] = await Promise.all([
       sheets.spreadsheets.values.get({ spreadsheetId: SHEET_ID, range: `${INVENTORY_SHEET}!A:L` }),
       sheets.spreadsheets.values.get({ spreadsheetId: SHEET_ID, range: `${SALES_SHEET}!A:Y` }),
       readStockAdjustmentRows(sheets, SHEET_ID),
+      readInventoryVisibilityRows(sheets, SHEET_ID),
     ]);
 
     const deliveryRows = (deliveryResponse.data.values || []) as SheetRow[];
@@ -148,13 +150,18 @@ export async function GET() {
       item["Sellable Qty"] += delta;
     }
 
+    const archived = archivedInventoryKeys(visibilityRows);
     const normalized = Array.from(grouped.values()).map((item) => ({
       ...item,
       "Actual On Hand": Math.max(item["Actual On Hand"], 0),
       "Sellable Qty": Math.max(item["Sellable Qty"], 0),
+      "Is Archived": archived.has(inventoryKey(item.Description, item.Specification)),
     }));
-
-    return NextResponse.json(normalized);
+    const includeArchived = request.nextUrl.searchParams.get("includeArchived") === "1";
+    const visible = includeArchived ? normalized : normalized.filter(item =>
+      !item["Is Archived"] || item["Actual On Hand"] > 0 || item["Incoming Qty"] > 0
+    );
+    return NextResponse.json(visible);
   } catch (error: unknown) {
     console.error("INVENTORY API ERROR:", error);
     return NextResponse.json({ error: getErrorMessage(error) }, { status: 500 });

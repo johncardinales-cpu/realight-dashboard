@@ -93,3 +93,17 @@ export function summarizeOnHand(
   for (const [key, delta] of adjustmentDeltas(adjustmentRows)) add(key, delta);
   return Array.from(totals.values()).reduce((sum, qty) => sum + Math.max(0, qty), 0);
 }
+
+/** Apply a signed delta or set an absolute physical count. Does not mutate sheets. */
+export function calculateAdjustedQty(before: number, mode: "delta" | "set", value: number) {
+  if (!Number.isSafeInteger(before) || before < 0) throw new Error("Current stock must be a nonnegative whole number.");
+  if (!Number.isSafeInteger(value)) throw new Error("Enter a whole-number quantity.");
+  if (mode !== "delta" && mode !== "set") throw new Error("Unsupported quantity adjustment mode.");
+  if (mode === "delta" && value === 0) throw new Error("Enter a nonzero signed adjustment.");
+  const target = mode === "delta" ? before + value : value;
+  if (!Number.isSafeInteger(target) || target < 0 || target > 1000000) {
+    throw new Error("Adjustment would result in invalid stock. Final quantity must be between 0 and 1,000,000.");
+  }
+  if (target === before) throw new Error("The adjustment does not change the current stock quantity.");
+  return { targetQty: target, deltaQty: target - before };
+}

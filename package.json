@@ -7,7 +7,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "test:stock": "node --test tests/stock-adjustments.test.mjs"
+    "test:stock": "node --test tests/*.test.mjs"
   },
   "dependencies": {
     "googleapis": "^171.4.0",
