@@ -4,6 +4,7 @@ import {
   DELIVERY_ACTIONS_SHEET, DELIVERY_ACTION_HEADERS, verifyDeliveryHeaders,
 } from "@/lib/delivery-actions";
 import { buildNewDelivery, type DeliveryInput } from "@/lib/delivery-create";
+import { prepareDeliveryPricing } from "@/lib/delivery-pricing";
 
 const SOURCE = "App_Deliveries";
 const AUDIT = "Audit_Log";
@@ -20,9 +21,9 @@ export async function saveNewDeliveries(inputs: DeliveryInput[], actionNote: str
     throw new Error("Create between 1 and 200 delivery rows per operation.");
   }
   const sheets = await getSheetsClient();
-  const pricingResult = await sheets.spreadsheets.values.get({
-    spreadsheetId: SHEET_ID, range: "Pricing_Base!A:H",
-  });
+  const pricingResult = specialAction === "MARK_DAMAGED"
+    ? { data: { values: [] } }
+    : await sheets.spreadsheets.values.get({ spreadsheetId: SHEET_ID, range: "Pricing_Base!A:N" });
   const existingRates = new Map<string, number>();
   for (const row of ((pricingResult.data.values || []) as string[][]).slice(1)) {
     const key = `${text(row[1]).toLowerCase()}|||${text(row[2]).toLowerCase()}`;
@@ -56,7 +57,9 @@ export async function saveNewDeliveries(inputs: DeliveryInput[], actionNote: str
     const title = entry.properties?.title, id = entry.properties?.sheetId;
     if (title && typeof id === "number") ids.set(title, id);
   }
-  if (!ids.has(SOURCE) || !ids.has(AUDIT)) throw new Error("Required delivery or audit worksheet is missing.");
+  if (!ids.has(SOURCE) || !ids.has(AUDIT) || (!specialAction && !ids.has("Pricing_Base"))) {
+    throw new Error("Required delivery, pricing or audit worksheet is missing.");
+  }
   if (!ids.has(DELIVERY_ACTIONS_SHEET)) {
     const added = await sheets.spreadsheets.batchUpdate({
       spreadsheetId: SHEET_ID, requestBody: { requests: [{
@@ -79,6 +82,11 @@ export async function saveNewDeliveries(inputs: DeliveryInput[], actionNote: str
   }
 
   const created = new Date().toISOString();
+  const pricing = specialAction === "MARK_DAMAGED"
+    ? { requests: [] as object[], created: 0, updated: 0, audited: 0 }
+    : prepareDeliveryPricing(inputs, effectiveRates,
+        (pricingResult.data.values || []) as string[][],
+        ids.get("Pricing_Base")!, ids.get(AUDIT)!, actor, actionNote, created);
   const actionName = specialAction || (imported ? "IMPORT_DELIVERY" : "CREATE_DELIVERY");
   const newRows = entries.map(x => rowCells(x.row));
   const actionRows = entries.map(x => {
@@ -100,7 +108,9 @@ export async function saveNewDeliveries(inputs: DeliveryInput[], actionNote: str
       { appendCells: { sheetId: ids.get(SOURCE)!, rows: newRows, fields: "userEnteredValue" } },
       { appendCells: { sheetId: ids.get(DELIVERY_ACTIONS_SHEET)!, rows: actionRows.map(x => x.cells), fields: "userEnteredValue" } },
       { appendCells: { sheetId: ids.get(AUDIT)!, rows: auditRows, fields: "userEnteredValue" } },
+      ...pricing.requests,
     ],
   }});
-  return { count: entries.length, effectiveRates };
+  return { count: entries.length, effectiveRates,
+    pricing: { created: pricing.created, updated: pricing.updated, audited: pricing.audited } };
 }
