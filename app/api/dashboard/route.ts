@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { google } from "googleapis";
-import { adjustmentDeltas, readStockAdjustmentRows } from "@/lib/stock-adjustments";
+import { summarizeOnHand, readStockAdjustmentRows } from "@/lib/stock-adjustments";
 
 const auth = new google.auth.GoogleAuth({
   credentials: {
@@ -123,9 +123,9 @@ async function readDashboardData() {
   const supplierRows = (response.data.valueRanges?.[3]?.values || []) as string[][];
   const data = buildDashboardPayload(deliveryRows, salesRows, expenseRows, supplierRows);
   const adjustmentRows = await readStockAdjustmentRows(sheets, SHEET_ID);
-  const adjustmentTotal = [...adjustmentDeltas(adjustmentRows).values()].reduce((total, delta) => total + delta, 0);
-  data.actualOnHand = Math.max(data.actualOnHand + adjustmentTotal, 0);
-  data.sellableUnits = Math.max(data.sellableUnits + adjustmentTotal, 0);
+  const correctOnHand = summarizeOnHand(deliveryRows, salesRows, adjustmentRows);
+  data.actualOnHand = correctOnHand;
+  data.sellableUnits = correctOnHand;
   readCache = { expiresAt: now + READ_CACHE_MS, data };
   return data;
 }

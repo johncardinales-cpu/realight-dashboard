@@ -69,3 +69,27 @@ export function currentStockForItem(
   if (!Number.isSafeInteger(rawQty)) throw new Error("Stock quantity cannot be safely reconciled.");
   return { found, rawQty, displayQty: Math.max(rawQty, 0) };
 }
+
+export function summarizeOnHand(
+  deliveries: Row[], sales: Row[], adjustmentRows: Row[]
+): number {
+  const totals = new Map<string, number>();
+  const add = (key: string, value: number) => totals.set(key, (totals.get(key) || 0) + value);
+  for (const row of deliveries.slice(1)) {
+    const key = stockKey(row[4], row[5]);
+    if (key === "|||") continue;
+    const qty = Number(row[6]) || 0;
+    const status = String(row[9] || "").trim().toLowerCase();
+    if (status === "available") add(key, qty);
+    else if (["damaged", "damage", "defective"].includes(status)) add(key, -qty);
+  }
+  for (const row of sales.slice(1)) {
+    const key = stockKey(row[3], row[4]);
+    if (key === "|||") continue;
+    if (String(row[20] || "").trim().toLowerCase() === "confirmed") {
+      add(key, -(Number(row[5]) || 0));
+    }
+  }
+  for (const [key, delta] of adjustmentDeltas(adjustmentRows)) add(key, delta);
+  return Array.from(totals.values()).reduce((sum, qty) => sum + Math.max(0, qty), 0);
+}
