@@ -19,8 +19,29 @@ export async function saveNewDeliveries(inputs: DeliveryInput[], actionNote: str
   if (!inputs.length || inputs.length > 200) {
     throw new Error("Create between 1 and 200 delivery rows per operation.");
   }
-  const entries = inputs.map(value => buildNewDelivery(value, actionNote));
   const sheets = await getSheetsClient();
+  const pricingResult = await sheets.spreadsheets.values.get({
+    spreadsheetId: SHEET_ID, range: "Pricing_Base!A:H",
+  });
+  const existingRates = new Map<string, number>();
+  for (const row of ((pricingResult.data.values || []) as string[][]).slice(1)) {
+    const key = `${text(row[1]).toLowerCase()}|||${text(row[2]).toLowerCase()}`;
+    const fx = Number(row[6]);
+    if (key !== "|||" && Number.isFinite(fx) && fx > 0) existingRates.set(key, fx);
+  }
+  const effectiveRates = inputs.map(value => {
+    const key = `${text(value.description).toLowerCase()}|||${text(value.specification).toLowerCase()}`;
+    const explicit = text(value.fxRate);
+    if (explicit) {
+      const rate = Number(explicit);
+      if (!Number.isFinite(rate) || rate <= 0 || rate > 1000) {
+        throw new Error("Invalid FX rate. Enter a positive PHP-per-USD rate.");
+      }
+      return rate;
+    }
+    return existingRates.get(key);
+  });
+  const entries = inputs.map((value, index) => buildNewDelivery(value, actionNote, effectiveRates[index]));
   const headers = await sheets.spreadsheets.values.batchGet({
     spreadsheetId: SHEET_ID, ranges: [`${SOURCE}!A1:M1`, `${AUDIT}!A1:J1`],
   });
@@ -81,5 +102,5 @@ export async function saveNewDeliveries(inputs: DeliveryInput[], actionNote: str
       { appendCells: { sheetId: ids.get(AUDIT)!, rows: auditRows, fields: "userEnteredValue" } },
     ],
   }});
-  return { count: entries.length };
+  return { count: entries.length, effectiveRates };
 }
