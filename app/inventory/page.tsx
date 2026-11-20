@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type FormEvent } from "react";
 
 type InventoryRow = Record<string, string | number>;
 type InventoryStatus = "In Stock" | "Low Stock" | "Incoming" | "Out of Stock";
@@ -114,6 +114,51 @@ export default function InventoryPage() {
   const [damageReason, setDamageReason] = useState(damageReasons[0]);
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("All");
+  const [adjustTarget, setAdjustTarget] = useState<InventoryRow | null>(null);
+  const [correctedQty, setCorrectedQty] = useState("");
+  const [adjustReason, setAdjustReason] = useState("");
+  const [adminCode, setAdminCode] = useState("");
+  const [adjustmentError, setAdjustmentError] = useState("");
+  const [adjustingQty, setAdjustingQty] = useState(false);
+
+  function openAdjustModal(row: InventoryRow) {
+    setAdjustTarget(row);
+    setCorrectedQty(String(qty(row, "Actual On Hand")));
+    setAdjustReason("");
+    setAdminCode("");
+    setAdjustmentError("");
+  }
+
+  async function submitQuantityAdjustment(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!adjustTarget || adjustingQty) return;
+    setAdjustingQty(true);
+    setAdjustmentError("");
+    try {
+      const response = await fetch("/api/inventory/adjustments", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          description: String(adjustTarget["Description"] || ""),
+          specification: String(adjustTarget["Specification"] || ""),
+          expectedQty: qty(adjustTarget, "Actual On Hand"),
+          targetQty: Number(correctedQty),
+          reason: adjustReason,
+          adminCode,
+        }),
+      });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result?.error || "Unable to record inventory adjustment");
+      setAdjustTarget(null);
+      setAdminCode("");
+      setMessage("Inventory adjusted from " + result.beforeQty + " to " + result.afterQty + " units. The change was recorded in the audit log.");
+      await loadRows();
+    } catch (error: unknown) {
+      setAdjustmentError(getErrorMessage(error, "Inventory adjustment failed."));
+    } finally {
+      setAdjustingQty(false);
+    }
+  }
 
   async function loadRows() {
     const res = await fetch("/api/inventory", { cache: "no-store" });
@@ -179,6 +224,7 @@ export default function InventoryPage() {
   async function handleAction(row: InventoryRow, action: string) {
     if (action === "save") await saveDates(row);
     if (action === "damage") openDamageModal(row);
+    if (action === "adjust") openAdjustModal(row);
   }
 
   const sortedRows = useMemo(() => [...rows].sort((a, b) => {
@@ -216,10 +262,36 @@ export default function InventoryPage() {
 
       <div className="grid grid-cols-1 gap-6 xl:grid-cols-[minmax(0,1fr)_320px]"><div className="overflow-hidden rounded-[1.75rem] border border-slate-200/80 bg-white shadow-[0_16px_40px_rgba(15,23,42,0.05)]"><div className="flex flex-col gap-4 border-b border-slate-100 p-4 lg:flex-row lg:items-center lg:justify-between"><div className="flex flex-1 flex-col gap-3 lg:flex-row lg:items-center"><div className="flex w-full max-w-sm items-center gap-3 rounded-2xl border border-slate-200 bg-white px-4 py-3"><span className="text-slate-400"><Icon type="search" /></span><input type="text" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search items..." className="w-full bg-transparent text-sm text-slate-700 outline-none placeholder:text-slate-400" /></div><select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)} className="rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-700 outline-none"><option>All</option><option>In Stock</option><option>Low Stock</option><option>Incoming</option><option>Out of Stock</option></select></div><button className="inline-flex items-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-700"><Icon type="download" />Export</button></div>
 
-      <div className="overflow-x-auto"><table className="min-w-full text-left text-sm"><thead className="border-b border-slate-100 bg-slate-50/80 text-slate-500"><tr><th className="px-5 py-4 font-semibold">Item</th><th className="px-5 py-4 font-semibold">Specification</th><th className="px-5 py-4 font-semibold">Status</th><th className="px-5 py-4 font-semibold">On Hand</th><th className="px-5 py-4 font-semibold">Sellable</th><th className="px-5 py-4 font-semibold">Damaged</th><th className="px-5 py-4 font-semibold">Incoming</th><th className="px-5 py-4 font-semibold">Dates</th><th className="px-5 py-4 text-right font-semibold">Action</th></tr></thead><tbody>{filteredRows.map((row) => { const keyValue = rowKey(row); const status = getStatus(row); const hasReceivedStock = qty(row, "Received Qty") > 0 || qty(row, "Actual On Hand") > 0 || qty(row, "Sellable Qty") > 0; const hasIncomingStock = qty(row, "Incoming Qty") > 0; const canDamage = qty(row, "Sellable Qty") > 0; const busy = savingKey === keyValue || damagingKey === keyValue; return <tr key={keyValue} className="border-b border-slate-100 last:border-b-0"><td className="px-5 py-4"><div className="flex items-center gap-4"><ProductThumb row={row} /><span className="max-w-[260px] font-semibold text-slate-900">{String(row["Description"] || "")}</span></div></td><td className="px-5 py-4 font-medium text-slate-600">{String(row["Specification"] || "")}</td><td className="px-5 py-4"><StatusBadge status={status} /></td><td className="px-5 py-4 font-semibold text-slate-900">{String(row["Actual On Hand"] || 0)}</td><td className="px-5 py-4 font-semibold text-slate-900">{String(row["Sellable Qty"] || 0)}</td><td className="px-5 py-4 font-semibold text-rose-600">{String(row["Damaged Qty"] || 0)}</td><td className="px-5 py-4 font-semibold text-blue-600">{String(row["Incoming Qty"] || 0)}</td><td className="px-5 py-4"><div className="space-y-2 text-xs font-medium text-slate-500"><div className="flex items-center gap-2"><span className="w-16 text-slate-400">Received</span><input type="date" value={String(row["Latest Received"] || "")} onChange={(event) => setField(keyValue, "Latest Received", event.target.value)} disabled={!hasReceivedStock} className="w-36 rounded-xl border border-slate-200 px-3 py-2 text-slate-700 disabled:bg-slate-50 disabled:text-slate-300" /></div><div className="flex items-center gap-2"><span className="w-16 text-slate-400">Expected</span><input type="date" value={String(row["Latest Incoming"] || "")} onChange={(event) => setField(keyValue, "Latest Incoming", event.target.value)} disabled={!hasIncomingStock} className="w-36 rounded-xl border border-slate-200 px-3 py-2 text-slate-700 disabled:bg-slate-50 disabled:text-slate-300" /></div></div></td><td className="px-5 py-4 text-right"><select defaultValue="" disabled={busy} onChange={(event) => { void handleAction(row, event.target.value); event.currentTarget.value = ""; }} className="rounded-2xl border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-700 outline-none disabled:opacity-50"><option value="" disabled>{busy ? "Working..." : "Select"}</option><option value="save">Save dates</option>{canDamage ? <option value="damage">Mark damaged</option> : null}</select></td></tr>; })}{!filteredRows.length && <tr><td colSpan={9} className="px-5 py-12 text-center text-slate-500">No inventory rows found.</td></tr>}</tbody></table></div></div>
+      <div className="overflow-x-auto"><table className="min-w-full text-left text-sm"><thead className="border-b border-slate-100 bg-slate-50/80 text-slate-500"><tr><th className="px-5 py-4 font-semibold">Item</th><th className="px-5 py-4 font-semibold">Specification</th><th className="px-5 py-4 font-semibold">Status</th><th className="px-5 py-4 font-semibold">On Hand</th><th className="px-5 py-4 font-semibold">Sellable</th><th className="px-5 py-4 font-semibold">Damaged</th><th className="px-5 py-4 font-semibold">Incoming</th><th className="px-5 py-4 font-semibold">Dates</th><th className="px-5 py-4 text-right font-semibold">Action</th></tr></thead><tbody>{filteredRows.map((row) => { const keyValue = rowKey(row); const status = getStatus(row); const hasReceivedStock = qty(row, "Received Qty") > 0 || qty(row, "Actual On Hand") > 0 || qty(row, "Sellable Qty") > 0; const hasIncomingStock = qty(row, "Incoming Qty") > 0; const canDamage = qty(row, "Sellable Qty") > 0; const busy = savingKey === keyValue || damagingKey === keyValue; return <tr key={keyValue} className="border-b border-slate-100 last:border-b-0"><td className="px-5 py-4"><div className="flex items-center gap-4"><ProductThumb row={row} /><span className="max-w-[260px] font-semibold text-slate-900">{String(row["Description"] || "")}</span></div></td><td className="px-5 py-4 font-medium text-slate-600">{String(row["Specification"] || "")}</td><td className="px-5 py-4"><StatusBadge status={status} /></td><td className="px-5 py-4 font-semibold text-slate-900">{String(row["Actual On Hand"] || 0)}</td><td className="px-5 py-4 font-semibold text-slate-900">{String(row["Sellable Qty"] || 0)}</td><td className="px-5 py-4 font-semibold text-rose-600">{String(row["Damaged Qty"] || 0)}</td><td className="px-5 py-4 font-semibold text-blue-600">{String(row["Incoming Qty"] || 0)}</td><td className="px-5 py-4"><div className="space-y-2 text-xs font-medium text-slate-500"><div className="flex items-center gap-2"><span className="w-16 text-slate-400">Received</span><input type="date" value={String(row["Latest Received"] || "")} onChange={(event) => setField(keyValue, "Latest Received", event.target.value)} disabled={!hasReceivedStock} className="w-36 rounded-xl border border-slate-200 px-3 py-2 text-slate-700 disabled:bg-slate-50 disabled:text-slate-300" /></div><div className="flex items-center gap-2"><span className="w-16 text-slate-400">Expected</span><input type="date" value={String(row["Latest Incoming"] || "")} onChange={(event) => setField(keyValue, "Latest Incoming", event.target.value)} disabled={!hasIncomingStock} className="w-36 rounded-xl border border-slate-200 px-3 py-2 text-slate-700 disabled:bg-slate-50 disabled:text-slate-300" /></div></div></td><td className="px-5 py-4 text-right"><select defaultValue="" disabled={busy} onChange={(event) => { void handleAction(row, event.target.value); event.currentTarget.value = ""; }} className="rounded-2xl border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-700 outline-none disabled:opacity-50"><option value="" disabled>{busy ? "Working..." : "Select"}</option><option value="save">Save dates</option><option value="adjust">Adjust Qty</option>{canDamage ? <option value="damage">Mark damaged</option> : null}</select></td></tr>; })}{!filteredRows.length && <tr><td colSpan={9} className="px-5 py-12 text-center text-slate-500">No inventory rows found.</td></tr>}</tbody></table></div></div>
 
       <aside className="rounded-[1.75rem] border border-slate-200/80 bg-white p-5 shadow-[0_16px_40px_rgba(15,23,42,0.05)]"><div className="mb-4 flex items-center justify-between"><div><h2 className="text-xl font-bold tracking-tight text-slate-950">Needs Attention</h2><p className="mt-1 text-xs font-medium text-slate-500">Low stock: below {LOW_STOCK_THRESHOLD} sellable units</p></div><span className="flex h-8 w-8 items-center justify-center rounded-full bg-rose-50 text-sm font-bold text-rose-600">{attentionRows.length}</span></div><div className="space-y-3">{attentionRows.map((row) => { const status = getStatus(row); const danger = status === "Out of Stock"; const incoming = status === "Incoming"; return <div key={rowKey(row)} className="rounded-2xl border border-slate-200 p-4"><div className="flex gap-3"><div className={cn("flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl", danger ? "bg-rose-50 text-rose-600" : incoming ? "bg-blue-50 text-blue-600" : "bg-amber-50 text-amber-600")}><Icon type={incoming ? "truck" : "warning"} /></div><div className="min-w-0"><p className="font-semibold text-slate-900">{String(row["Description"] || "")}</p><p className="mt-1 text-sm text-slate-500">{status === "Incoming" ? `${String(row["Incoming Qty"] || 0)} incoming · ${formatDisplayDate(String(row["Latest Incoming"] || ""))}` : status === "Out of Stock" ? "Out of stock" : `Only ${String(row["Sellable Qty"] || 0)} sellable left`}</p></div></div></div>; })}{!attentionRows.length ? <div className="rounded-2xl border border-emerald-100 bg-emerald-50 p-4 text-sm font-semibold text-emerald-700">No urgent inventory issues right now.</div> : null}</div></aside></div>
 
+
+      {adjustTarget ? (
+        <div role="dialog" aria-modal="true" aria-label="Adjust inventory quantity" className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-slate-950/60 p-4">
+          <form onSubmit={submitQuantityAdjustment} className="w-full max-w-lg space-y-4 rounded-3xl bg-white p-6 shadow-2xl">
+            <h2 className="text-2xl font-bold text-slate-950">Adjust Inventory Quantity</h2>
+            <p className="text-sm text-slate-600">{String(adjustTarget["Description"] || "")} / {String(adjustTarget["Specification"] || "")}</p>
+            <p className="text-sm font-semibold text-slate-700">Current on hand: {qty(adjustTarget, "Actual On Hand")} units</p>
+            <label className="block text-sm font-semibold text-slate-700">Correct physical quantity
+              <input type="number" min={0} max={1000000} step={1} required value={correctedQty} onChange={event => setCorrectedQty(event.target.value)} className="mt-2 w-full rounded-xl border border-slate-300 px-3 py-2" />
+            </label>
+            <p className="text-sm text-slate-600">Difference: {correctedQty.trim() && Number.isSafeInteger(Number(correctedQty)) ? Number(correctedQty) - qty(adjustTarget, "Actual On Hand") : "-"} units</p>
+            <label className="block text-sm font-semibold text-slate-700">Reason
+              <textarea minLength={8} maxLength={250} required rows={3} placeholder="Explain the physical count correction" value={adjustReason} onChange={event => setAdjustReason(event.target.value)} className="mt-2 w-full rounded-xl border border-slate-300 px-3 py-2" />
+            </label>
+            <label className="block text-sm font-semibold text-slate-700">Admin access code
+              <input type="password" required autoComplete="off" value={adminCode} onChange={event => setAdminCode(event.target.value)} className="mt-2 w-full rounded-xl border border-slate-300 px-3 py-2" />
+            </label>
+            {adjustmentError ? <p role="alert" className="text-sm font-semibold text-rose-700">{adjustmentError}</p> : null}
+            <p className="text-xs text-slate-500">The original sales and deliveries remain unchanged; the adjustment and administrator are recorded separately.</p>
+            <div className="flex justify-end gap-3">
+              <button type="button" disabled={adjustingQty} onClick={() => { setAdjustTarget(null); setAdminCode(""); }} className="rounded-xl border border-slate-300 px-4 py-2 text-sm font-semibold">Cancel</button>
+              <button type="submit" disabled={adjustingQty || !correctedQty.trim() || Number(correctedQty) === qty(adjustTarget, "Actual On Hand")} className="rounded-xl bg-emerald-600 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50">{adjustingQty ? "Saving..." : "Confirm Adjustment"}</button>
+            </div>
+          </form>
+        </div>
+      ) : null}
       {damageTarget ? <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/40 p-4"><div className="w-full max-w-md rounded-[1.75rem] bg-white p-6 shadow-2xl"><h2 className="text-2xl font-bold text-slate-950">Mark damaged / defective</h2><p className="mt-2 text-sm text-slate-500">This removes the quantity from sellable inventory.</p><div className="mt-5 rounded-2xl bg-slate-50 p-4"><p className="font-semibold text-slate-900">{String(damageTarget["Description"] || "")}</p><p className="text-sm text-slate-500">{String(damageTarget["Specification"] || "")}</p><p className="mt-2 text-sm font-semibold text-slate-700">Available sellable: {String(damageTarget["Sellable Qty"] || 0)}</p></div><div className="mt-5 space-y-4"><label className="block"><span className="text-sm font-semibold text-slate-700">Damaged quantity</span><input type="number" min="1" max={Number(damageTarget["Sellable Qty"] || 0)} value={damageQty} onChange={(event) => setDamageQty(event.target.value)} className="mt-2 w-full rounded-2xl border border-slate-200 px-4 py-3 text-sm outline-none focus:border-rose-300" /></label><div><p className="text-sm font-semibold text-slate-700">Reason</p><div className="mt-2 grid gap-2">{damageReasons.map((reason) => <label key={reason} className={cn("flex items-center gap-3 rounded-2xl border px-4 py-3 text-sm font-semibold", damageReason === reason ? "border-rose-200 bg-rose-50 text-rose-700" : "border-slate-200 text-slate-600")}><input type="radio" name="damage-reason" value={reason} checked={damageReason === reason} onChange={(event) => setDamageReason(event.target.value)} className="h-4 w-4 accent-rose-600" />{reason}</label>)}</div></div></div><div className="mt-6 flex justify-end gap-3"><button type="button" onClick={() => setDamageTarget(null)} className="rounded-2xl border border-slate-200 px-4 py-3 text-sm font-bold text-slate-700">Cancel</button><button type="button" onClick={() => void markDamaged()} disabled={Boolean(damagingKey)} className="rounded-2xl bg-rose-600 px-4 py-3 text-sm font-bold text-white disabled:opacity-50">{damagingKey ? "Saving..." : "Confirm"}</button></div></div></div> : null}
     </section>
   );

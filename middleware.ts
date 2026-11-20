@@ -1,15 +1,7 @@
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
+import { readSession } from "@/lib/session";
 
-const COOKIE_NAME = "realights_session";
-const SESSION_VALUE = "active";
-
-const ADMIN_ONLY_PATHS = [
-  "/migration",
-  "/testing-reset",
-  "/users",
-  "/settings",
-];
 
 function isPublicPath(pathname: string) {
   return (
@@ -20,12 +12,8 @@ function isPublicPath(pathname: string) {
     pathname.startsWith("/api/session/me") ||
     pathname.startsWith("/_next") ||
     pathname.startsWith("/favicon") ||
-    pathname.includes(".")
+    /\.(?:ico|png|jpg|jpeg|webp|svg|css|js|map)$/.test(pathname)
   );
-}
-
-function isAdminOnlyPath(pathname: string) {
-  return ADMIN_ONLY_PATHS.some((path) => pathname === path || pathname.startsWith(`${path}/`));
 }
 
 function toNumber(value: unknown) {
@@ -90,23 +78,20 @@ async function auditRequest(request: NextRequest) {
 
 export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
-  const session = request.cookies.get(COOKIE_NAME)?.value;
-  const isAuthenticated = session === SESSION_VALUE;
-  const adminEmailConfigured = Boolean(process.env.REALIGHTS_ADMIN_EMAILS || process.env.REALIGHTS_ADMIN_EMAIL || process.env.ADMIN_EMAIL);
+  const session = await readSession(request.cookies.get("realights_session")?.value);
+  const isAuthenticated = Boolean(session);
 
   if (pathname === "/login" && isAuthenticated) {
     return NextResponse.redirect(new URL("/", request.url));
   }
 
   if (!isPublicPath(pathname) && !isAuthenticated) {
+    if (pathname.startsWith("/api/")) return NextResponse.json({ error: "Authentication required." }, { status: 401 });
     const loginUrl = new URL("/login", request.url);
     loginUrl.searchParams.set("next", pathname);
     return NextResponse.redirect(loginUrl);
   }
 
-  if (isAuthenticated && isAdminOnlyPath(pathname) && !adminEmailConfigured) {
-    return NextResponse.redirect(new URL("/admin-only", request.url));
-  }
 
   const auditBlock = await auditRequest(request);
   if (auditBlock) return auditBlock;

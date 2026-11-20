@@ -1,6 +1,7 @@
 import { randomUUID, timingSafeEqual } from "node:crypto";
 import { NextRequest, NextResponse } from "next/server";
 import { getSheetsClient, SHEET_ID } from "@/lib/sheets";
+import { readSession } from "@/lib/session";
 import {
   STOCK_ADJUSTMENTS_SHEET, STOCK_ADJUSTMENT_HEADERS,
   readStockAdjustmentRows, currentStockForItem,
@@ -16,25 +17,17 @@ function text(value: unknown) {
   return String(value ?? "").trim();
 }
 
-function allowedAdminEmails() {
-  return new Set(
-    [process.env.REALIGHTS_ADMIN_EMAILS, process.env.REALIGHTS_ADMIN_EMAIL, process.env.ADMIN_EMAIL]
-      .filter(Boolean).join(",").toLowerCase().split(/[\s,;]+/).filter(Boolean)
-  );
-}
-
 function isValidCode(candidate: string, configured: string) {
   const provided = Buffer.from(candidate, "utf8");
   const expected = Buffer.from(configured, "utf8");
   return !!configured && provided.length === expected.length && timingSafeEqual(provided, expected);
 }
 
-function validateAdmin(request: NextRequest, adminCode: string): string | null {
-  if (request.cookies.get("realights_session")?.value !== "active") return null;
-  const email = text(request.cookies.get("realights_session_email")?.value).toLowerCase();
+async function validateAdmin(request: NextRequest, adminCode: string): Promise<string | null> {
+  const verified = await readSession(request.cookies.get("realights_session")?.value);
   const accessCode = text(process.env.REALIGHTS_ACCESS_CODE || process.env.ADMIN_ACCESS_CODE);
-  if (!email || !allowedAdminEmails().has(email) || !adminCode || adminCode.length > 512) return null;
-  return isValidCode(adminCode, accessCode) ? email : null;
+  if (!verified || !adminCode || adminCode.length > 512) return null;
+  return isValidCode(adminCode, accessCode) ? verified.email : null;
 }
 
 function column(index: number): string {
@@ -106,7 +99,7 @@ function cells(values: Array<string | number>) {
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json().catch(() => ({}));
-    const actor = validateAdmin(request, text(body?.adminCode));
+    const actor = await validateAdmin(request, text(body?.adminCode));
     if (!actor) {
       return NextResponse.json({ error: "Admin session and access code are required." }, { status: 403 });
     }
