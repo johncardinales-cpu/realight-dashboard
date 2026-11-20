@@ -1,10 +1,12 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type FormEvent } from "react";
 import Link from "next/link";
 
 type MovementRow = Record<string, string>;
 type DeliveryStatus = "Incoming" | "Available" | "Damaged" | "Cancelled";
+type ActionName = "STATUS_CHANGE" | "REMOVE_CANCELLED" | "RESTORE_CANCELLED";
+type PendingAction = { action: ActionName; rows: MovementRow[]; status?: DeliveryStatus };
 
 type ApiError = {
   error?: unknown;
@@ -117,10 +119,16 @@ export default function IncomingDeliveriesPage() {
   const [loadingId, setLoadingId] = useState("");
   const [selectedRows, setSelectedRows] = useState<Set<string>>(new Set());
   const [bulkStatus, setBulkStatus] = useState<DeliveryStatus>("Available");
+  const [pendingAction, setPendingAction] = useState<PendingAction | null>(null);
+  const [actionNote, setActionNote] = useState("");
+  const [adminCode, setAdminCode] = useState("");
+  const [actionError, setActionError] = useState("");
+  const [savingAction, setSavingAction] = useState(false);
 
   async function loadRows() {
-    const res = await fetch("/api/incoming-deliveries", { cache: "no-store" });
+    const res = await fetch("/api/incoming-deliveries?includeRemoved=1", { cache: "no-store" });
     const data: unknown = await res.json();
+    if (!res.ok) throw new Error(typeof data === "object" && data !== null && "error" in data ? String((data as ApiError).error) : "Unable to load incoming deliveries");
     setRows(Array.isArray(data) ? (data as MovementRow[]) : []);
   }
 
@@ -128,35 +136,37 @@ export default function IncomingDeliveriesPage() {
 
   const filters = useMemo(() => {
     const values = Array.from(new Set(rows.map((row) => normalizeStatus(row)).filter(Boolean)));
-    return ["All", ...values];
+    return ["All", ...values, "Removed"];
   }, [rows]);
 
   const filteredRows = useMemo(() => {
     const query = search.trim().toLowerCase();
     return rows.filter((row) => {
       const status = normalizeStatus(row);
-      const matchesStatus = statusFilter === "All" || status === statusFilter;
+      const removed = row["_removed"] === "true";
+      const matchesStatus = statusFilter === "Removed" ? removed : !removed && (statusFilter === "All" || status === statusFilter);
       const searchable = `${row.Supplier || ""} ${row.Description || ""} ${row.Specification || ""} ${row["Batch / Reference"] || ""}`.toLowerCase();
       return matchesStatus && (!query || searchable.includes(query));
     });
   }, [rows, search, statusFilter]);
 
   const visibleRows = filteredRows;
-  const visibleRowNumbers = useMemo(() => visibleRows.map((row, index) => getRowNumber(row, index)).filter(Boolean), [visibleRows]);
-  const selectedVisibleRows = useMemo(() => visibleRows.filter((row, index) => selectedRows.has(getRowNumber(row, index))), [visibleRows, selectedRows]);
+  const visibleRowNumbers = useMemo(() => visibleRows.filter(row => row["_removed"] !== "true").map((row, index) => getRowNumber(row, index)).filter(Boolean), [visibleRows]);
+  const selectedVisibleRows = useMemo(() => visibleRows.filter((row, index) => row["_removed"] !== "true" && selectedRows.has(getRowNumber(row, index))), [visibleRows, selectedRows]);
   const allVisibleSelected = visibleRowNumbers.length > 0 && visibleRowNumbers.every((rowNumber) => selectedRows.has(rowNumber));
 
   const summary = useMemo(() => {
-    const suppliers = new Set(rows.map((row) => String(row.Supplier || "").trim()).filter(Boolean));
-    const incoming = rows.filter((row) => normalizeStatus(row) === "Incoming").length;
-    const available = rows.filter((row) => normalizeStatus(row) === "Available").length;
-    const attention = rows.filter((row) => ["Damaged", "Cancelled"].includes(normalizeStatus(row))).length;
+    const active = rows.filter(row => row["_removed"] !== "true");
+    const suppliers = new Set(active.map((row) => String(row.Supplier || "").trim()).filter(Boolean));
+    const incoming = active.filter((row) => normalizeStatus(row) === "Incoming").length;
+    const available = active.filter((row) => normalizeStatus(row) === "Available").length;
+    const attention = active.filter((row) => ["Damaged", "Cancelled"].includes(normalizeStatus(row))).length;
     return { suppliers: suppliers.size, incoming, available, attention };
   }, [rows]);
 
   const arrivals = useMemo(() => {
     const groups = new Map<string, { label: string; date: string; count: number }>();
-    for (const row of rows) {
+    for (const row of rows.filter(row => row["_removed"] !== "true")) {
       const arrival = String(row["Arrival Date"] || row["Upload Date"] || "");
       const label = relativeEta(arrival);
       const key = label;
@@ -185,66 +195,93 @@ export default function IncomingDeliveriesPage() {
     });
   }
 
-  async function postStatus(rowNumber: string, nextStatus: string) {
-    const res = await fetch("/api/incoming-deliveries/status", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ rowNumber, status: nextStatus }) });
-    const data: unknown = await res.json();
-    if (!res.ok) throw new Error(typeof data === "object" && data !== null && "error" in data ? String((data as ApiError).error) : "Failed to update status");
-  }
 
-  async function updateStatus(row: MovementRow, nextStatus: string) {
-    const rowNumber = String(row["_rowNumber"] || "").trim();
-    if (!rowNumber) {
-      setMessage("This row has no row number, so it cannot be updated safely.");
+  function openAction(action: ActionName, actionRows: MovementRow[], nextStatus?: DeliveryStatus) {
+    if (!actionRows.length) {
+      setMessage("Choose at least one delivery before updating.");
       return;
     }
+    if (actionRows.length > 50) {
+      setMessage("Select no more than 50 deliveries per batch.");
+      return;
+    }
+    if (actionRows.some(row => row["_ambiguous"] === "true")) {
+      setMessage("One of these delivery records is not uniquely identifiable. Contact an administrator.");
+      return;
+    }
+    setActionNote("");
+    setAdminCode("");
+    setActionError("");
+    setPendingAction({ action, rows: actionRows, status: nextStatus });
+  }
 
-    setLoadingId(rowNumber);
+  function updateStatus(row: MovementRow, nextStatus: string) {
+    if (row["_removed"] === "true") {
+      setMessage("Restore a removed delivery before changing its status.");
+      return;
+    }
+    if (normalizeStatus(row) === nextStatus) {
+      setMessage("That delivery already has this status.");
+      return;
+    }
+    openAction("STATUS_CHANGE", [row], nextStatus as DeliveryStatus);
+  }
+
+  function updateSelectedRows() {
+    const candidates = selectedVisibleRows.filter(row => normalizeStatus(row) !== bulkStatus);
+    if (!candidates.length) {
+      setMessage("Select deliveries whose status will actually change.");
+      return;
+    }
+    openAction("STATUS_CHANGE", candidates, bulkStatus);
+  }
+
+  async function submitAction(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!pendingAction || savingAction) return;
+    setSavingAction(true);
+    setActionError("");
     setMessage("");
-
     try {
-      await postStatus(rowNumber, nextStatus);
-      setMessage(`Status updated to ${nextStatus}.`);
-      setSelectedRows((current) => {
-        const next = new Set(current);
-        next.delete(rowNumber);
-        return next;
+      const payload = {
+        action: pendingAction.action,
+        status: pendingAction.status,
+        note: actionNote.trim(),
+        adminCode: adminCode,
+        rows: pendingAction.rows.map(row => ({
+          rowNumber: Number(row["_rowNumber"]),
+          deliveryKey: String(row["_deliveryKey"] || ""),
+          expectedStatus: normalizeStatus(row),
+          expectedRemoved: row["_removed"] === "true",
+        })),
+      };
+      const res = await fetch("/api/incoming-deliveries/actions", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
       });
-      await loadRows();
-    } catch (error: unknown) {
-      setMessage(getErrorMessage(error, "Failed to update status."));
-    } finally {
-      setLoadingId("");
-    }
-  }
-
-  async function updateSelectedRows() {
-    if (!selectedVisibleRows.length) {
-      setMessage("Select at least one visible delivery row first.");
-      return;
-    }
-
-    setLoadingId("bulk");
-    setMessage("");
-
-    try {
-      const rowNumbers = selectedVisibleRows.map((row, index) => getRowNumber(row, index)).filter(Boolean);
-      for (const rowNumber of rowNumbers) {
-        await postStatus(rowNumber, bulkStatus);
-      }
-      setMessage(`Updated ${rowNumbers.length} selected deliveries to ${bulkStatus}.`);
+      const data = await res.json();
+      if (!res.ok) throw new Error(data?.error || "Unable to save delivery action.");
+      const label = pendingAction.action === "REMOVE_CANCELLED" ? "Removed canceled delivery from the active list" :
+        pendingAction.action === "RESTORE_CANCELLED" ? "Restored canceled delivery" :
+        `Updated ${data.affectedRows} delivery status(es) to ${pendingAction.status}`;
+      setPendingAction(null);
+      setActionNote("");
+      setAdminCode("");
       setSelectedRows(new Set());
+      setMessage(label + ". Your note and administrator were recorded.");
       await loadRows();
     } catch (error: unknown) {
-      setMessage(getErrorMessage(error, "Failed to update selected deliveries."));
+      setActionError(getErrorMessage(error, "Unable to update deliveries."));
     } finally {
-      setLoadingId("");
+      setSavingAction(false);
     }
   }
 
   return (
     <section className="w-full space-y-6">
       <div className="rounded-[1.75rem] border border-slate-200/80 bg-white p-6 shadow-[0_16px_40px_rgba(15,23,42,0.05)]">
-        <div className="flex items-start gap-5"><div className="flex h-16 w-16 shrink-0 items-center justify-center rounded-full bg-emerald-50 text-emerald-600"><Icon type="truck" /></div><div><h1 className="text-4xl font-bold tracking-tight text-slate-950">Incoming Deliveries</h1><p className="mt-2 max-w-3xl text-base text-slate-500">Track expected arrivals, receiving status, and supplier shipments.</p>{message ? <p className="mt-3 text-sm font-semibold text-emerald-700">{message}</p> : null}</div></div>
+        <div className="flex items-start gap-5"><div className="flex h-16 w-16 shrink-0 items-center justify-center rounded-full bg-emerald-50 text-emerald-600"><Icon type="truck" /></div><div><h1 className="text-4xl font-bold tracking-tight text-slate-950">Incoming Deliveries</h1><p className="mt-2 max-w-3xl text-base text-slate-500">Track expected arrivals and supplier shipments. Every status change, cancellation removal and restoration requires an action note.</p>{message ? <p className="mt-3 text-sm font-semibold text-emerald-700">{message}</p> : null}</div></div>
       </div>
 
       <div className="grid grid-cols-1 gap-5 md:grid-cols-2 xl:grid-cols-4"><KpiCard title="Incoming / Pending" value={summary.incoming.toLocaleString()} subtitle="Awaiting receiving" tone="bg-sky-50 text-sky-600" icon="calendar" /><KpiCard title="Available / Received" value={summary.available.toLocaleString()} subtitle="Ready for sale" tone="bg-emerald-50 text-emerald-600" icon="truck" /><KpiCard title="Needs Attention" value={summary.attention.toLocaleString()} subtitle="Damaged or cancelled" tone="bg-rose-50 text-rose-600" icon="box" /><KpiCard title="Suppliers" value={summary.suppliers.toLocaleString()} subtitle="Active suppliers" tone="bg-violet-50 text-violet-600" icon="users" /></div>
@@ -259,16 +296,38 @@ export default function IncomingDeliveriesPage() {
               <select value={bulkStatus} onChange={(event) => setBulkStatus(event.target.value as DeliveryStatus)} className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-700 outline-none">
                 {statusOptions.map((option) => <option key={option} value={option}>{option}</option>)}
               </select>
-              <button type="button" onClick={updateSelectedRows} disabled={!selectedVisibleRows.length || loadingId === "bulk"} className="rounded-xl bg-emerald-600 px-4 py-2 text-xs font-bold text-white shadow-sm disabled:cursor-not-allowed disabled:opacity-50">{loadingId === "bulk" ? "Updating..." : "Update Selected"}</button>
+              <button type="button" onClick={updateSelectedRows} disabled={!selectedVisibleRows.length || savingAction} className="rounded-xl bg-emerald-600 px-4 py-2 text-xs font-bold text-white shadow-sm disabled:cursor-not-allowed disabled:opacity-50">{savingAction ? "Updating..." : "Update Selected"}</button>
               {selectedRows.size ? <button type="button" onClick={() => setSelectedRows(new Set())} className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-xs font-bold text-slate-600">Clear</button> : null}
             </div>
           </div>
 
-          <div className="max-h-[760px] overflow-auto"><table className="min-w-full text-left text-sm"><thead className="sticky top-0 z-10 border-b border-slate-100 bg-slate-50/95 text-slate-500 backdrop-blur"><tr><th className="px-5 py-4 font-semibold"><input type="checkbox" checked={allVisibleSelected} onChange={toggleVisibleRows} aria-label="Select all visible deliveries" /></th><th className="px-5 py-4 font-semibold">ETA</th><th className="px-5 py-4 font-semibold">Supplier</th><th className="px-5 py-4 font-semibold">Item</th><th className="px-5 py-4 font-semibold">Qty</th><th className="px-5 py-4 font-semibold">Batch / Ref</th><th className="px-5 py-4 font-semibold">Status</th><th className="px-5 py-4 text-right font-semibold">Action</th></tr></thead><tbody>{visibleRows.map((row, index) => { const rowNumber = getRowNumber(row, index); const currentStatus = normalizeStatus(row); const arrival = String(row["Arrival Date"] || row["Upload Date"] || ""); return <tr key={rowNumber} className="border-b border-slate-100 last:border-b-0"><td className="px-5 py-4"><input type="checkbox" checked={selectedRows.has(rowNumber)} onChange={() => toggleRow(rowNumber)} aria-label={`Select ${row.Description || "delivery"}`} /></td><td className="px-5 py-4"><div className="flex items-start gap-3"><span className="mt-0.5 text-slate-400"><Icon type="calendar" /></span><div><p className="font-semibold text-slate-900">{formatDate(arrival)}</p><p className="mt-1 text-xs font-medium text-slate-500">{relativeEta(arrival)}</p></div></div></td><td className="px-5 py-4"><p className="max-w-[170px] font-semibold text-slate-900">{row.Supplier || "—"}</p></td><td className="px-5 py-4"><p className="font-semibold text-slate-900">{row.Description || "—"}</p><p className="mt-1 text-xs font-medium text-slate-500">{row.Specification || ""}</p></td><td className="px-5 py-4 font-semibold text-slate-900">{toNumber(row["Qty Added"]).toLocaleString()}</td><td className="px-5 py-4"><p className="max-w-[150px] font-medium text-slate-600">{row["Batch / Reference"] || "—"}</p></td><td className="px-5 py-4"><StatusBadge status={currentStatus} /></td><td className="px-5 py-4 text-right"><select defaultValue="" disabled={loadingId === rowNumber || loadingId === "bulk"} onChange={(event) => { void updateStatus(row, event.target.value); event.currentTarget.value = ""; }} className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-700 outline-none disabled:opacity-50"><option value="" disabled>{loadingId === rowNumber ? "Updating..." : "Set status"}</option>{statusOptions.map((option) => <option key={option} value={option}>{option}</option>)}</select></td></tr>; })}{!visibleRows.length && <tr><td colSpan={8} className="px-5 py-12 text-center text-slate-500">No delivery records found.</td></tr>}</tbody></table></div><div className="flex items-center justify-between border-t border-slate-100 px-5 py-4 text-sm font-medium text-slate-500"><span>Showing {filteredRows.length} deliveries</span><span className="rounded-xl border border-emerald-100 bg-emerald-50 px-3 py-1 text-emerald-700">{statusFilter === "All" ? "All" : statusFilter}</span></div>
+          <div className="max-h-[760px] overflow-auto"><table className="min-w-full text-left text-sm"><thead className="sticky top-0 z-10 border-b border-slate-100 bg-slate-50/95 text-slate-500 backdrop-blur"><tr><th className="px-5 py-4 font-semibold"><input type="checkbox" checked={allVisibleSelected} onChange={toggleVisibleRows} aria-label="Select all visible deliveries" /></th><th className="px-5 py-4 font-semibold">ETA</th><th className="px-5 py-4 font-semibold">Supplier</th><th className="px-5 py-4 font-semibold">Item</th><th className="px-5 py-4 font-semibold">Qty</th><th className="px-5 py-4 font-semibold">Batch / Ref</th><th className="px-5 py-4 font-semibold">Status</th><th className="px-5 py-4 font-semibold">Notes</th><th className="px-5 py-4 text-right font-semibold">Action</th></tr></thead><tbody>{visibleRows.map((row, index) => { const rowNumber = getRowNumber(row, index); const currentStatus = normalizeStatus(row); const arrival = String(row["Arrival Date"] || row["Upload Date"] || ""); return <tr key={rowNumber} className="border-b border-slate-100 last:border-b-0"><td className="px-5 py-4"><input type="checkbox" disabled={row["_removed"] === "true"} checked={selectedRows.has(rowNumber)} onChange={() => toggleRow(rowNumber)} aria-label={`Select ${row.Description || "delivery"}`} /></td><td className="px-5 py-4"><div className="flex items-start gap-3"><span className="mt-0.5 text-slate-400"><Icon type="calendar" /></span><div><p className="font-semibold text-slate-900">{formatDate(arrival)}</p><p className="mt-1 text-xs font-medium text-slate-500">{relativeEta(arrival)}</p></div></div></td><td className="px-5 py-4"><p className="max-w-[170px] font-semibold text-slate-900">{row.Supplier || "—"}</p></td><td className="px-5 py-4"><p className="font-semibold text-slate-900">{row.Description || "—"}</p><p className="mt-1 text-xs font-medium text-slate-500">{row.Specification || ""}</p></td><td className="px-5 py-4 font-semibold text-slate-900">{toNumber(row["Qty Added"]).toLocaleString()}</td><td className="px-5 py-4"><p className="max-w-[150px] font-medium text-slate-600">{row["Batch / Reference"] || "—"}</p></td><td className="px-5 py-4"><StatusBadge status={currentStatus} />{row["_removed"] === "true" ? <span className="ml-2 rounded-lg bg-slate-200 px-2 py-1 text-xs font-bold text-slate-700">Removed</span> : null}</td><td className="max-w-[240px] px-5 py-4 text-xs text-slate-600">{row.Notes ? <details><summary className="cursor-pointer font-semibold text-emerald-700">View notes</summary><p className="mt-2 max-h-48 overflow-y-auto whitespace-pre-wrap">{row.Notes}</p></details> : <span className="text-slate-400">No notes</span>}</td><td className="px-5 py-4 text-right"><div className="flex flex-wrap justify-end gap-2">{row["_removed"] !== "true" ? <select defaultValue="" disabled={savingAction} onChange={(event) => { updateStatus(row, event.target.value); event.currentTarget.value = ""; }} className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-700 outline-none disabled:opacity-50"><option value="" disabled>Set status</option>{statusOptions.map((option) => <option key={option} value={option}>{option}</option>)}</select> : null}{currentStatus === "Cancelled" ? <button type="button" disabled={savingAction} onClick={() => openAction(row["_removed"] === "true" ? "RESTORE_CANCELLED" : "REMOVE_CANCELLED", [row])} className="rounded-xl border border-slate-300 px-3 py-2 text-xs font-bold text-slate-700 disabled:opacity-50">{row["_removed"] === "true" ? "Restore" : "Remove canceled"}</button> : null}</div></td></tr>; })}{!visibleRows.length && <tr><td colSpan={9} className="px-5 py-12 text-center text-slate-500">No delivery records found.</td></tr>}</tbody></table></div><div className="flex items-center justify-between border-t border-slate-100 px-5 py-4 text-sm font-medium text-slate-500"><span>Showing {filteredRows.length} deliveries</span><span className="rounded-xl border border-emerald-100 bg-emerald-50 px-3 py-1 text-emerald-700">{statusFilter === "All" ? "All" : statusFilter}</span></div>
         </div>
 
         <aside className="space-y-5"><div className="rounded-[1.75rem] border border-slate-200/80 bg-white p-5 shadow-[0_16px_40px_rgba(15,23,42,0.05)]"><div className="mb-5 flex items-center gap-3"><span className="text-slate-500"><Icon type="calendar" /></span><h2 className="text-lg font-bold text-slate-950">Upcoming Arrivals</h2></div><div className="space-y-4">{arrivals.map((item) => <div key={item.label} className="flex items-center justify-between border-b border-slate-100 pb-4 last:border-0 last:pb-0"><div><p className="font-semibold text-slate-900">{item.label}</p><p className="mt-1 text-xs font-medium text-slate-500">{item.date}</p></div><div className="text-right"><p className="text-2xl font-bold text-slate-950">{item.count}</p><p className="text-xs text-slate-500">Deliveries</p></div></div>)}</div></div><div className="rounded-[1.75rem] border border-slate-200/80 bg-white p-5 shadow-[0_16px_40px_rgba(15,23,42,0.05)]"><div className="mb-5 flex items-center gap-3"><span className="text-slate-500"><Icon type="note" /></span><h2 className="text-lg font-bold text-slate-950">Delivery Notes</h2></div><div className="flex gap-3"><span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-emerald-50 text-emerald-600"><Icon type="check" /></span><div><p className="font-semibold text-slate-900">Receive stock before selling.</p><p className="mt-1 text-sm text-slate-500">Supplier uploads should stay Incoming until marked Available.</p></div></div></div></aside>
       </div>
+
+      {pendingAction ? (
+        <div role="dialog" aria-modal="true" aria-label="Confirm incoming delivery action" className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-slate-950/60 p-4">
+          <form onSubmit={submitAction} className="w-full max-w-lg space-y-4 rounded-3xl bg-white p-6 shadow-2xl">
+            <h2 className="text-xl font-bold text-slate-950">{pendingAction.action === "STATUS_CHANGE" ? "Confirm Status Change" : pendingAction.action === "REMOVE_CANCELLED" ? "Remove Canceled Delivery" : "Restore Canceled Delivery"}</h2>
+            <p className="text-sm text-slate-600">{pendingAction.rows.length} delivery row(s) affected. {pendingAction.action === "STATUS_CHANGE" ? `New status: ${pendingAction.status}` : "The delivery remains in Google Sheets and the audit history. Only its list visibility changes."}</p>
+            {pendingAction.rows.length === 1 ? <p className="text-sm font-semibold text-slate-700">{pendingAction.rows[0].Supplier} · {pendingAction.rows[0].Description} · {pendingAction.rows[0].Specification}</p> : null}
+            <label className="block text-sm font-semibold text-slate-700">Action note (required)
+              <textarea required minLength={8} maxLength={500} rows={3} value={actionNote} onChange={event => setActionNote(event.target.value)} placeholder="Explain why this delivery action is needed" className="mt-2 w-full rounded-xl border border-slate-300 px-3 py-2" />
+            </label>
+            {pendingAction.action !== "STATUS_CHANGE" ? <label className="block text-sm font-semibold text-slate-700">Admin access code
+              <input type="password" required autoComplete="off" value={adminCode} onChange={event => setAdminCode(event.target.value)} className="mt-2 w-full rounded-xl border border-slate-300 px-3 py-2" />
+            </label> : null}
+            {pendingAction.rows.length > 1 ? <p className="text-xs text-slate-500">This note will be recorded separately against every selected delivery.</p> : null}
+            {actionError ? <p role="alert" className="text-sm font-bold text-rose-700">{actionError}</p> : null}
+            <div className="flex justify-end gap-3">
+              <button type="button" disabled={savingAction} onClick={() => { setPendingAction(null); setAdminCode(""); }} className="rounded-xl border border-slate-300 px-4 py-2 text-sm font-semibold">Cancel</button>
+              <button type="submit" disabled={savingAction || actionNote.trim().length < 8 || (pendingAction.action !== "STATUS_CHANGE" && !adminCode)} className="rounded-xl bg-emerald-700 px-4 py-2 text-sm font-bold text-white disabled:opacity-50">{savingAction ? "Saving..." : "Confirm and Log Note"}</button>
+            </div>
+          </form>
+        </div>
+      ) : null}
     </section>
   );
 }
