@@ -14,7 +14,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
           fetch-depth: 0
 
@@ -67,7 +67,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          if git diff --quiet -- docs/restore-points; then
+          git add docs/restore-points
+          if git diff --cached --quiet -- docs/restore-points; then
             echo "No restore point changes to commit."
             exit 0
           fi
@@ -75,6 +76,5 @@ jobs:
           DATE="$(date +'%Y-%m-%d')"
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add docs/restore-points
           git commit -m "Daily restore point ${DATE}"
           git push
