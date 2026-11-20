@@ -1,6 +1,7 @@
 import AccountingAuditPanel from "@/components/ai/AccountingAuditPanel";
 import AgentTestPanel from "@/components/ai/AgentTestPanel";
 import InventoryWatchPanel from "@/components/ai/InventoryWatchPanel";
+import DeliveryWatchPanel from "@/components/ai/DeliveryWatchPanel";
 
 const safeguards = [
   { label: "System Mode", value: "SAFE", helper: "Agents can observe, report, and recommend only." },
@@ -47,6 +48,7 @@ export default function AIAgentsPage() {
 
       <AccountingAuditPanel />
       <InventoryWatchPanel />
+      <DeliveryWatchPanel />
 
       <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
         <h2 className="text-xl font-bold text-slate-950">Recommended Admin Actions</h2>

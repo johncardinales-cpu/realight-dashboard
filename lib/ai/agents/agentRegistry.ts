@@ -46,6 +46,21 @@ export const agentRegistry: AgentDefinition[] = [
     samplePrompts: ["Check low stock products.", "What should I reorder?", "Show inventory movement summary."],
   },
   {
+    id: "delivery-error-watch",
+    name: "Delivery Error Watch Agent",
+    title: "Delivery Action Note & Audit Observer",
+    mode: "monitoring-only",
+    status: "ready",
+    summary: "Read-only audit checks for canceled-delivery removal, restoration, status changes and mandatory action notes.",
+    responsibilities: [
+      "Report missing or malformed notes on delivery actions.",
+      "Find duplicate delivery action records and unmatched audit entries.",
+      "Help admins identify canceled deliveries removed from the active list without deleting history.",
+    ],
+    restrictions: [...defaultRestrictions, "No delivery status edits, deletion, restoration, or automatic corrections."],
+    samplePrompts: ["Check delivery action notes.", "Audit canceled delivery removals.", "Are delivery actions properly logged?"],
+  },
+  {
     id: "inventory-error-watch",
     name: "Inventory Error Watch Agent",
     title: "Inventory Adjustment Integrity Observer",
