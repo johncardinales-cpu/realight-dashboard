@@ -41,10 +41,10 @@ export async function GET(request: NextRequest) {
       });
     });
     const includeRemoved = request.nextUrl.searchParams.get("includeRemoved") === "1";
-    const items = list.map(row => ({
+    const items = list.filter(row => includeRemoved || row["_removed"] !== "true").map(row => ({
       ...row,
-      "_ambiguous": keys.get(row["_deliveryKey"])! > 1 ? "true" : "false",
-    })).filter(row => includeRemoved || row["_removed"] !== "true");
+      "_ambiguous": (keys.get(row["_deliveryKey"]) || 0) > 1 ? "true" : "false",
+    }));
     return NextResponse.json(items);
   } catch (error: unknown) {
     console.error("INCOMING DELIVERIES READ ERROR:", error);
